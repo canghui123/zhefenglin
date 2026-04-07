@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>车辆资产价值保全建议书</title>
+<style>
+  @page { size: A4; margin: 2cm; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; font-size: 14px; color: #333; line-height: 1.8; }
+  .cover { text-align: center; padding-top: 120px; page-break-after: always; }
+  .cover h1 { font-size: 28px; color: #1a365d; margin-bottom: 40px; }
+  .cover .subtitle { font-size: 16px; color: #666; margin-bottom: 20px; }
+  .cover .date { font-size: 14px; color: #999; margin-top: 60px; }
+  h2 { color: #1a365d; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; margin-top: 30px; }
+  h3 { color: #2d3748; margin-top: 20px; }
+  .info-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+  .info-table td { padding: 8px 12px; border: 1px solid #e2e8f0; }
+  .info-table td:first-child { background: #f7fafc; font-weight: bold; width: 30%; }
+  .compare-table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 13px; }
+  .compare-table th, .compare-table td { padding: 8px 10px; border: 1px solid #e2e8f0; text-align: center; }
+  .compare-table th { background: #1a365d; color: white; }
+  .best { background: #c6f6d5 !important; font-weight: bold; }
+  .worst { background: #fed7d7 !important; }
+  .neutral { background: #fefcbf !important; }
+  .recommendation { background: #ebf8ff; border-left: 4px solid #3182ce; padding: 15px; margin: 20px 0; border-radius: 4px; }
+  .legal-cost-box { background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin: 10px 0; font-size: 13px; }
+  .legal-cost-box span { margin-right: 16px; }
+  .analysis { background: #f7fafc; padding: 20px; border-radius: 8px; margin: 20px 0; }
+  .summary-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+  .summary-table th, .summary-table td { padding: 10px 12px; border: 1px solid #e2e8f0; text-align: center; }
+  .summary-table th { background: #2d3748; color: white; }
+  .footer { text-align: center; font-size: 11px; color: #999; margin-top: 40px; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+  .amount { font-family: "Courier New", monospace; }
+  .positive { color: #276749; }
+  .negative { color: #c53030; }
+</style>
+</head>
+<body>
+
+<!-- 封面 -->
+<div class="cover">
+  <h1>车辆资产价值保全建议书</h1>
+  <div class="subtitle">{{ car_description }}</div>
+  <div class="subtitle">基于AI量化分析的五路径处置方案建议</div>
+  <div class="date">报告日期：{{ report_date }}</div>
+  <div class="date" style="margin-top:10px">本报告由AI智能定价与库存决策引擎自动生成</div>
+</div>
+
+<!-- 基本信息 -->
+<h2>一、车辆基本信息</h2>
+<table class="info-table">
+  <tr><td>车辆描述</td><td>{{ car_description }}</td></tr>
+  <tr><td>入库日期</td><td>{{ entry_date }}</td></tr>
+  <tr><td>逾期金额</td><td class="amount">¥{{ overdue_amount }}</td></tr>
+  <tr><td>当前市场估值（车300）</td><td class="amount">¥{{ che300_value }}</td></tr>
+  <tr><td>车辆类型</td><td>{{ vehicle_type_label }}</td></tr>
+  <tr><td>车龄</td><td>{{ vehicle_age_years }}年</td></tr>
+  <tr><td>收车成本</td><td class="amount">¥{{ recovery_cost }}</td></tr>
+</table>
+
+<!-- 五路径对比总览 -->
+<h2>二、五路径处置方案量化对比</h2>
+
+<table class="summary-table">
+  <tr>
+    <th>路径</th><th>处置方式</th><th>预计周期</th><th>净回收/净头寸</th><th>推荐</th>
+  </tr>
+  <tr class="{{ 'best' if best_path == 'A' else '' }}">
+    <td>A</td><td>继续等待赎车</td><td>15~90天</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_a_best_value) }}</td>
+    <td>{{ "★ 推荐" if best_path == "A" else "" }}</td>
+  </tr>
+  <tr class="{{ 'best' if best_path == 'B' else '' }}">
+    <td>B</td><td>常规诉讼</td><td>6~14个月</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_b_expected_value) }}</td>
+    <td>{{ "★ 推荐" if best_path == "B" else "" }}</td>
+  </tr>
+  <tr class="{{ 'best' if best_path == 'C' else '' }}">
+    <td>C</td><td>立即上架竞拍</td><td>{{ path_c.expected_sale_days }}天</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_c.net_recovery) }}</td>
+    <td>{{ "★ 推荐" if best_path == "C" else "" }}</td>
+  </tr>
+  <tr class="{{ 'best' if best_path == 'D' else '' }}">
+    <td>D</td><td>担保物权特别程序</td><td>约3个月</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_d.net_recovery) }}</td>
+    <td>{{ "★ 推荐" if best_path == "D" else "" }}</td>
+  </tr>
+  <tr class="{{ 'best' if best_path == 'E' else '' }}">
+    <td>E</td><td>分期重组/和解</td><td>{{ path_e.total_months }}个月</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_e.net_recovery) }}</td>
+    <td>{{ "★ 推荐" if best_path == "E" else "" }}</td>
+  </tr>
+</table>
+
+<!-- 路径A -->
+<h3>路径A：继续等待债务人赎车</h3>
+<table class="compare-table">
+  <tr>
+    <th>等待天数</th><th>贬值金额</th><th>累计停车费</th><th>累计利息</th><th>持有总成本</th><th>净头寸</th>
+  </tr>
+  {% for tp in path_a.timepoints %}
+  <tr>
+    <td>{{ tp.days }}天</td>
+    <td class="amount negative">¥{{ "{:,.0f}".format(tp.depreciation_amount) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(tp.accumulated_parking) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(tp.accumulated_interest) }}</td>
+    <td class="amount worst">¥{{ "{:,.0f}".format(tp.total_holding_cost) }}</td>
+    <td class="amount {{ 'positive' if tp.net_position >= 0 else 'negative' }}">¥{{ "{:,.0f}".format(tp.net_position) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<!-- 路径B -->
+<h3>路径B：常规诉讼（一拍80% / 二拍56%）</h3>
+<div class="legal-cost-box">
+  <strong>法律费用明细：</strong>
+  <span>诉讼费 ¥{{ "{:,.0f}".format(path_b.legal_cost.court_fee) }}</span>
+  <span>执行费 ¥{{ "{:,.0f}".format(path_b.legal_cost.execution_fee) }}</span>
+  <span>保全费 ¥{{ "{:,.0f}".format(path_b.legal_cost.preservation_fee) }}</span>
+  <span>律师费(固定) ¥{{ "{:,.0f}".format(path_b.legal_cost.lawyer_fee_fixed) }}</span>
+  {% if path_b.legal_cost.lawyer_fee_recovery > 0 %}
+  <span>律师费(回款比例) ¥{{ "{:,.0f}".format(path_b.legal_cost.lawyer_fee_recovery) }}</span>
+  {% endif %}
+</div>
+<table class="compare-table">
+  <tr>
+    <th>情景</th><th>周期</th><th>拍卖价</th><th>停车费</th><th>利息</th><th>法律+律师</th><th>总成本</th><th>净回收</th>
+  </tr>
+  {% for s in path_b.scenarios %}
+  <tr>
+    <td>{{ s.label }}</td>
+    <td>{{ s.duration_months }}个月</td>
+    <td class="amount">¥{{ "{:,.0f}".format(s.expected_auction_price) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(s.parking_cost) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(s.interest_cost) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(s.legal_cost.total_legal_cost) }}</td>
+    <td class="amount worst">¥{{ "{:,.0f}".format(s.total_cost) }}</td>
+    <td class="amount {{ 'positive' if s.net_recovery >= 0 else 'negative' }}">¥{{ "{:,.0f}".format(s.net_recovery) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<!-- 路径C -->
+<h3>路径C：立即上架竞拍平台</h3>
+<table class="compare-table">
+  <tr>
+    <th>预计成交天数</th><th>预计成交价</th><th>平台佣金({{ "{:.0%}".format(commission_rate) }})</th><th>停车费</th><th>收车成本</th><th>净回款</th>
+  </tr>
+  <tr class="{{ 'best' if best_path == 'C' else '' }}">
+    <td>{{ path_c.expected_sale_days }}天</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_c.sale_price) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_c.commission) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_c.parking_during_sale) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(path_c.recovery_cost) }}</td>
+    <td class="amount {{ 'positive' if path_c.net_recovery >= 0 else 'negative' }}">¥{{ "{:,.0f}".format(path_c.net_recovery) }}</td>
+  </tr>
+</table>
+
+<!-- 路径D -->
+<h3>路径D：实现担保物权特别程序</h3>
+<div class="legal-cost-box">
+  <strong>法律费用明细：</strong>
+  <span>申请费 ¥{{ "{:,.0f}".format(path_d.legal_cost.court_fee) }}</span>
+  <span>执行费 ¥{{ "{:,.0f}".format(path_d.legal_cost.execution_fee) }}</span>
+  <span>律师费(固定) ¥{{ "{:,.0f}".format(path_d.legal_cost.lawyer_fee_fixed) }}</span>
+  {% if path_d.legal_cost.lawyer_fee_recovery > 0 %}
+  <span>律师费(回款比例) ¥{{ "{:,.0f}".format(path_d.legal_cost.lawyer_fee_recovery) }}</span>
+  {% endif %}
+  <span><strong>合计 ¥{{ "{:,.0f}".format(path_d.legal_cost.total_legal_cost) }}</strong></span>
+</div>
+<table class="compare-table">
+  <tr>
+    <th>拍卖轮次</th><th>折扣率</th><th>拍卖价</th><th>成交概率</th>
+  </tr>
+  {% for r in path_d.auction_rounds %}
+  <tr>
+    <td>{{ r.round_name }}</td>
+    <td>{{ "{:.0%}".format(r.discount_rate) }}</td>
+    <td class="amount">¥{{ "{:,.0f}".format(r.auction_price) }}</td>
+    <td>{{ "{:.0%}".format(r.success_probability) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<table class="info-table" style="margin-top:10px">
+  <tr><td>预计周期</td><td>约{{ path_d.duration_months }}个月</td></tr>
+  <tr><td>期望拍卖价（加权）</td><td class="amount">¥{{ "{:,.0f}".format(path_d.expected_auction_price) }}</td></tr>
+  <tr><td>停车费 + 利息</td><td class="amount negative">¥{{ "{:,.0f}".format(path_d.parking_cost + path_d.interest_cost) }}</td></tr>
+  <tr><td>总成本</td><td class="amount negative">¥{{ "{:,.0f}".format(path_d.total_cost) }}</td></tr>
+  <tr><td>净回收</td><td class="amount {{ 'positive' if path_d.net_recovery >= 0 else 'negative' }}"><strong>¥{{ "{:,.0f}".format(path_d.net_recovery) }}</strong></td></tr>
+</table>
+
+<!-- 路径E -->
+<h3>路径E：分期重组/和解</h3>
+<table class="info-table">
+  <tr><td>月还款额</td><td class="amount">¥{{ "{:,.0f}".format(path_e.monthly_payment) }}</td></tr>
+  <tr><td>还款期数</td><td>{{ path_e.total_months }}个月</td></tr>
+  <tr><td>预期总回收</td><td class="amount">¥{{ "{:,.0f}".format(path_e.total_expected_recovery) }}</td></tr>
+  <tr><td>再违约率</td><td>{{ "{:.0%}".format(path_e.redefault_rate) }}</td></tr>
+  <tr><td>风险调整后回收</td><td class="amount">¥{{ "{:,.0f}".format(path_e.risk_adjusted_recovery) }}</td></tr>
+  <tr><td>管理成本</td><td class="amount negative">¥{{ "{:,.0f}".format(path_e.holding_cost) }}</td></tr>
+  <tr><td>净回收</td><td class="amount {{ 'positive' if path_e.net_recovery >= 0 else 'negative' }}"><strong>¥{{ "{:,.0f}".format(path_e.net_recovery) }}</strong></td></tr>
+</table>
+
+<!-- 建议 -->
+<h2>三、处置建议</h2>
+<div class="recommendation">
+  <strong>系统推荐：路径{{ best_path }}</strong><br>
+  {{ recommendation | e | replace('\n', '<br>') | safe }}
+</div>
+
+<!-- AI分析 -->
+<h2>四、AI深度分析</h2>
+<div class="analysis">
+  {{ analysis | e | replace('\n', '<br>') | safe }}
+</div>
+
+<div class="footer">
+  本报告由AI智能定价与库存决策引擎自动生成，仅供决策参考。报告日期：{{ report_date }}
+</div>
+
+</body>
+</html>
