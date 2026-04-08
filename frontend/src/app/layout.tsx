@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import { SessionProvider } from "@/components/auth/session-provider";
+import { UserMenu } from "@/components/auth/user-menu";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -50,41 +52,41 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" className={`${geistSans.variable} h-full`}>
       <body className="min-h-full flex bg-gray-50 antialiased">
-        {/* Sidebar */}
-        <aside className="w-64 bg-slate-900 text-white flex flex-col shrink-0">
-          <div className="p-6 border-b border-slate-700">
-            <h1 className="text-lg font-bold">AI资产决策引擎</h1>
-            <p className="text-xs text-slate-400 mt-1">汽车金融不良资产处置</p>
-          </div>
-          <nav className="flex-1 p-4 space-y-4 overflow-y-auto">
-            {navSections.map((section) => (
-              <div key={section.title}>
-                <div className="px-4 py-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  {section.title}
+        <SessionProvider>
+          {/* Sidebar */}
+          <aside className="w-64 bg-slate-900 text-white flex flex-col shrink-0">
+            <div className="p-6 border-b border-slate-700">
+              <h1 className="text-lg font-bold">AI资产决策引擎</h1>
+              <p className="text-xs text-slate-400 mt-1">汽车金融不良资产处置</p>
+            </div>
+            <nav className="flex-1 p-4 space-y-4 overflow-y-auto">
+              {navSections.map((section) => (
+                <div key={section.title}>
+                  <div className="px-4 py-1 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    {section.title}
+                  </div>
+                  <div className="space-y-0.5 mt-1">
+                    {section.items.map((item) => (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className="block px-4 py-2 rounded-lg text-sm hover:bg-slate-800 transition-colors text-slate-300 hover:text-white"
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-0.5 mt-1">
-                  {section.items.map((item) => (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className="block px-4 py-2 rounded-lg text-sm hover:bg-slate-800 transition-colors text-slate-300 hover:text-white"
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </nav>
-          <div className="p-4 border-t border-slate-700 text-xs text-slate-500">
-            v0.1.0 MVP
-          </div>
-        </aside>
+              ))}
+            </nav>
+            <UserMenu />
+          </aside>
 
-        {/* Main content */}
-        <main className="flex-1 overflow-auto">
-          <div className="p-8">{children}</div>
-        </main>
+          {/* Main content */}
+          <main className="flex-1 overflow-auto">
+            <div className="p-8">{children}</div>
+          </main>
+        </SessionProvider>
       </body>
     </html>
   );

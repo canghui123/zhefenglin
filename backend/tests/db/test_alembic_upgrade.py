@@ -20,6 +20,8 @@ REQUIRED_TABLES = sorted([
     "cashflow_buckets",
     "management_goals",
     "recommended_actions",
+    "users",
+    "user_sessions",
 ])
 
 

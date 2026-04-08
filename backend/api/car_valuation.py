@@ -4,13 +4,22 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 
 from db.session import get_db_session
+from dependencies.auth import get_current_user, require_role
 from models.valuation import ValuationRequest, ValuationResult
 from services.che300_client import get_valuation, batch_valuation
 
-router = APIRouter(prefix="/api/valuation", tags=["估值"])
+router = APIRouter(
+    prefix="/api/valuation",
+    tags=["估值"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
-@router.post("/single", response_model=ValuationResult)
+@router.post(
+    "/single",
+    response_model=ValuationResult,
+    dependencies=[Depends(require_role("operator"))],
+)
 async def single_valuation(
     req: ValuationRequest,
     session: Session = Depends(get_db_session),
@@ -29,7 +38,7 @@ async def single_valuation(
         raise HTTPException(status_code=500, detail=f"估值失败: {str(e)}")
 
 
-@router.post("/batch")
+@router.post("/batch", dependencies=[Depends(require_role("operator"))])
 async def batch_valuation_api(
     items: list[dict],
     session: Session = Depends(get_db_session),

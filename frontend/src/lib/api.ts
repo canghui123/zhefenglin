@@ -1,7 +1,17 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
     ...options,
     headers: {
       ...(options?.headers || {}),
@@ -9,7 +19,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || "请求失败");
+    throw new ApiError(error.detail || "请求失败", res.status);
   }
   return res.json();
 }
@@ -78,8 +88,11 @@ export async function simulateSandbox(input: SandboxInput) {
 
 // 生成报告HTML
 export async function generateReport(resultId: number): Promise<string> {
-  const res = await fetch(`${API_BASE}/api/sandbox/${resultId}/report`, { method: "POST" });
-  if (!res.ok) throw new Error("报告生成失败");
+  const res = await fetch(`${API_BASE}/api/sandbox/${resultId}/report`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new ApiError("报告生成失败", res.status);
   return res.text();
 }
 

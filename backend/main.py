@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import init_db
+from api.auth import router as auth_router
 from api.car_valuation import router as valuation_router
 from api.asset_package import router as asset_router
 from api.inventory_sandbox import router as sandbox_router
@@ -37,6 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(valuation_router)
 app.include_router(asset_router)
 app.include_router(sandbox_router)

@@ -26,3 +26,51 @@ def isolated_backend_env(monkeypatch):
         yield
 
         reset_engine()
+
+
+def _seed_user(email: str, role: str, password: str = "Passw0rd!") -> int:
+    """Helper used by both the fixture and direct callers."""
+    from db.session import get_db_session
+    from repositories import user_repo
+    from services.password_service import hash_password
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        user = user_repo.create_user(
+            session,
+            email=email,
+            password_hash=hash_password(password),
+            role=role,
+            display_name=role,
+        )
+        session.commit()
+        return user.id
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+@pytest.fixture
+def authed_client():
+    """Return a TestClient already logged in as an `operator` user.
+
+    Existing tests for the business endpoints (asset-package, sandbox)
+    don't care about the role beyond "is allowed to write" — operator
+    is the lowest role that can run uploads/simulate, so we use it.
+    """
+    from fastapi.testclient import TestClient
+    from main import app
+
+    _seed_user("test-operator@example.com", role="operator")
+    client = TestClient(app)
+    response = client.post(
+        "/api/auth/login",
+        json={"email": "test-operator@example.com", "password": "Passw0rd!"},
+    )
+    assert response.status_code == 200, response.text
+    # The login endpoint sets the session cookie on the client; the same
+    # client now carries auth on every subsequent request.
+    return client

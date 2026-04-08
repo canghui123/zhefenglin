@@ -1,8 +1,9 @@
 """模块3：公司级不良资产经营驾驶舱API"""
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 from typing import Optional
 
+from dependencies.auth import get_current_user, require_role
 from services.portfolio_engine import (
     generate_mock_portfolio,
     compute_strategy_comparison,
@@ -15,7 +16,11 @@ from services.recommendation_engine import (
     get_action_center,
 )
 
-router = APIRouter(prefix="/api/portfolio", tags=["经营驾驶舱"])
+router = APIRouter(
+    prefix="/api/portfolio",
+    tags=["经营驾驶舱"],
+    dependencies=[Depends(get_current_user)],
+)
 
 # 缓存mock数据（单次启动期间不变）
 _cache = {}
@@ -185,28 +190,28 @@ async def portfolio_cashflow():
 
 # ============ 管理智能决策 ============
 
-@router.get("/executive")
+@router.get("/executive", dependencies=[Depends(require_role("manager"))])
 async def executive_dashboard():
     """高管驾驶页"""
     data = _get_portfolio()
     return get_executive_dashboard(data["overview"], data["segments"])
 
 
-@router.get("/manager-playbook")
+@router.get("/manager-playbook", dependencies=[Depends(require_role("manager"))])
 async def manager_playbook():
     """经理作战手册"""
     data = _get_portfolio()
     return get_manager_playbook(data["overview"], data["segments"])
 
 
-@router.get("/supervisor-console")
+@router.get("/supervisor-console", dependencies=[Depends(require_role("operator"))])
 async def supervisor_console():
     """主管执行控制台"""
     data = _get_portfolio()
     return get_supervisor_console(data["overview"], data["segments"])
 
 
-@router.get("/action-center")
+@router.get("/action-center", dependencies=[Depends(require_role("operator"))])
 async def action_center():
     """动作中心"""
     data = _get_portfolio()

@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from db.session import get_db_session
+from dependencies.auth import get_current_user, require_role
 from models.simulation import (
     SandboxInput, SandboxResult,
     PathAResult, PathBResult, PathCResult, PathDResult, PathEResult,
@@ -13,10 +14,18 @@ from repositories import sandbox_repo
 from services.sandbox_simulator import run_simulation
 from services.pdf_generator import generate_report_html
 
-router = APIRouter(prefix="/api/sandbox", tags=["库存决策沙盘"])
+router = APIRouter(
+    prefix="/api/sandbox",
+    tags=["库存决策沙盘"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
-@router.post("/simulate", response_model=SandboxResult)
+@router.post(
+    "/simulate",
+    response_model=SandboxResult,
+    dependencies=[Depends(require_role("operator"))],
+)
 async def simulate(inp: SandboxInput, session: Session = Depends(get_db_session)):
     """运行五路径模拟"""
     result = run_simulation(inp)
@@ -68,7 +77,11 @@ async def get_result(result_id: int, session: Session = Depends(get_db_session))
     }
 
 
-@router.post("/{result_id}/report", response_class=HTMLResponse)
+@router.post(
+    "/{result_id}/report",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_role("operator"))],
+)
 async def generate_report(result_id: int, session: Session = Depends(get_db_session)):
     """生成PDF报告（返回HTML预览）"""
     row = sandbox_repo.get_sandbox_result_by_id(session, result_id)

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from db.session import get_db_session
+from dependencies.auth import get_current_user, require_role
 from models.asset import PricingParameters, PackageCalculationResult
 from repositories import asset_package_repo
 from services.excel_parser import parse_excel
@@ -16,10 +17,14 @@ from services.che300_client import batch_valuation
 from services.pricing_engine import calculate_package
 from services.depreciation import predict_depreciation
 
-router = APIRouter(prefix="/api/asset-package", tags=["资产包定价"])
+router = APIRouter(
+    prefix="/api/asset-package",
+    tags=["资产包定价"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
-@router.post("/upload")
+@router.post("/upload", dependencies=[Depends(require_role("operator"))])
 async def upload_excel(
     file: UploadFile = File(...),
     session: Session = Depends(get_db_session),
@@ -68,7 +73,11 @@ class CalculateRequest(BaseModel):
     parameters: PricingParameters = PricingParameters()
 
 
-@router.post("/calculate", response_model=PackageCalculationResult)
+@router.post(
+    "/calculate",
+    response_model=PackageCalculationResult,
+    dependencies=[Depends(require_role("operator"))],
+)
 async def calculate(
     req: CalculateRequest,
     session: Session = Depends(get_db_session),
