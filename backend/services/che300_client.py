@@ -8,10 +8,11 @@ from datetime import date
 from typing import Optional
 
 import httpx
+from sqlalchemy.orm import Session
 
 from config import settings
-from database import get_connection
 from models.valuation import ValuationResult
+from repositories import valuation_repo
 
 
 def _generate_signature(business_params: dict, access_key: str, timestamp: str, secret_key: str) -> str:
@@ -31,50 +32,46 @@ def _generate_signature(business_params: dict, access_key: str, timestamp: str, 
     return hashlib.md5(sign_str.encode("utf-8")).hexdigest()
 
 
-def _check_cache(cache_key: str) -> Optional[ValuationResult]:
+def _check_cache(session: Session, cache_key: str) -> Optional[ValuationResult]:
     """查询7天内的估值缓存"""
-    conn = get_connection()
-    row = conn.execute(
-        """SELECT * FROM valuation_cache
-           WHERE che300_model_id = ? AND created_at > datetime('now', '-7 days')
-           ORDER BY created_at DESC LIMIT 1""",
-        (cache_key,),
-    ).fetchone()
-    conn.close()
-    if row:
-        return ValuationResult(
-            model_id=cache_key,
-            model_name=row["city_code"] if row["city_code"] else "",
-            excellent_price=row["excellent_price"],
-            good_price=row["good_price"],
-            medium_price=row["medium_price"],
-            fair_price=row["fair_price"],
-            dealer_buy_price=row["dealer_buy_price"],
-            dealer_sell_price=row["dealer_sell_price"],
-        )
-    return None
-
-
-def _save_cache(cache_key: str, result: ValuationResult, raw: str, model_name: str = ""):
-    conn = get_connection()
-    conn.execute(
-        """INSERT OR REPLACE INTO valuation_cache
-           (che300_model_id, registration_date, query_date, city_code,
-            excellent_price, good_price, medium_price, fair_price,
-            dealer_buy_price, dealer_sell_price, raw_response)
-           VALUES (?, date('now'), date('now'), ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            cache_key, model_name,
-            result.excellent_price, result.good_price,
-            result.medium_price, result.fair_price,
-            result.dealer_buy_price, result.dealer_sell_price, raw,
-        ),
+    row = valuation_repo.get_fresh_valuation(session, cache_key)
+    if row is None:
+        return None
+    return ValuationResult(
+        model_id=cache_key,
+        model_name=row.city_code or "",
+        excellent_price=row.excellent_price,
+        good_price=row.good_price,
+        medium_price=row.medium_price,
+        fair_price=row.fair_price,
+        dealer_buy_price=row.dealer_buy_price,
+        dealer_sell_price=row.dealer_sell_price,
     )
-    conn.commit()
-    conn.close()
+
+
+def _save_cache(
+    session: Session,
+    cache_key: str,
+    result: ValuationResult,
+    raw: str,
+    model_name: str = "",
+):
+    valuation_repo.save_valuation(
+        session,
+        cache_key=cache_key,
+        city_code=model_name,
+        excellent_price=result.excellent_price,
+        good_price=result.good_price,
+        medium_price=result.medium_price,
+        fair_price=result.fair_price,
+        dealer_buy_price=result.dealer_buy_price,
+        dealer_sell_price=result.dealer_sell_price,
+        raw_response=raw,
+    )
 
 
 async def get_valuation_by_vin(
+    session: Session,
     vin: str,
     city_name: Optional[str] = None,
     reg_date: Optional[str] = None,
@@ -83,17 +80,18 @@ async def get_valuation_by_vin(
     """通过VIN码获取估值 — 自动选择真实API或Mock"""
     cache_key = f"vin_{vin}"
 
-    cached = _check_cache(cache_key)
+    cached = _check_cache(session, cache_key)
     if cached:
         return cached
 
     if settings.che300_access_key and settings.che300_access_secret:
-        return await _real_vin_valuation(vin, city_name, reg_date, mile_age)
+        return await _real_vin_valuation(session, vin, city_name, reg_date, mile_age)
     else:
-        return _mock_valuation(vin, reg_date or "2020-01")
+        return _mock_valuation(session, vin, reg_date or "2020-01")
 
 
 async def _real_vin_valuation(
+    session: Session,
     vin: str,
     city_name: Optional[str],
     reg_date: Optional[str],
@@ -195,7 +193,7 @@ async def _real_vin_valuation(
         dealer_sell_price=dealer_sell,
     )
 
-    _save_cache(cache_key, result, json.dumps(data, ensure_ascii=False), model_name)
+    _save_cache(session, cache_key, result, json.dumps(data, ensure_ascii=False), model_name)
     return result
 
 
@@ -212,6 +210,7 @@ def _wan_to_yuan(wan_price) -> Optional[float]:
 # ---- 兼容旧接口 ----
 
 async def get_valuation(
+    session: Session,
     model_id: str,
     registration_date: str,
     mileage: Optional[float] = None,
@@ -219,17 +218,17 @@ async def get_valuation(
 ) -> ValuationResult:
     """兼容旧接口 — 如果model_id是VIN则用VIN接口，否则用Mock"""
     if len(model_id) == 17 and model_id.isalnum():
-        return await get_valuation_by_vin(model_id, reg_date=registration_date, mile_age=mileage)
+        return await get_valuation_by_vin(session, model_id, reg_date=registration_date, mile_age=mileage)
 
     cache_key = model_id
-    cached = _check_cache(cache_key)
+    cached = _check_cache(session, cache_key)
     if cached:
         return cached
 
-    return _mock_valuation(model_id, registration_date)
+    return _mock_valuation(session, model_id, registration_date)
 
 
-def _mock_valuation(model_id: str, registration_date: str) -> ValuationResult:
+def _mock_valuation(session: Session, model_id: str, registration_date: str) -> ValuationResult:
     """Mock估值 — 基于上牌年份生成合理假数据"""
     try:
         reg_year = int(registration_date[:4])
@@ -258,11 +257,11 @@ def _mock_valuation(model_id: str, registration_date: str) -> ValuationResult:
         dealer_sell_price=round(medium * 1.05, -2),
         is_mock=True,
     )
-    _save_cache(model_id, result, '{"mock": true}')
+    _save_cache(session, model_id, result, '{"mock": true}')
     return result
 
 
-async def batch_valuation(items: list[dict]) -> dict[int, ValuationResult]:
+async def batch_valuation(session: Session, items: list[dict]) -> dict[int, ValuationResult]:
     """批量估值 — 优先使用VIN，回退到Mock"""
     results = {}
     for item in items:
@@ -273,9 +272,9 @@ async def batch_valuation(items: list[dict]) -> dict[int, ValuationResult]:
 
         try:
             if vin and len(vin) == 17:
-                val = await get_valuation_by_vin(vin, reg_date=reg_date)
+                val = await get_valuation_by_vin(session, vin, reg_date=reg_date)
             else:
-                val = await get_valuation(model_id, reg_date)
+                val = await get_valuation(session, model_id, reg_date)
             results[row_num] = val
         except Exception as e:
             results[row_num] = ValuationResult(

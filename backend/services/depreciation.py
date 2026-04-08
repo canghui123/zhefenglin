@@ -5,7 +5,9 @@ import re
 from datetime import date
 from typing import Optional
 
-from database import get_connection
+from sqlalchemy.orm import Session
+
+from repositories import valuation_repo
 from services.llm_client import chat_completion
 
 
@@ -34,28 +36,12 @@ SYSTEM_PROMPT = """你是一个二手车市场分析专家。根据提供的车�
 """
 
 
-def _check_cache(model_name: str) -> Optional[dict]:
-    conn = get_connection()
-    row = conn.execute(
-        """SELECT prediction_json FROM depreciation_cache
-           WHERE model_name = ? AND created_at > datetime('now', '-30 days')
-           ORDER BY created_at DESC LIMIT 1""",
-        (model_name,),
-    ).fetchone()
-    conn.close()
-    if row:
-        return json.loads(row["prediction_json"])
-    return None
+def _check_cache(session: Session, model_name: str) -> Optional[dict]:
+    return valuation_repo.get_fresh_depreciation(session, model_name)
 
 
-def _save_cache(model_name: str, valuation: float, prediction: dict):
-    conn = get_connection()
-    conn.execute(
-        "INSERT INTO depreciation_cache (model_name, valuation, prediction_json) VALUES (?, ?, ?)",
-        (model_name, valuation, json.dumps(prediction, ensure_ascii=False)),
-    )
-    conn.commit()
-    conn.close()
+def _save_cache(session: Session, model_name: str, valuation: float, prediction: dict):
+    valuation_repo.save_depreciation(session, model_name, valuation, prediction)
 
 
 def _parse_llm_response(text: str) -> list[dict]:
@@ -89,6 +75,7 @@ def _parse_llm_response(text: str) -> list[dict]:
 
 
 async def predict_depreciation(
+    session: Session,
     cars: list[dict],
 ) -> dict[int, float]:
     """批量预测贬值率
@@ -104,7 +91,7 @@ async def predict_depreciation(
 
     # 检查缓存
     for car in cars:
-        cached = _check_cache(car["car_description"])
+        cached = _check_cache(session, car["car_description"])
         if cached:
             results[car["row_number"]] = cached.get("depreciation_30d", 0.02)
         else:
@@ -130,7 +117,7 @@ async def predict_depreciation(
         if i < len(predictions):
             pred = predictions[i]
             dep_rate = pred.get("depreciation_30d", 0.02)
-            _save_cache(car["car_description"], car.get("valuation", 0), pred)
+            _save_cache(session, car["car_description"], car.get("valuation", 0), pred)
         else:
             # LLM返回不足时用默认值
             dep_rate = _default_depreciation(car.get("reg_year", 2020))
