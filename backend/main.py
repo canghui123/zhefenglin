@@ -1,5 +1,6 @@
 """FastAPI主入口"""
 
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +15,10 @@ from api.portfolio import router as portfolio_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    # Schema for PostgreSQL is owned by Alembic (`alembic upgrade head`).
+    # Only the legacy SQLite path bootstraps tables in-process.
+    if settings.database_url.startswith("sqlite") or os.environ.get("DATABASE_PATH"):
+        init_db()
     yield
 
 

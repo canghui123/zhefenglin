@@ -1,3 +1,13 @@
+"""Legacy SQLite access layer (Task 1 MVP).
+
+DEPRECATED: This module is kept only as a compatibility shim while
+existing services and tests still talk raw sqlite3. The commercial DB
+layer lives in `backend/db/` (SQLAlchemy 2.0) and schema is owned by
+Alembic migrations under `backend/alembic/versions/`.
+
+Do not extend this file with new tables. Add new persistence via the
+SQLAlchemy models in `backend/db/models/` and a new Alembic revision.
+"""
 import sqlite3
 import os
 from config import settings
