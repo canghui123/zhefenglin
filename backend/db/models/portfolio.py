@@ -10,6 +10,12 @@ class PortfolioSnapshot(Base):
     __tablename__ = "portfolio_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     org_id: Mapped[str] = mapped_column(String, default="default", nullable=False)
     snapshot_date: Mapped[str] = mapped_column(String, nullable=False)
     scenario_name: Mapped[str] = mapped_column(String, default="baseline", nullable=False)
@@ -31,6 +37,12 @@ class AssetSegment(Base):
     __tablename__ = "asset_segments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     org_id: Mapped[str] = mapped_column(String, default="default", nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     overdue_bucket: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -124,6 +136,12 @@ class ManagementGoal(Base):
     __tablename__ = "management_goals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     org_id: Mapped[str] = mapped_column(String, default="default", nullable=False)
     period_type: Mapped[str] = mapped_column(String, default="month", nullable=False)
     role_level: Mapped[str] = mapped_column(String, default="manager", nullable=False)

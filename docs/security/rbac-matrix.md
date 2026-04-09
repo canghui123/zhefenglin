@@ -1,6 +1,6 @@
 # RBAC 角色权限矩阵
 
-> 范围：Task 5 引入的认证 / RBAC 体系。后续 Task 6 加入租户隔离后，本文档需补充 `tenant_id` 维度。
+> 范围：Task 5 引入的认证 / RBAC 体系，Task 6 增补的多租户隔离与审计日志。所有业务读写在 repo 层强制按 `tenant_id` 过滤。
 
 ## 1. 角色定义
 
@@ -74,9 +74,26 @@ python -m scripts.create_admin --email admin@example.com --password 'Passw0rd!'
 
 脚本对同邮箱用户做 upsert：第二次执行会覆盖密码、角色和昵称。
 
-## 6. 后续 TODO（Task 6+）
+## 6. 多租户隔离（Task 6）
 
-- 接入 `tenant_id` 后所有业务接口需在 repo 层强制 `tenant` 过滤。
+- 新增 `tenants` / `memberships` / `audit_logs` 三张表；`users` 增加 `default_tenant_id` 外键。
+- 业务表 `asset_packages`、`sandbox_results` 增加 NOT NULL 的 `tenant_id` 与 `created_by`。`portfolio_snapshots`、`asset_segments`、`management_goals` 增加可空的 `tenant_id`，待后续 Task 接入持久化时再收紧。
+- 租户解析在 `services/tenant_context.py:get_current_tenant_id`：
+  1. 默认从用户的 `default_tenant_id` 取值。
+  2. 客户端可通过 `X-Tenant-Code` header 显式切换租户，但必须在 `memberships` 中拥有该租户的成员资格，否则 403。
+  3. 既无默认租户、又无 header 时直接 403，避免越权。
+- 所有 repo 函数都强制 `tenant_id` 关键字参数；A 租户用户访问 B 租户的资源会得到 404（参见 `tests/api/test_tenant_isolation.py`）。
+
+## 7. 审计日志
+
+- 写入由 `services/audit_service.py:record` 统一负责，落入 `audit_logs` 表。
+- 必填字段：`tenant_id`、`user_id`、`action`、`resource_type`、`resource_id`、`request_id`、`ip`、`user_agent`、`status`，可选 `before_json` / `after_json`。
+- `request_id` 由 `middleware/request_context.RequestContextMiddleware` 在每个请求开始时生成；客户端可通过 `X-Request-Id` 预设以便端到端追踪，响应也会回写同一 header。
+- 当前已埋点的动作：`login`（含登录失败）、`upload`、`calculate`、`simulate`、`report`。后续 Task 中策略 / 配置变更接入时按相同模式补齐。
+
+## 8. 后续 TODO
+
 - 增加密码复杂度策略和登录失败次数限制。
 - `viewer` 之外的角色需要支持单点撤销（管理员页面）。
 - 引入 refresh token + 滑动过期机制。
+- 审计日志需要管理员只读视图与按时间窗导出。

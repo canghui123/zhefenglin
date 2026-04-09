@@ -3,19 +3,22 @@
 import os
 import json
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from config import settings
+from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
 from models.asset import PricingParameters, PackageCalculationResult
 from repositories import asset_package_repo
+from services import audit_service  # noqa: F401  (imported as module attribute)
 from services.excel_parser import parse_excel
 from services.che300_client import batch_valuation
 from services.pricing_engine import calculate_package
 from services.depreciation import predict_depreciation
+from services.tenant_context import get_current_tenant_id
 
 router = APIRouter(
     prefix="/api/asset-package",
@@ -26,8 +29,11 @@ router = APIRouter(
 
 @router.post("/upload", dependencies=[Depends(require_role("operator"))])
 async def upload_excel(
+    request: Request,
     file: UploadFile = File(...),
     session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
     """上传Excel资产包，返回解析结果"""
     if not file.filename.endswith((".xlsx", ".xls")):
@@ -36,7 +42,12 @@ async def upload_excel(
     os.makedirs(settings.upload_dir, exist_ok=True)
 
     # 先插入数据库拿到 package_id，用它做唯一文件名，避免同名覆盖和路径穿越
-    pkg = asset_package_repo.create_package(session, name=file.filename)
+    pkg = asset_package_repo.create_package(
+        session,
+        tenant_id=tenant_id,
+        created_by=user.id,
+        name=file.filename,
+    )
     package_id = pkg.id
 
     ext = ".xlsx" if (file.filename or "").endswith(".xlsx") else ".xls"
@@ -53,12 +64,27 @@ async def upload_excel(
         # 解析失败：清理磁盘文件和数据库孤行
         if os.path.exists(file_path):
             os.remove(file_path)
-        asset_package_repo.delete_package(session, package_id)
+        asset_package_repo.delete_package(session, package_id, tenant_id=tenant_id)
         raise HTTPException(status_code=400, detail="Excel解析失败，请检查文件格式")
 
     # 更新数据库：存磁盘文件名和解析行数
     asset_package_repo.update_package_upload(
-        session, package_id, disk_name, result.success_rows
+        session,
+        package_id,
+        tenant_id=tenant_id,
+        upload_filename=disk_name,
+        total_assets=result.success_rows,
+    )
+
+    audit_service.record(
+        session,
+        request,
+        action="upload",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="asset_package",
+        resource_id=package_id,
+        after={"filename": file.filename, "rows": result.success_rows},
     )
 
     return {
@@ -80,10 +106,15 @@ class CalculateRequest(BaseModel):
 )
 async def calculate(
     req: CalculateRequest,
+    request: Request,
     session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
 ):
     """对已上传的资产包运行定价计算"""
-    pkg = asset_package_repo.get_package_by_id(session, req.package_id)
+    pkg = asset_package_repo.get_package_by_id(
+        session, req.package_id, tenant_id=tenant_id
+    )
 
     if not pkg:
         raise HTTPException(status_code=404, detail="资产包不存在")
@@ -134,17 +165,35 @@ async def calculate(
     asset_package_repo.save_package_result(
         session,
         req.package_id,
-        req.parameters.model_dump_json(),
-        result.model_dump_json(),
+        tenant_id=tenant_id,
+        parameters_json=req.parameters.model_dump_json(),
+        results_json=result.model_dump_json(),
+    )
+
+    audit_service.record(
+        session,
+        request,
+        action="calculate",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="asset_package",
+        resource_id=req.package_id,
+        after={"asset_count": len(assets)},
     )
 
     return result
 
 
 @router.get("/{package_id}")
-async def get_package(package_id: int, session: Session = Depends(get_db_session)):
+async def get_package(
+    package_id: int,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     """获取资产包详情及计算结果"""
-    pkg = asset_package_repo.get_package_by_id(session, package_id)
+    pkg = asset_package_repo.get_package_by_id(
+        session, package_id, tenant_id=tenant_id
+    )
 
     if not pkg:
         raise HTTPException(status_code=404, detail="资产包不存在")
@@ -163,9 +212,12 @@ async def get_package(package_id: int, session: Session = Depends(get_db_session
 
 
 @router.get("/list/all")
-async def list_packages(session: Session = Depends(get_db_session)):
-    """列出所有资产包"""
-    rows = asset_package_repo.list_packages(session)
+async def list_packages(
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """列出当前租户的资产包"""
+    rows = asset_package_repo.list_packages(session, tenant_id=tenant_id)
     return [
         {
             "id": r.id,

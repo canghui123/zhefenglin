@@ -28,15 +28,28 @@ def isolated_backend_env(monkeypatch):
         reset_engine()
 
 
-def _seed_user(email: str, role: str, password: str = "Passw0rd!") -> int:
-    """Helper used by both the fixture and direct callers."""
+def _seed_user(
+    email: str,
+    role: str,
+    password: str = "Passw0rd!",
+    *,
+    tenant_code: str = "default",
+) -> int:
+    """Helper used by both the fixture and direct callers.
+
+    Always provisions a default tenant + membership so the resulting user
+    can hit business endpoints (which require `default_tenant_id`).
+    """
     from db.session import get_db_session
-    from repositories import user_repo
+    from repositories import user_repo, tenant_repo
     from services.password_service import hash_password
 
     gen = get_db_session()
     session = next(gen)
     try:
+        tenant = tenant_repo.get_or_create_tenant(
+            session, code=tenant_code, name=tenant_code.upper()
+        )
         user = user_repo.create_user(
             session,
             email=email,
@@ -44,6 +57,10 @@ def _seed_user(email: str, role: str, password: str = "Passw0rd!") -> int:
             role=role,
             display_name=role,
         )
+        tenant_repo.create_membership(
+            session, user_id=user.id, tenant_id=tenant.id, role=role
+        )
+        user_repo.set_default_tenant(session, user.id, tenant.id)
         session.commit()
         return user.id
     finally:

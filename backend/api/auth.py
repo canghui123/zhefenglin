@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import SESSION_COOKIE_NAME, get_current_user
+from services import audit_service  # noqa: F401
 from services.auth_service import AuthError, authenticate, revoke
 
 
@@ -61,10 +62,36 @@ def login(
             ip_address=request.client.host if request.client else None,
         )
     except AuthError:
+        # Best-effort failure audit so brute-force shows up in the log.
+        try:
+            audit_service.record(
+                session,
+                request,
+                action="login",
+                tenant_id=None,
+                user_id=None,
+                resource_type="user",
+                resource_id=None,
+                status="failure",
+                after={"email": req.email},
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="邮箱或密码错误",
         )
+
+    audit_service.record(
+        session,
+        request,
+        action="login",
+        tenant_id=issued.user.default_tenant_id,
+        user_id=issued.user.id,
+        resource_type="user",
+        resource_id=issued.user.id,
+        after={"email": issued.user.email, "role": issued.user.role},
+    )
 
     # Set HttpOnly cookie so the browser carries the session automatically.
     max_age = max(

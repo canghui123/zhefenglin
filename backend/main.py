@@ -12,6 +12,7 @@ from api.car_valuation import router as valuation_router
 from api.asset_package import router as asset_router
 from api.inventory_sandbox import router as sandbox_router
 from api.portfolio import router as portfolio_router
+from middleware.request_context import RequestContextMiddleware
 
 
 @asynccontextmanager
@@ -37,6 +38,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Stamps request_id / client_ip / user_agent on `request.state` so audit
+# rows recorded later in the request can pull them out without re-parsing
+# the headers themselves.
+app.add_middleware(RequestContextMiddleware)
 
 app.include_router(auth_router)
 app.include_router(valuation_router)

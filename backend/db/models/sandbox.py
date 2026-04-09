@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import String, Integer, Float, DateTime, Text, func
+from sqlalchemy import String, Integer, Float, DateTime, Text, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 
@@ -10,6 +10,17 @@ class SandboxResult(Base):
     __tablename__ = "sandbox_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_by: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     car_description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     entry_date: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     overdue_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

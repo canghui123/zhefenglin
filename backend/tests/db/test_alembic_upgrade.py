@@ -22,6 +22,9 @@ REQUIRED_TABLES = sorted([
     "recommended_actions",
     "users",
     "user_sessions",
+    "tenants",
+    "memberships",
+    "audit_logs",
 ])
 
 

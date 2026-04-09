@@ -8,3 +8,5 @@ from repositories import sandbox_repo  # noqa: F401
 from repositories import valuation_repo  # noqa: F401
 from repositories import portfolio_repo  # noqa: F401
 from repositories import user_repo  # noqa: F401
+from repositories import tenant_repo  # noqa: F401
+from repositories import audit_repo  # noqa: F401

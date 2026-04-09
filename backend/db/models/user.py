@@ -8,7 +8,7 @@ assignment or custom permissions.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Integer, DateTime, Boolean, func
+from sqlalchemy import String, Integer, DateTime, Boolean, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -23,6 +23,11 @@ class User(Base):
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    default_tenant_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

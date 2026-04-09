@@ -1,9 +1,10 @@
 """模块2：库存决策沙盘API"""
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
 from models.simulation import (
@@ -11,8 +12,10 @@ from models.simulation import (
     PathAResult, PathBResult, PathCResult, PathDResult, PathEResult,
 )
 from repositories import sandbox_repo
+from services import audit_service  # noqa: F401
 from services.sandbox_simulator import run_simulation
 from services.pdf_generator import generate_report_html
+from services.tenant_context import get_current_tenant_id
 
 router = APIRouter(
     prefix="/api/sandbox",
@@ -26,12 +29,20 @@ router = APIRouter(
     response_model=SandboxResult,
     dependencies=[Depends(require_role("operator"))],
 )
-async def simulate(inp: SandboxInput, session: Session = Depends(get_db_session)):
+async def simulate(
+    inp: SandboxInput,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     """运行五路径模拟"""
     result = run_simulation(inp)
 
     row = sandbox_repo.create_sandbox_result(
         session,
+        tenant_id=tenant_id,
+        created_by=user.id,
         car_description=inp.car_description,
         entry_date=inp.entry_date,
         overdue_amount=inp.overdue_amount,
@@ -47,15 +58,33 @@ async def simulate(inp: SandboxInput, session: Session = Depends(get_db_session)
         best_path=result.best_path,
     )
     result.id = row.id
+
+    audit_service.record(
+        session,
+        request,
+        action="simulate",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="sandbox_result",
+        resource_id=row.id,
+        after={"best_path": row.best_path},
+    )
+
     return result
 
 
 @router.get("/{result_id}")
-async def get_result(result_id: int, session: Session = Depends(get_db_session)):
+async def get_result(
+    result_id: int,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     """获取模拟结果"""
     import json
 
-    row = sandbox_repo.get_sandbox_result_by_id(session, result_id)
+    row = sandbox_repo.get_sandbox_result_by_id(
+        session, result_id, tenant_id=tenant_id
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="模拟结果不存在")
 
@@ -82,9 +111,17 @@ async def get_result(result_id: int, session: Session = Depends(get_db_session))
     response_class=HTMLResponse,
     dependencies=[Depends(require_role("operator"))],
 )
-async def generate_report(result_id: int, session: Session = Depends(get_db_session)):
+async def generate_report(
+    result_id: int,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
     """生成PDF报告（返回HTML预览）"""
-    row = sandbox_repo.get_sandbox_result_by_id(session, result_id)
+    row = sandbox_repo.get_sandbox_result_by_id(
+        session, result_id, tenant_id=tenant_id
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="模拟结果不存在")
 
@@ -113,13 +150,28 @@ async def generate_report(result_id: int, session: Session = Depends(get_db_sess
     )
 
     html = await generate_report_html(result)
+
+    audit_service.record(
+        session,
+        request,
+        action="report",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="sandbox_result",
+        resource_id=result_id,
+        after={"format": "html"},
+    )
+
     return HTMLResponse(content=html)
 
 
 @router.get("/list/all")
-async def list_results(session: Session = Depends(get_db_session)):
-    """列出所有模拟结果"""
-    rows = sandbox_repo.list_sandbox_results(session)
+async def list_results(
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """列出当前租户的模拟结果"""
+    rows = sandbox_repo.list_sandbox_results(session, tenant_id=tenant_id)
     return [
         {
             "id": r.id,

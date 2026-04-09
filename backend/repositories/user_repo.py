@@ -45,6 +45,12 @@ def mark_login(session: Session, user_id: int) -> None:
         user.last_login_at = datetime.utcnow()
 
 
+def set_default_tenant(session: Session, user_id: int, tenant_id: int) -> None:
+    user = session.get(User, user_id)
+    if user is not None:
+        user.default_tenant_id = tenant_id
+
+
 # ---------- sessions ----------
 
 def create_session(

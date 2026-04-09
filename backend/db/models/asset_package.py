@@ -10,6 +10,17 @@ class AssetPackage(Base):
     __tablename__ = "asset_packages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    created_by: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     upload_filename: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     total_assets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
