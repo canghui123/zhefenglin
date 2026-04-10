@@ -61,12 +61,15 @@ def update_package_upload(
     tenant_id: int,
     upload_filename: str,
     total_assets: int,
+    storage_key: Optional[str] = None,
 ) -> None:
     pkg = get_package_by_id(session, package_id, tenant_id=tenant_id)
     if pkg is None:
         return
     pkg.upload_filename = upload_filename
     pkg.total_assets = total_assets
+    if storage_key is not None:
+        pkg.storage_key = storage_key
 
 
 def delete_package(session: Session, package_id: int, *, tenant_id: int) -> None:

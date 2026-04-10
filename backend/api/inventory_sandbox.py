@@ -1,7 +1,7 @@
 """模块2：库存决策沙盘API"""
 
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from db.models.user import User
@@ -15,6 +15,7 @@ from repositories import sandbox_repo
 from services import audit_service  # noqa: F401
 from services.sandbox_simulator import run_simulation
 from services.pdf_generator import generate_report_html
+from services.storage.factory import get_storage
 from services.tenant_context import get_current_tenant_id
 
 router = APIRouter(
@@ -151,6 +152,14 @@ async def generate_report(
 
     html = await generate_report_html(result)
 
+    # Persist the generated HTML into object storage
+    report_key = f"reports/sandbox_{result_id}.html"
+    store = get_storage()
+    store.put_bytes(report_key, html.encode("utf-8"), content_type="text/html")
+    sandbox_repo.update_report_storage_key(
+        session, result_id, tenant_id=tenant_id, storage_key=report_key
+    )
+
     audit_service.record(
         session,
         request,
@@ -159,10 +168,47 @@ async def generate_report(
         user_id=user.id,
         resource_type="sandbox_result",
         resource_id=result_id,
-        after={"format": "html"},
+        after={"format": "html", "storage_key": report_key},
     )
 
     return HTMLResponse(content=html)
+
+
+@router.get("/{result_id}/report/download")
+async def download_report(
+    result_id: int,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """Authorized download of a previously generated report."""
+    row = sandbox_repo.get_sandbox_result_by_id(
+        session, result_id, tenant_id=tenant_id
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="模拟结果不存在")
+
+    key = row.report_storage_key
+    if not key:
+        raise HTTPException(status_code=404, detail="尚未生成报告")
+
+    store = get_storage()
+    presigned = store.build_download_url(key)
+    if presigned is not None:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(presigned)
+
+    try:
+        data = store.get_bytes(key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="报告文件不存在")
+
+    return Response(
+        content=data,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="report_{result_id}.html"'
+        },
+    )
 
 
 @router.get("/list/all")

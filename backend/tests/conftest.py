@@ -23,8 +23,13 @@ def isolated_backend_env(monkeypatch):
         engine = get_engine()
         Base.metadata.create_all(engine)
 
+        # Reset storage singleton so it picks up the test upload dir
+        from services.storage.factory import reset_storage
+        reset_storage()
+
         yield
 
+        reset_storage()
         reset_engine()
 
 

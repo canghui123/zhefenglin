@@ -23,6 +23,7 @@ class AssetPackage(Base):
     )
     name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     upload_filename: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    storage_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     total_assets: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     parameters_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     results_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

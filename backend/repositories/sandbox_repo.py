@@ -81,3 +81,15 @@ def update_report_path(
     row = get_sandbox_result_by_id(session, result_id, tenant_id=tenant_id)
     if row is not None:
         row.report_pdf_path = pdf_path
+
+
+def update_report_storage_key(
+    session: Session,
+    result_id: int,
+    *,
+    tenant_id: int,
+    storage_key: str,
+) -> None:
+    row = get_sandbox_result_by_id(session, result_id, tenant_id=tenant_id)
+    if row is not None:
+        row.report_storage_key = storage_key

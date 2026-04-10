@@ -35,6 +35,7 @@ class SandboxResult(Base):
     recommendation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     best_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     report_pdf_path: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    report_storage_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )

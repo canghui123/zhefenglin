@@ -1,23 +1,25 @@
 """模块1：资产包买断AI定价API"""
 
-import os
 import json
+import os
+import tempfile
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from config import settings
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
 from models.asset import PricingParameters, PackageCalculationResult
 from repositories import asset_package_repo
-from services import audit_service  # noqa: F401  (imported as module attribute)
+from services import audit_service  # noqa: F401
 from services.excel_parser import parse_excel
 from services.che300_client import batch_valuation
 from services.pricing_engine import calculate_package
 from services.depreciation import predict_depreciation
+from services.storage.factory import get_storage
 from services.tenant_context import get_current_tenant_id
 
 router = APIRouter(
@@ -39,9 +41,7 @@ async def upload_excel(
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="仅支持.xlsx或.xls文件")
 
-    os.makedirs(settings.upload_dir, exist_ok=True)
-
-    # 先插入数据库拿到 package_id，用它做唯一文件名，避免同名覆盖和路径穿越
+    # 先插入数据库拿到 package_id，用它做唯一文件名，避免同名覆盖
     pkg = asset_package_repo.create_package(
         session,
         tenant_id=tenant_id,
@@ -51,29 +51,39 @@ async def upload_excel(
     package_id = pkg.id
 
     ext = ".xlsx" if (file.filename or "").endswith(".xlsx") else ".xls"
-    disk_name = f"pkg_{package_id}{ext}"
-    file_path = os.path.join(os.path.realpath(settings.upload_dir), disk_name)
+    storage_key = f"pkg_{package_id}{ext}"
 
     content = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
 
+    store = get_storage()
+    store.put_bytes(
+        storage_key,
+        content,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    # parse_excel needs a filesystem path — write a temp file
     try:
-        result = parse_excel(file_path)
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        result = parse_excel(tmp_path)
     except Exception:
-        # 解析失败：清理磁盘文件和数据库孤行
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        store.delete_object(storage_key)
         asset_package_repo.delete_package(session, package_id, tenant_id=tenant_id)
         raise HTTPException(status_code=400, detail="Excel解析失败，请检查文件格式")
+    finally:
+        if "tmp_path" in locals() and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-    # 更新数据库：存磁盘文件名和解析行数
+    # 更新数据库：存 storage_key 和解析行数
     asset_package_repo.update_package_upload(
         session,
         package_id,
         tenant_id=tenant_id,
-        upload_filename=disk_name,
+        upload_filename=storage_key,
         total_assets=result.success_rows,
+        storage_key=storage_key,
     )
 
     audit_service.record(
@@ -119,12 +129,25 @@ async def calculate(
     if not pkg:
         raise HTTPException(status_code=404, detail="资产包不存在")
 
-    file_path = os.path.join(settings.upload_dir, pkg.upload_filename or "")
-    if not os.path.exists(file_path):
+    key = pkg.storage_key or pkg.upload_filename
+    if not key:
         raise HTTPException(status_code=404, detail="Excel文件已丢失")
 
-    # 1. 重新解析Excel
-    parse_result = parse_excel(file_path)
+    store = get_storage()
+    try:
+        data = store.get_bytes(key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Excel文件已丢失")
+
+    ext = ".xlsx" if key.endswith(".xlsx") else ".xls"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+
+    try:
+        parse_result = parse_excel(tmp_path)
+    finally:
+        os.remove(tmp_path)
     assets = parse_result.assets
 
     if not assets:
@@ -209,6 +232,41 @@ async def get_package(
         "created_at": pkg.created_at.isoformat() if pkg.created_at else None,
         "results": result_data,
     }
+
+
+@router.get("/{package_id}/download")
+async def download_package(
+    package_id: int,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """Authorized download of the uploaded Excel file."""
+    pkg = asset_package_repo.get_package_by_id(
+        session, package_id, tenant_id=tenant_id
+    )
+    if not pkg:
+        raise HTTPException(status_code=404, detail="资产包不存在")
+
+    key = pkg.storage_key or pkg.upload_filename
+    if not key:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    store = get_storage()
+    presigned = store.build_download_url(key)
+    if presigned is not None:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(presigned)
+
+    try:
+        data = store.get_bytes(key)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{pkg.name or key}"'},
+    )
 
 
 @router.get("/list/all")
