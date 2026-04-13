@@ -15,6 +15,7 @@ from repositories import sandbox_repo
 from services import audit_service  # noqa: F401
 from services.sandbox_simulator import run_simulation
 from services.pdf_generator import generate_report_html
+from services.job_dispatcher import dispatch_inline_async
 from services.storage.factory import get_storage
 from services.tenant_context import get_current_tenant_id
 
@@ -109,7 +110,7 @@ async def get_result(
 
 @router.post(
     "/{result_id}/report",
-    response_class=HTMLResponse,
+    status_code=202,
     dependencies=[Depends(require_role("operator"))],
 )
 async def generate_report(
@@ -119,7 +120,7 @@ async def generate_report(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
-    """生成PDF报告（返回HTML预览）"""
+    """生成PDF报告（异步任务，返回 job_id）"""
     row = sandbox_repo.get_sandbox_result_by_id(
         session, result_id, tenant_id=tenant_id
     )
@@ -150,14 +151,28 @@ async def generate_report(
         best_path=row.best_path or "C",
     )
 
-    html = await generate_report_html(result)
+    # Capture for closure
+    _result_id = result_id
+    _tenant_id = tenant_id
 
-    # Persist the generated HTML into object storage
-    report_key = f"reports/sandbox_{result_id}.html"
-    store = get_storage()
-    store.put_bytes(report_key, html.encode("utf-8"), content_type="text/html")
-    sandbox_repo.update_report_storage_key(
-        session, result_id, tenant_id=tenant_id, storage_key=report_key
+    async def _do_report():
+        html = await generate_report_html(result)
+
+        report_key = f"reports/sandbox_{_result_id}.html"
+        store = get_storage()
+        store.put_bytes(report_key, html.encode("utf-8"), content_type="text/html")
+        sandbox_repo.update_report_storage_key(
+            session, _result_id, tenant_id=_tenant_id, storage_key=report_key
+        )
+        return {"result_id": _result_id, "storage_key": report_key}
+
+    job = await dispatch_inline_async(
+        session,
+        tenant_id=tenant_id,
+        requested_by=user.id,
+        job_type="report",
+        payload={"result_id": result_id},
+        fn=_do_report,
     )
 
     audit_service.record(
@@ -168,10 +183,10 @@ async def generate_report(
         user_id=user.id,
         resource_type="sandbox_result",
         resource_id=result_id,
-        after={"format": "html", "storage_key": report_key},
+        after={"job_id": job.id},
     )
 
-    return HTMLResponse(content=html)
+    return {"job_id": job.id, "status": job.status}
 
 
 @router.get("/{result_id}/report/download")

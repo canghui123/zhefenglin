@@ -117,7 +117,7 @@ def test_upload_calculate_simulate_report_write_audit_logs():
         "/api/asset-package/calculate",
         json={"package_id": package_id},
     )
-    assert calc.status_code == 200, calc.text
+    assert calc.status_code == 202, calc.text
 
     # Simulate
     sim = client.post(
@@ -138,7 +138,7 @@ def test_upload_calculate_simulate_report_write_audit_logs():
 
     # Report
     report = client.post(f"/api/sandbox/{result_id}/report")
-    assert report.status_code == 200
+    assert report.status_code == 202
 
     actions = {row.action for row in _read_audit_logs()}
     assert {"login", "upload", "calculate", "simulate", "report"} <= actions

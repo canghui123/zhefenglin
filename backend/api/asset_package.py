@@ -19,6 +19,7 @@ from services.excel_parser import parse_excel
 from services.che300_client import batch_valuation
 from services.pricing_engine import calculate_package
 from services.depreciation import predict_depreciation
+from services.job_dispatcher import dispatch_inline_async
 from services.storage.factory import get_storage
 from services.tenant_context import get_current_tenant_id
 
@@ -111,7 +112,7 @@ class CalculateRequest(BaseModel):
 
 @router.post(
     "/calculate",
-    response_model=PackageCalculationResult,
+    status_code=202,
     dependencies=[Depends(require_role("operator"))],
 )
 async def calculate(
@@ -121,11 +122,10 @@ async def calculate(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
-    """对已上传的资产包运行定价计算"""
+    """对已上传的资产包运行定价计算（异步任务）"""
     pkg = asset_package_repo.get_package_by_id(
         session, req.package_id, tenant_id=tenant_id
     )
-
     if not pkg:
         raise HTTPException(status_code=404, detail="资产包不存在")
 
@@ -139,58 +139,66 @@ async def calculate(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Excel文件已丢失")
 
-    ext = ".xlsx" if key.endswith(".xlsx") else ".xls"
-    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-        tmp.write(data)
-        tmp_path = tmp.name
+    # Capture values needed by the closure
+    _package_id = req.package_id
+    _parameters = req.parameters
+    _tenant_id = tenant_id
 
-    try:
-        parse_result = parse_excel(tmp_path)
-    finally:
-        os.remove(tmp_path)
-    assets = parse_result.assets
+    async def _do_calculate():
+        ext = ".xlsx" if key.endswith(".xlsx") else ".xls"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+        try:
+            parse_result = parse_excel(tmp_path)
+        finally:
+            os.remove(tmp_path)
+        assets = parse_result.assets
+        if not assets:
+            raise ValueError("资产包中没有有效资产")
 
-    if not assets:
-        raise HTTPException(status_code=400, detail="资产包中没有有效资产")
+        val_items = []
+        for a in assets:
+            reg_date = a.first_registration.isoformat() if a.first_registration else "2020-01-01"
+            val_items.append({
+                "row_number": a.row_number,
+                "vin": a.vin,
+                "model_id": f"mock_{a.row_number}",
+                "registration_date": reg_date,
+            })
+        valuations = await batch_valuation(session, val_items)
 
-    # 2. 批量估值（优先使用VIN真实API，无VIN则Mock）
-    val_items = []
-    for a in assets:
-        reg_date = a.first_registration.isoformat() if a.first_registration else "2020-01-01"
-        val_items.append({
-            "row_number": a.row_number,
-            "vin": a.vin,
-            "model_id": f"mock_{a.row_number}",
-            "registration_date": reg_date,
-        })
+        dep_items = []
+        for a in assets:
+            val = valuations.get(a.row_number)
+            reg_year = a.first_registration.year if a.first_registration else 2020
+            dep_items.append({
+                "row_number": a.row_number,
+                "car_description": a.car_description,
+                "valuation": val.medium_price if val and val.medium_price else 0,
+                "reg_year": reg_year,
+            })
+        depreciation_rates = await predict_depreciation(session, dep_items)
 
-    valuations = await batch_valuation(session, val_items)
+        result = calculate_package(assets, _parameters, valuations, depreciation_rates)
+        result.package_id = _package_id
 
-    # 3. LLM贬值预测
-    dep_items = []
-    for a in assets:
-        val = valuations.get(a.row_number)
-        reg_year = a.first_registration.year if a.first_registration else 2020
-        dep_items.append({
-            "row_number": a.row_number,
-            "car_description": a.car_description,
-            "valuation": val.medium_price if val and val.medium_price else 0,
-            "reg_year": reg_year,
-        })
+        asset_package_repo.save_package_result(
+            session,
+            _package_id,
+            tenant_id=_tenant_id,
+            parameters_json=_parameters.model_dump_json(),
+            results_json=result.model_dump_json(),
+        )
+        return {"package_id": _package_id, "asset_count": len(assets)}
 
-    depreciation_rates = await predict_depreciation(session, dep_items)
-
-    # 4. 运行定价引擎
-    result = calculate_package(assets, req.parameters, valuations, depreciation_rates)
-    result.package_id = req.package_id
-
-    # 5. 保存结果
-    asset_package_repo.save_package_result(
+    job = await dispatch_inline_async(
         session,
-        req.package_id,
         tenant_id=tenant_id,
-        parameters_json=req.parameters.model_dump_json(),
-        results_json=result.model_dump_json(),
+        requested_by=user.id,
+        job_type="calculate",
+        payload={"package_id": _package_id},
+        fn=_do_calculate,
     )
 
     audit_service.record(
@@ -201,10 +209,10 @@ async def calculate(
         user_id=user.id,
         resource_type="asset_package",
         resource_id=req.package_id,
-        after={"asset_count": len(assets)},
+        after={"job_id": job.id},
     )
 
-    return result
+    return {"job_id": job.id, "status": job.status}
 
 
 @router.get("/{package_id}")

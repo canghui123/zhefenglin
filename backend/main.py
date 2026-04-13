@@ -12,6 +12,7 @@ from api.car_valuation import router as valuation_router
 from api.asset_package import router as asset_router
 from api.inventory_sandbox import router as sandbox_router
 from api.portfolio import router as portfolio_router
+from api.jobs import router as jobs_router
 from middleware.request_context import RequestContextMiddleware
 
 
@@ -48,6 +49,7 @@ app.include_router(valuation_router)
 app.include_router(asset_router)
 app.include_router(sandbox_router)
 app.include_router(portfolio_router)
+app.include_router(jobs_router)
 
 
 @app.get("/api/health")

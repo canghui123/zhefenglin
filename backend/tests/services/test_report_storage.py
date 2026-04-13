@@ -64,7 +64,7 @@ def test_report_generation_stores_html_in_storage():
     result_id = sim.json()["id"]
 
     rpt = client.post(f"/api/sandbox/{result_id}/report")
-    assert rpt.status_code == 200
+    assert rpt.status_code == 202
 
     # DB row should have report_storage_key
     gen = get_db_session()

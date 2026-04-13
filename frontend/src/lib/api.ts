@@ -54,13 +54,22 @@ export async function uploadExcel(file: File) {
   }>("/api/asset-package/upload", { method: "POST", body: form });
 }
 
-// 运行定价计算
-export async function calculatePackage(packageId: number, parameters: PricingParameters) {
-  return request<PackageCalculationResult>("/api/asset-package/calculate", {
+// 运行定价计算 (returns 202 with job reference)
+export async function calculatePackage(
+  packageId: number,
+  parameters: PricingParameters
+): Promise<{ job_id: number; status: string }> {
+  const res = await fetch(`${API_BASE}/api/asset-package/calculate`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ package_id: packageId, parameters }),
   });
+  if (!res.ok && res.status !== 202) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new ApiError(err.detail || "计算请求失败", res.status);
+  }
+  return res.json();
 }
 
 // 获取资产包结果
@@ -86,13 +95,27 @@ export async function simulateSandbox(input: SandboxInput) {
   });
 }
 
-// 生成报告HTML
-export async function generateReport(resultId: number): Promise<string> {
+// 生成报告 (returns 202 with job reference)
+export async function generateReport(
+  resultId: number
+): Promise<{ job_id: number; status: string }> {
   const res = await fetch(`${API_BASE}/api/sandbox/${resultId}/report`, {
     method: "POST",
     credentials: "include",
   });
-  if (!res.ok) throw new ApiError("报告生成失败", res.status);
+  if (!res.ok && res.status !== 202) {
+    throw new ApiError("报告生成失败", res.status);
+  }
+  return res.json();
+}
+
+// 下载已生成的报告HTML
+export async function downloadReport(resultId: number): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/api/sandbox/${resultId}/report/download`,
+    { credentials: "include" }
+  );
+  if (!res.ok) throw new ApiError("报告下载失败", res.status);
   return res.text();
 }
 

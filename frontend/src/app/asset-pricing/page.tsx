@@ -18,9 +18,11 @@ import {
 import {
   uploadExcel,
   calculatePackage,
+  getPackage,
   type PricingParameters,
   type PackageCalculationResult,
 } from "@/lib/api";
+import { pollJob } from "@/lib/jobs";
 
 function formatMoney(n: number) {
   return n.toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -71,8 +73,15 @@ export default function AssetPricingPage() {
     setCalculating(true);
     setError("");
     try {
-      const res = await calculatePackage(packageId, params);
-      setResult(res);
+      const { job_id } = await calculatePackage(packageId, params);
+      const job = await pollJob(job_id);
+      if (job.status === "failed") {
+        throw new Error(job.error_message || "计算失败");
+      }
+      const pkg = await getPackage(packageId);
+      if (pkg.results) {
+        setResult(pkg.results);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "计算失败");
     } finally {

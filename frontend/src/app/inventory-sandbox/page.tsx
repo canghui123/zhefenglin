@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { simulateSandbox, generateReport, type SandboxResult, type TimePoint, type LitigationScenario, type AuctionRound } from "@/lib/api";
+import { simulateSandbox, generateReport, downloadReport, type SandboxResult, type TimePoint, type LitigationScenario, type AuctionRound } from "@/lib/api";
+import { pollJob } from "@/lib/jobs";
 
 function fmt(n: number) {
   return n.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
@@ -84,7 +85,12 @@ export default function InventorySandboxPage() {
   async function handleReport() {
     if (!result?.id) return;
     try {
-      const html = await generateReport(result.id);
+      const { job_id } = await generateReport(result.id);
+      const job = await pollJob(job_id);
+      if (job.status === "failed") {
+        throw new Error(job.error_message || "报告生成失败");
+      }
+      const html = await downloadReport(result.id);
       setReportHtml(html);
     } catch {
       setError("报告生成失败");
