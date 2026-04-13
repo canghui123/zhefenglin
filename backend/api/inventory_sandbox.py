@@ -1,12 +1,13 @@
 """模块2：库存决策沙盘API"""
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
+from errors import SandboxResultNotFound, ReportNotGenerated, FileNotFoundError_
 from models.simulation import (
     SandboxInput, SandboxResult,
     PathAResult, PathBResult, PathCResult, PathDResult, PathEResult,
@@ -88,7 +89,7 @@ async def get_result(
         session, result_id, tenant_id=tenant_id
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="模拟结果不存在")
+        raise SandboxResultNotFound()
 
     return {
         "id": row.id,
@@ -125,7 +126,7 @@ async def generate_report(
         session, result_id, tenant_id=tenant_id
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="模拟结果不存在")
+        raise SandboxResultNotFound()
 
     # 从保存的完整数据重建SandboxResult
     if row.input_json:
@@ -200,11 +201,11 @@ async def download_report(
         session, result_id, tenant_id=tenant_id
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="模拟结果不存在")
+        raise SandboxResultNotFound()
 
     key = row.report_storage_key
     if not key:
-        raise HTTPException(status_code=404, detail="尚未生成报告")
+        raise ReportNotGenerated()
 
     store = get_storage()
     presigned = store.build_download_url(key)
@@ -215,7 +216,7 @@ async def download_report(
     try:
         data = store.get_bytes(key)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="报告文件不存在")
+        raise FileNotFoundError_()
 
     return Response(
         content=data,

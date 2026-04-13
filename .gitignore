@@ -14,11 +14,15 @@ frontend/out/
 .env
 .env.local
 .env.*.local
+*.pem
+*.key
+credentials.json
 
 # Database
 backend/data/*.db
 backend/data/*.db-wal
 backend/data/*.db-shm
+*.dump
 
 # Uploads & generated files
 backend/data/uploads/

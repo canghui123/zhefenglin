@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi import APIRouter, UploadFile, File, Depends, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
+from errors import AssetPackageNotFound, FileNotFoundError_, InvalidFileFormat, ParseError
 from models.asset import PricingParameters, PackageCalculationResult
 from repositories import asset_package_repo
 from services import audit_service  # noqa: F401
@@ -40,7 +41,7 @@ async def upload_excel(
 ):
     """上传Excel资产包，返回解析结果"""
     if not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="仅支持.xlsx或.xls文件")
+        raise InvalidFileFormat()
 
     # 先插入数据库拿到 package_id，用它做唯一文件名，避免同名覆盖
     pkg = asset_package_repo.create_package(
@@ -72,7 +73,7 @@ async def upload_excel(
     except Exception:
         store.delete_object(storage_key)
         asset_package_repo.delete_package(session, package_id, tenant_id=tenant_id)
-        raise HTTPException(status_code=400, detail="Excel解析失败，请检查文件格式")
+        raise ParseError()
     finally:
         if "tmp_path" in locals() and os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -127,17 +128,17 @@ async def calculate(
         session, req.package_id, tenant_id=tenant_id
     )
     if not pkg:
-        raise HTTPException(status_code=404, detail="资产包不存在")
+        raise AssetPackageNotFound()
 
     key = pkg.storage_key or pkg.upload_filename
     if not key:
-        raise HTTPException(status_code=404, detail="Excel文件已丢失")
+        raise FileNotFoundError_()
 
     store = get_storage()
     try:
         data = store.get_bytes(key)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Excel文件已丢失")
+        raise FileNotFoundError_()
 
     # Capture values needed by the closure
     _package_id = req.package_id
@@ -227,7 +228,7 @@ async def get_package(
     )
 
     if not pkg:
-        raise HTTPException(status_code=404, detail="资产包不存在")
+        raise AssetPackageNotFound()
 
     result_data = None
     if pkg.results_json:
@@ -253,11 +254,11 @@ async def download_package(
         session, package_id, tenant_id=tenant_id
     )
     if not pkg:
-        raise HTTPException(status_code=404, detail="资产包不存在")
+        raise AssetPackageNotFound()
 
     key = pkg.storage_key or pkg.upload_filename
     if not key:
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise FileNotFoundError_()
 
     store = get_storage()
     presigned = store.build_download_url(key)
@@ -268,7 +269,7 @@ async def download_package(
     try:
         data = store.get_bytes(key)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise FileNotFoundError_()
 
     return Response(
         content=data,

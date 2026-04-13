@@ -19,12 +19,13 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
 from db.models.role import role_rank
 from db.models.user import User
 from db.session import get_db_session
+from errors import Unauthorized, Forbidden
 from services.auth_service import AuthError, resolve_session
 
 
@@ -51,19 +52,11 @@ def get_current_user(
 ) -> User:
     token = _extract_token(request)
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="未登录",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise Unauthorized("未登录")
     try:
         return resolve_session(session, token)
     except AuthError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"会话无效: {exc}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise Unauthorized(f"会话无效: {exc}")
 
 
 def require_role(min_role: str) -> Callable[..., User]:
@@ -77,10 +70,7 @@ def require_role(min_role: str) -> Callable[..., User]:
 
     def _dep(user: User = Depends(get_current_user)) -> User:
         if role_rank(user.role) < needed:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="权限不足",
-            )
+            raise Forbidden()
         return user
 
     return _dep
@@ -94,10 +84,7 @@ def require_any_role(*roles: str) -> Callable[..., User]:
 
     def _dep(user: User = Depends(get_current_user)) -> User:
         if user.role not in role_set:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="权限不足",
-            )
+            raise Forbidden()
         return user
 
     return _dep

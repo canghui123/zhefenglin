@@ -1,10 +1,11 @@
 """Job status / listing endpoints."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user
+from errors import JobNotFound
 from services.job_dispatcher import get_job, list_jobs
 from services.tenant_context import get_current_tenant_id
 
@@ -46,5 +47,5 @@ async def job_status(
 ):
     job = get_job(session, job_id)
     if job is None or job.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise JobNotFound()
     return _serialize(job)

@@ -3,9 +3,13 @@ export const API_BASE =
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  code: string;
+  requestId: string;
+  constructor(message: string, status: number, code: string = "", requestId: string = "") {
     super(message);
     this.status = status;
+    this.code = code;
+    this.requestId = requestId;
   }
 }
 
@@ -18,8 +22,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new ApiError(error.detail || "请求失败", res.status);
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    if (body?.error?.code) {
+      throw new ApiError(
+        body.error.message || "请求失败",
+        res.status,
+        body.error.code,
+        body.error.request_id || "",
+      );
+    }
+    throw new ApiError(body.detail || "请求失败", res.status);
   }
   return res.json();
 }
