@@ -7,8 +7,9 @@ import random
 from datetime import date
 from typing import Optional
 
-import httpx
 from sqlalchemy.orm import Session
+
+from services.http_client import resilient_post, ExternalServiceError, ExternalTimeoutError
 
 from config import settings
 from models.valuation import ValuationResult
@@ -125,14 +126,15 @@ async def _real_vin_valuation(
 
     url = f"{settings.che300_api_base}/open/v1/get-eval-price-by-vin"
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            url,
-            data=post_data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    resp = await resilient_post(
+        "che300",
+        url,
+        data=post_data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
+        retries=2,
+    )
+    data = resp.json()
 
     if data.get("code") != 2000:
         raise ValueError(f"车300 API错误 (code={data.get('code')}): {data.get('msg', '未知错误')}")

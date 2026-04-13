@@ -14,13 +14,8 @@ from typing import Any, Callable, Optional
 
 from sqlalchemy.orm import Session
 
-# Async support — only imported when needed at runtime
-try:
-    from typing import Coroutine
-except ImportError:
-    pass
-
 from db.models.job_run import JobRun
+from services.metrics import JOBS_TOTAL
 
 
 # ---------- repo helpers (kept inline, tiny) ----------
@@ -114,6 +109,7 @@ def dispatch_inline(
     try:
         result = fn()
         _mark_succeeded(session, job, result=result)
+        JOBS_TOTAL.labels(job_type=job_type, status="succeeded").inc()
     except Exception as exc:
         _mark_failed(
             session,
@@ -121,6 +117,7 @@ def dispatch_inline(
             code=type(exc).__name__,
             message=f"{exc}\n{traceback.format_exc()[-500:]}",
         )
+        JOBS_TOTAL.labels(job_type=job_type, status="failed").inc()
     return job
 
 
@@ -152,6 +149,7 @@ async def dispatch_inline_async(
         if asyncio.iscoroutine(result):
             result = await result
         _mark_succeeded(session, job, result=result)
+        JOBS_TOTAL.labels(job_type=job_type, status="succeeded").inc()
     except Exception as exc:
         _mark_failed(
             session,
@@ -159,4 +157,5 @@ async def dispatch_inline_async(
             code=type(exc).__name__,
             message=f"{exc}\n{traceback.format_exc()[-500:]}",
         )
+        JOBS_TOTAL.labels(job_type=job_type, status="failed").inc()
     return job
