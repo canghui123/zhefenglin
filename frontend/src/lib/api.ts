@@ -172,6 +172,38 @@ export async function getActionCenter() {
   return request<ActionCenterData>("/api/portfolio/action-center");
 }
 
+// ============ 用户管理 API ============
+
+export interface UserInfo {
+  id: number;
+  email: string;
+  display_name: string | null;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export async function listUsers() {
+  return request<UserInfo[]>("/api/admin/users");
+}
+
+export async function updateUserRole(userId: number, role: string) {
+  return request<UserInfo>(`/api/admin/users/${userId}/role`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function toggleUserActive(userId: number, isActive: boolean) {
+  return request<UserInfo>(`/api/admin/users/${userId}/active`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
 // ---- Types ----
 
 export interface PricingParameters {

@@ -42,6 +42,12 @@ const navSections = [
       { href: "/portfolio/actions", label: "动作中心" },
     ],
   },
+  {
+    title: "系统管理",
+    items: [
+      { href: "/admin/users", label: "用户管理" },
+    ],
+  },
 ];
 
 export default function RootLayout({
