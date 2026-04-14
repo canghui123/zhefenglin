@@ -36,9 +36,10 @@ class Settings(BaseSettings):
     default_city_code: str = "320100"
     default_city_name: str = "南京"
 
-    # ---------- DeepSeek LLM ----------
+    # ---------- LLM ----------
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
+    llm_model: str = ""
 
     class Config:
         env_file = os.path.join(_THIS_DIR, "..", ".env")

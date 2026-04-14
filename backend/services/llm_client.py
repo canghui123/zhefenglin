@@ -35,7 +35,7 @@ async def chat_completion(
     start = time.monotonic()
     try:
         response = await client.chat.completions.create(
-            model="deepseek-chat",
+            model=settings.llm_model or "qwen-plus",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
