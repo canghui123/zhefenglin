@@ -37,6 +37,21 @@ export async function login(email: string, password: string): Promise<CurrentUse
   return data.user as CurrentUser;
 }
 
+export async function register(email: string, password: string, displayName?: string): Promise<CurrentUser> {
+  const res = await fetch(`${API_BASE}/api/auth/register`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, display_name: displayName }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: "注册失败" }));
+    throw new ApiError(body.detail || "注册失败", res.status);
+  }
+  const data = await res.json();
+  return data.user as CurrentUser;
+}
+
 export async function logout(): Promise<void> {
   await fetch(`${API_BASE}/api/auth/logout`, {
     method: "POST",

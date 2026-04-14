@@ -10,26 +10,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSession } from "@/components/auth/session-provider";
 
-export default function LoginPage() {
+export default function RegisterPage() {
   return (
     <Suspense fallback={null}>
-      <LoginForm />
+      <RegisterForm />
     </Suspense>
   );
 }
 
-function LoginForm() {
-  const { login, user, loading } = useSession();
+function RegisterForm() {
+  const { register, user, loading } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // If a session is already valid, bounce to the target page.
   useEffect(() => {
     if (!loading && user) {
       router.replace(next);
@@ -39,12 +40,18 @@ function LoginForm() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+
+    if (password !== confirmPassword) {
+      setError("两次输入的密码不一致");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await login(email, password);
+      await register(email, password, displayName || undefined);
       router.replace(next);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      setError(err instanceof Error ? err.message : "注册失败");
     } finally {
       setSubmitting(false);
     }
@@ -54,7 +61,7 @@ function LoginForm() {
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>登录</CardTitle>
+          <CardTitle>注册</CardTitle>
           <CardDescription>汽车金融不良资产 AI 平台</CardDescription>
         </CardHeader>
         <CardContent>
@@ -68,6 +75,17 @@ function LoginForm() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="username"
+                placeholder="your@email.com"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="displayName">昵称（选填）</Label>
+              <Input
+                id="displayName"
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="您的昵称"
               />
             </div>
             <div className="space-y-2">
@@ -78,7 +96,21 @@ function LoginForm() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                autoComplete="current-password"
+                minLength={6}
+                autoComplete="new-password"
+                placeholder="至少6位"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">确认密码</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                minLength={6}
+                autoComplete="new-password"
               />
             </div>
             {error && (
@@ -87,12 +119,12 @@ function LoginForm() {
               </p>
             )}
             <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? "登录中..." : "登录"}
+              {submitting ? "注册中..." : "注册"}
             </Button>
             <p className="text-sm text-center text-muted-foreground">
-              没有账号？
-              <Link href="/register" className="text-primary hover:underline ml-1">
-                立即注册
+              已有账号？
+              <Link href="/login" className="text-primary hover:underline ml-1">
+                立即登录
               </Link>
             </p>
           </form>

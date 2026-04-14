@@ -1,16 +1,18 @@
-"""Authentication endpoints — login, logout, me."""
+"""Authentication endpoints — login, logout, register, me."""
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import SESSION_COOKIE_NAME, get_current_user
+from repositories import user_repo
 from services import audit_service  # noqa: F401
 from services.auth_service import AuthError, authenticate, revoke
+from services.password_service import hash_password
 
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
@@ -19,6 +21,27 @@ router = APIRouter(prefix="/api/auth", tags=["认证"])
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if "@" not in v or "." not in v.split("@")[-1]:
+            raise ValueError("请输入有效的邮箱地址")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("密码长度不能少于6位")
+        return v
 
 
 class UserOut(BaseModel):
@@ -43,6 +66,58 @@ def _user_out(u: User) -> UserOut:
         display_name=u.display_name,
         role=u.role,
         last_login_at=u.last_login_at,
+    )
+
+
+@router.post("/register", response_model=LoginResponse)
+def register(
+    req: RegisterRequest,
+    request: Request,
+    response: Response,
+    session: Session = Depends(get_db_session),
+):
+    existing = user_repo.get_user_by_email(session, email=req.email)
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="该邮箱已被注册",
+        )
+
+    user_repo.create_user(
+        session,
+        email=req.email,
+        password_hash=hash_password(req.password),
+        role="viewer",
+        display_name=req.display_name or req.email.split("@")[0],
+    )
+    session.commit()
+
+    issued = authenticate(
+        session,
+        email=req.email,
+        password=req.password,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+
+    max_age = max(
+        int((issued.expires_at - datetime.now(timezone.utc)).total_seconds()),
+        0,
+    )
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=issued.access_token,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        path="/",
+    )
+
+    return LoginResponse(
+        access_token=issued.access_token,
+        expires_at=issued.expires_at,
+        user=_user_out(issued.user),
     )
 
 

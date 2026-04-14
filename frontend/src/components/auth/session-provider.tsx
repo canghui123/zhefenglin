@@ -14,6 +14,7 @@ import {
   fetchCurrentUser,
   login as loginRequest,
   logout as logoutRequest,
+  register as registerRequest,
   type CurrentUser,
 } from "@/lib/auth";
 
@@ -21,13 +22,14 @@ interface SessionState {
   user: CurrentUser | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, displayName?: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
 
 const SessionContext = createContext<SessionState | null>(null);
 
-const PUBLIC_PATHS = new Set(["/login"]);
+const PUBLIC_PATHS = new Set(["/login", "/register"]);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
@@ -62,8 +64,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
-      const next = await loginRequest(email, password);
-      setUser(next);
+      const u = await loginRequest(email, password);
+      setUser(u);
+    },
+    [],
+  );
+
+  const register = useCallback(
+    async (email: string, password: string, displayName?: string) => {
+      const u = await registerRequest(email, password, displayName);
+      setUser(u);
     },
     [],
   );
@@ -75,8 +85,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refresh }),
-    [user, loading, login, logout, refresh],
+    () => ({ user, loading, login, register, logout, refresh }),
+    [user, loading, login, register, logout, refresh],
   );
 
   return (
