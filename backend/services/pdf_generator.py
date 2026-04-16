@@ -24,9 +24,22 @@ def _get_template_env():
     return Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
 
 
-async def generate_report_html(result: SandboxResult) -> str:
+async def generate_report_html(
+    result: SandboxResult,
+    *,
+    session=None,
+    tenant_id: int = None,
+    user_id: int = None,
+    request_id: str = None,
+) -> str:
     """生成报告HTML内容"""
-    analysis = await _generate_analysis(result)
+    analysis = await _generate_analysis(
+        result,
+        session=session,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        request_id=request_id,
+    )
 
     env = _get_template_env()
     template = env.get_template("vehicle_report.html")
@@ -68,7 +81,14 @@ async def generate_report_html(result: SandboxResult) -> str:
     return html
 
 
-async def _generate_analysis(result: SandboxResult) -> str:
+async def _generate_analysis(
+    result: SandboxResult,
+    *,
+    session=None,
+    tenant_id: int = None,
+    user_id: int = None,
+    request_id: str = None,
+) -> str:
     """调用LLM生成专业分析文本"""
     system = (
         "你是一位汽车金融不良资产处置专家。请根据以下量化分析数据，"
@@ -101,4 +121,15 @@ async def _generate_analysis(result: SandboxResult) -> str:
 
 请撰写专业分析摘要。"""
 
-    return await chat_completion(system, user, temperature=0.5, max_tokens=800)
+    return await chat_completion(
+        system,
+        user,
+        temperature=0.5,
+        max_tokens=800,
+        session=session,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        module="inventory-sandbox",
+        task_type="report_generation",
+        request_id=request_id,
+    )

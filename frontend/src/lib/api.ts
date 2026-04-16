@@ -239,6 +239,287 @@ export async function toggleUserActive(userId: number, isActive: boolean) {
   });
 }
 
+// ============ 商业化管理 API ============
+
+export interface CommercialPlan {
+  id: number;
+  code: string;
+  name: string;
+  billing_cycle_supported: string;
+  monthly_price: number;
+  yearly_price: number;
+  setup_fee: number;
+  private_deploy_fee: number;
+  seat_limit: number;
+  included_vin_calls: number;
+  included_condition_pricing_points: number;
+  included_ai_reports: number;
+  included_asset_packages: number;
+  included_sandbox_runs: number;
+  overage_vin_unit_price: number;
+  overage_condition_pricing_unit_price: number;
+  feature_flags: Record<string, boolean>;
+  is_active: boolean;
+}
+
+export interface CommercialPlanInput {
+  code: string;
+  name: string;
+  billing_cycle_supported: string;
+  monthly_price: number;
+  yearly_price: number;
+  setup_fee: number;
+  private_deploy_fee: number;
+  seat_limit: number;
+  included_vin_calls: number;
+  included_condition_pricing_points: number;
+  included_ai_reports: number;
+  included_asset_packages: number;
+  included_sandbox_runs: number;
+  overage_vin_unit_price: number;
+  overage_condition_pricing_unit_price: number;
+  feature_flags: Record<string, boolean>;
+  is_active: boolean;
+}
+
+export interface TenantSubscriptionInfo {
+  id: number;
+  tenant_id: number;
+  tenant_code: string | null;
+  tenant_name: string | null;
+  plan_code: string | null;
+  plan_name: string | null;
+  status: string;
+  monthly_budget_limit: number;
+  alert_threshold_percent: number;
+}
+
+export interface SubscriptionUpdateInput {
+  plan_code: string;
+  status: string;
+  monthly_budget_limit: number;
+  alert_threshold_percent: number;
+}
+
+export interface CostCenterOverview {
+  month: string;
+  tenant_count: number;
+  active_subscription_count: number;
+  totals: {
+    vin_calls: number;
+    condition_pricing_calls: number;
+    llm_input_tokens: number;
+    llm_output_tokens: number;
+    llm_cost: number;
+    che300_cost: number;
+    total_cost: number;
+    estimated_revenue: number;
+    estimated_gross_profit: number;
+  };
+  modules: Array<{ module: string; events: number; quantity: number; cost: number }>;
+}
+
+export interface CostCenterTenantRow {
+  tenant_id: number;
+  tenant_code: string;
+  tenant_name: string;
+  plan_code: string | null;
+  plan_name: string | null;
+  vin_calls: number;
+  condition_pricing_calls: number;
+  llm_input_tokens: number;
+  llm_output_tokens: number;
+  total_cost: number;
+  estimated_revenue: number;
+  estimated_gross_profit: number;
+  avg_cost_per_vehicle: number;
+  monthly_budget_limit: number;
+}
+
+export interface ValueDashboardData {
+  month: string;
+  estimated_hours_saved: number;
+  high_risk_vehicles: number;
+  blocked_high_cost_calls: number;
+  recommended_path_coverage: number;
+  estimated_decisions_processed: number;
+}
+
+export interface ModelRoutingRule {
+  id: number;
+  scope: string;
+  tenant_id: number | null;
+  task_type: string;
+  preferred_model: string;
+  fallback_model: string | null;
+  allow_batch: boolean;
+  allow_search: boolean;
+  allow_high_cost_mode: boolean;
+  prompt_version: string;
+  is_active: boolean;
+}
+
+export interface ModelRoutingRuleInput {
+  scope: string;
+  tenant_id?: number | null;
+  task_type: string;
+  preferred_model: string;
+  fallback_model?: string | null;
+  allow_batch: boolean;
+  allow_search: boolean;
+  allow_high_cost_mode: boolean;
+  prompt_version: string;
+  is_active: boolean;
+}
+
+export interface ValuationRule {
+  id: number;
+  scope: string;
+  tenant_id: number | null;
+  enabled: boolean;
+  trigger_type: string;
+  trigger_config: Record<string, unknown>;
+}
+
+export interface ValuationRuleInput {
+  scope: string;
+  tenant_id?: number | null;
+  enabled: boolean;
+  trigger_type: string;
+  trigger_config: Record<string, unknown>;
+}
+
+export interface ApprovalRequestInfo {
+  id: number;
+  tenant_id: number;
+  type: string;
+  status: string;
+  applicant_user_id: number;
+  approver_user_id: number | null;
+  reason: string;
+  related_object_type: string | null;
+  related_object_id: string | null;
+  estimated_cost: number;
+  actual_cost: number;
+  metadata: Record<string, unknown>;
+  created_at: string | null;
+  decided_at: string | null;
+}
+
+export async function listCommercialPlans() {
+  return request<CommercialPlan[]>("/api/admin/settings/plans");
+}
+
+export async function createCommercialPlan(input: CommercialPlanInput) {
+  return request<CommercialPlan>("/api/admin/settings/plans", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateCommercialPlan(planId: number, input: Partial<CommercialPlanInput>) {
+  return request<CommercialPlan>(`/api/admin/settings/plans/${planId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listSubscriptions() {
+  return request<TenantSubscriptionInfo[]>("/api/admin/settings/subscriptions");
+}
+
+export async function updateSubscription(tenantId: number, input: SubscriptionUpdateInput) {
+  return request<TenantSubscriptionInfo & { plan_code: string }>(
+    `/api/admin/settings/subscriptions/${tenantId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function getCostCenterOverview() {
+  return request<CostCenterOverview>("/api/admin/cost-center/overview");
+}
+
+export async function getCostCenterTenants() {
+  return request<CostCenterTenantRow[]>("/api/admin/cost-center/tenants");
+}
+
+export async function exportCostCenterCsv() {
+  const res = await fetch(`${API_BASE}/api/admin/cost-center/export`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new ApiError("成本中心导出失败", res.status);
+  return res.text();
+}
+
+export async function getValueDashboard() {
+  return request<ValueDashboardData>("/api/admin/cost-center/value-dashboard");
+}
+
+export async function listModelRoutingRules() {
+  return request<ModelRoutingRule[]>("/api/admin/model-routing");
+}
+
+export async function upsertModelRoutingRule(input: ModelRoutingRuleInput) {
+  return request<{ id: number }>("/api/admin/model-routing", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listValuationRules() {
+  return request<ValuationRule[]>("/api/admin/valuation-rules");
+}
+
+export async function upsertValuationRule(input: ValuationRuleInput) {
+  return request<{ id: number }>("/api/admin/valuation-rules", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listApprovalRequests() {
+  return request<ApprovalRequestInfo[]>("/api/admin/approval-requests");
+}
+
+export async function createApprovalRequest(input: {
+  type: string;
+  reason: string;
+  related_object_type?: string;
+  related_object_id?: string;
+  estimated_cost: number;
+  metadata?: Record<string, unknown>;
+}) {
+  return request<ApprovalRequestInfo>("/api/admin/approval-requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function approveApprovalRequest(id: number, actualCost: number) {
+  return request<ApprovalRequestInfo>(`/api/admin/approval-requests/${id}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ actual_cost: actualCost }),
+  });
+}
+
+export async function rejectApprovalRequest(id: number, actualCost: number = 0) {
+  return request<ApprovalRequestInfo>(`/api/admin/approval-requests/${id}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ actual_cost: actualCost }),
+  });
+}
+
 // ---- Types ----
 
 export interface PricingParameters {

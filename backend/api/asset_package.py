@@ -210,16 +210,40 @@ async def calculate(
                 reg_date = None  # 不传让 API 按年限估算
             # 里程缺失时按年均 2.5 万公里估算
             effective_mileage = _estimate_mileage(a.mileage, a.first_registration)
+            risk_tags = []
+            if a.insurance_lapsed:
+                risk_tags.append("insurance_lapsed")
+            if a.ownership_transferred:
+                risk_tags.append("ownership_transferred")
+            if a.gps_online is False:
+                risk_tags.append("gps_offline")
             val_items.append({
                 "row_number": a.row_number,
                 "vin": a.vin,
                 "model_id": f"mock_{a.row_number}",
                 "registration_date": reg_date,
                 "mileage": effective_mileage,  # 万公里，关键估值参数
+                "vehicle_value": a.buyout_price or a.loan_principal,
+                "risk_tags": risk_tags,
+                "manual_selected": _parameters.manual_selected,
+                "approval_mode": _parameters.approval_mode,
             })
         # 把用户选择的车况透传给车300（默认 good）
         valuations = await batch_valuation(
-            session, val_items, condition=_parameters.vehicle_condition or "good"
+            session,
+            val_items,
+            condition=_parameters.vehicle_condition or "good",
+            tenant_id=_tenant_id,
+            user_id=user.id,
+            module="asset-pricing",
+            request_id=getattr(request.state, "request_id", None),
+            valuation_level=(
+                "condition_pricing" if _parameters.advanced_condition_pricing else "basic"
+            ),
+            single_task_budget=_parameters.single_task_budget,
+            manual_selected=_parameters.manual_selected,
+            approval_mode=_parameters.approval_mode,
+            strict_policy=_parameters.strict_policy,
         )
 
         dep_items = []
@@ -272,12 +296,19 @@ async def calculate(
 class SuggestBuyoutRequest(BaseModel):
     package_id: int
     vehicle_condition: str = "good"  # excellent/good/normal
+    advanced_condition_pricing: bool = False
+    manual_selected: bool = False
+    approval_mode: bool = False
+    strict_policy: bool = False
+    single_task_budget: Optional[float] = None
 
 
 @router.post("/suggest-buyout", dependencies=[Depends(require_role("operator"))])
 async def suggest_buyout(
     req: SuggestBuyoutRequest,
+    request: Request,
     session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """AI建议每台车的买断价区间（ai_suggest策略使用）
@@ -319,14 +350,38 @@ async def suggest_buyout(
     for a in assets:
         reg_date = f"{a.first_registration.year}-{a.first_registration.month:02d}" if a.first_registration else None
         effective_mileage = _estimate_mileage(a.mileage, a.first_registration)
+        risk_tags = []
+        if a.insurance_lapsed:
+            risk_tags.append("insurance_lapsed")
+        if a.ownership_transferred:
+            risk_tags.append("ownership_transferred")
+        if a.gps_online is False:
+            risk_tags.append("gps_offline")
         val_items.append({
             "row_number": a.row_number,
             "vin": a.vin,
             "model_id": f"mock_{a.row_number}",
             "registration_date": reg_date,
             "mileage": effective_mileage,
+            "vehicle_value": a.buyout_price or a.loan_principal,
+            "risk_tags": risk_tags,
+            "manual_selected": req.manual_selected,
+            "approval_mode": req.approval_mode,
         })
-    valuations = await batch_valuation(session, val_items, condition=req.vehicle_condition)
+    valuations = await batch_valuation(
+        session,
+        val_items,
+        condition=req.vehicle_condition,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        module="asset-pricing",
+        request_id=getattr(request.state, "request_id", None),
+        valuation_level="condition_pricing" if req.advanced_condition_pricing else "basic",
+        single_task_budget=req.single_task_budget,
+        manual_selected=req.manual_selected,
+        approval_mode=req.approval_mode,
+        strict_policy=req.strict_policy,
+    )
 
     # 基于估值给出建议买断价：车300价 × 折扣系数（默认根据车况）
     condition_factor = {"excellent": 0.55, "good": 0.50, "normal": 0.45}.get(req.vehicle_condition, 0.50)
@@ -369,6 +424,12 @@ async def suggest_buyout(
         system_prompt="你是汽车金融不良资产处置领域的资深专家，擅长二手车定价和风险评估。",
         user_prompt=prompt,
         max_tokens=500,
+        session=session,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        module="asset-pricing",
+        task_type="report_generation",
+        request_id=getattr(request.state, "request_id", None),
     )
 
     return {

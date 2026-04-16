@@ -26,6 +26,14 @@ REQUIRED_TABLES = sorted([
     "memberships",
     "audit_logs",
     "job_runs",
+    "plans",
+    "tenant_subscriptions",
+    "feature_entitlements",
+    "usage_events",
+    "cost_snapshots",
+    "model_routing_rules",
+    "valuation_trigger_rules",
+    "approval_requests",
 ])
 
 

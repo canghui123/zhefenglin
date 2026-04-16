@@ -36,11 +36,16 @@ class Settings(BaseSettings):
     default_city_code: str = "320100"
     default_city_name: str = "南京"
 
+    che300_basic_unit_cost: float = 1.5
+    che300_condition_pricing_unit_cost: float = 36.0
     # ---------- LLM ----------
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     llm_model: str = ""
 
+    llm_turbo_unit_cost: float = 0.2
+    llm_plus_unit_cost: float = 0.8
+    llm_long_unit_cost: float = 1.5
     class Config:
         env_file = os.path.join(_THIS_DIR, "..", ".env")
 

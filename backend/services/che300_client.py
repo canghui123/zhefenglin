@@ -10,9 +10,11 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from config import settings
+from errors import BusinessError
+from services import commercial_policy_service, cost_metering_service
 from services.http_client import resilient_post, ExternalServiceError, ExternalTimeoutError
 
-from config import settings
 from models.valuation import ValuationResult
 from repositories import valuation_repo
 
@@ -79,26 +81,116 @@ async def get_valuation_by_vin(
     reg_date: Optional[str] = None,
     mile_age: Optional[float] = None,
     condition: Optional[str] = None,  # excellent/good/normal
+    tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    module: str = "car-valuation",
+    request_id: Optional[str] = None,
+    valuation_level: str = "basic",
+    vehicle_value: Optional[float] = None,
+    profit_margin: Optional[float] = None,
+    risk_tags: Optional[list[str]] = None,
+    manual_selected: bool = False,
+    approval_mode: bool = False,
+    single_task_budget: Optional[float] = None,
+    strict_policy: bool = False,
 ) -> ValuationResult:
     """通过VIN码获取估值 — 自动选择真实API或Mock
 
     condition: 车300车况选项，可选 excellent(优秀) / good(良好) / normal(一般)
                不传时车300使用默认值（通常是 good）
     """
-    # cache key 包含 reg_date、mileage、condition，避免不同参数命中同一缓存
+    if tenant_id is not None and valuation_level == "condition_pricing":
+        policy = commercial_policy_service.preflight_condition_pricing(
+            session,
+            tenant_id=tenant_id,
+            vehicle_value=vehicle_value,
+            profit_margin=profit_margin,
+            risk_tags=risk_tags or [],
+            manual_selected=manual_selected,
+            approval_mode=approval_mode,
+            single_task_budget=single_task_budget,
+            strict_policy=strict_policy,
+        )
+    elif tenant_id is not None:
+        policy = commercial_policy_service.preflight_vin_valuation(
+            session,
+            tenant_id=tenant_id,
+            single_task_budget=single_task_budget,
+        )
+    else:
+        executed_level = "condition_pricing" if valuation_level == "condition_pricing" else "basic"
+        policy = {
+            "requested_level": valuation_level,
+            "executed_level": executed_level,
+            "degraded": False,
+            "reason": None,
+        }
+
+    effective_condition = condition if policy["executed_level"] == "condition_pricing" else "good"
+
+    # cache key 包含 reg_date、mileage、实际执行档位，避免不同参数命中同一缓存
     reg_key = (reg_date or "unknown")[:7]  # YYYY-MM
     mile_key = f"{mile_age:.1f}" if mile_age else "none"
-    cond_key = condition or "default"
-    cache_key = f"vin_{vin}_{reg_key}_{mile_key}_{cond_key}"
+    cond_key = effective_condition or "default"
+    level_key = policy["executed_level"]
+    cache_key = f"vin_{vin}_{reg_key}_{mile_key}_{cond_key}_{level_key}"
 
     cached = _check_cache(session, cache_key)
-    if cached:
-        return cached
+    result = cached
+    from_cache = cached is not None
 
-    if settings.che300_access_key and settings.che300_access_secret:
-        return await _real_vin_valuation(session, vin, city_name, reg_date, mile_age, cache_key, condition)
-    else:
-        return _mock_valuation(session, vin, reg_date or "2020-01", mile_age, cache_key)
+    if result is None:
+        if settings.che300_access_key and settings.che300_access_secret:
+            result = await _real_vin_valuation(
+                session,
+                vin,
+                city_name,
+                reg_date,
+                mile_age,
+                cache_key,
+                effective_condition,
+            )
+        else:
+            result = _mock_valuation(session, vin, reg_date or "2020-01", mile_age, cache_key)
+
+    if tenant_id is not None:
+        resource_type = (
+            "condition_pricing"
+            if policy["executed_level"] == "condition_pricing"
+            else "vin_call"
+        )
+        unit_cost = 0.0
+        if not from_cache and not result.is_mock:
+            unit_cost = (
+                settings.che300_condition_pricing_unit_cost
+                if resource_type == "condition_pricing"
+                else settings.che300_basic_unit_cost
+            )
+        cost_metering_service.record_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            module=module,
+            action="valuation",
+            resource_type=resource_type,
+            quantity=1,
+            unit_cost_internal=unit_cost,
+            unit_price_external=0,
+            request_id=request_id,
+            related_object_type="vehicle",
+            related_object_id=vin,
+            metadata={
+                "requested_level": policy["requested_level"],
+                "executed_level": policy["executed_level"],
+                "degraded": policy.get("degraded", False),
+                "reason": policy.get("reason"),
+                "cached": from_cache,
+                "is_mock": result.is_mock,
+                "condition": effective_condition,
+            },
+        )
+
+    return result
 
 
 async def _real_vin_valuation(
@@ -246,11 +338,39 @@ async def get_valuation(
     mileage: Optional[float] = None,
     city_code: Optional[str] = None,
     condition: Optional[str] = None,
+    tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    module: str = "car-valuation",
+    request_id: Optional[str] = None,
+    valuation_level: str = "basic",
+    vehicle_value: Optional[float] = None,
+    profit_margin: Optional[float] = None,
+    risk_tags: Optional[list[str]] = None,
+    manual_selected: bool = False,
+    approval_mode: bool = False,
+    single_task_budget: Optional[float] = None,
+    strict_policy: bool = False,
 ) -> ValuationResult:
     """兼容旧接口 — 如果model_id是VIN则用VIN接口，否则用Mock"""
     if len(model_id) == 17 and model_id.isalnum():
         return await get_valuation_by_vin(
-            session, model_id, reg_date=registration_date, mile_age=mileage, condition=condition
+            session,
+            model_id,
+            reg_date=registration_date,
+            mile_age=mileage,
+            condition=condition,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            module=module,
+            request_id=request_id,
+            valuation_level=valuation_level,
+            vehicle_value=vehicle_value,
+            profit_margin=profit_margin,
+            risk_tags=risk_tags,
+            manual_selected=manual_selected,
+            approval_mode=approval_mode,
+            single_task_budget=single_task_budget,
+            strict_policy=strict_policy,
         )
 
     reg_key = (registration_date or "unknown")[:7]
@@ -259,9 +379,37 @@ async def get_valuation(
     cache_key = f"{model_id}_{reg_key}_{mile_key}_{cond_key}"
     cached = _check_cache(session, cache_key)
     if cached:
-        return cached
+        result = cached
+        from_cache = True
+    else:
+        result = _mock_valuation(session, model_id, registration_date, mileage, cache_key)
+        from_cache = False
 
-    return _mock_valuation(session, model_id, registration_date, mileage, cache_key)
+    if tenant_id is not None:
+        cost_metering_service.record_usage(
+            session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            module=module,
+            action="valuation",
+            resource_type="vin_call",
+            quantity=1,
+            unit_cost_internal=0,
+            unit_price_external=0,
+            request_id=request_id,
+            related_object_type="vehicle",
+            related_object_id=model_id,
+            metadata={
+                "requested_level": valuation_level,
+                "executed_level": "basic",
+                "degraded": False,
+                "reason": None,
+                "cached": from_cache,
+                "is_mock": result.is_mock,
+                "condition": cond_key,
+            },
+        )
+    return result
 
 
 def _mock_valuation(
@@ -317,6 +465,15 @@ async def batch_valuation(
     session: Session,
     items: list[dict],
     condition: Optional[str] = None,
+    tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
+    module: str = "asset-pricing",
+    request_id: Optional[str] = None,
+    valuation_level: str = "basic",
+    single_task_budget: Optional[float] = None,
+    manual_selected: bool = False,
+    approval_mode: bool = False,
+    strict_policy: bool = False,
 ) -> dict[int, ValuationResult]:
     """批量估值 — 优先使用VIN，回退到Mock
 
@@ -334,15 +491,54 @@ async def batch_valuation(
         try:
             if vin and len(vin) == 17:
                 val = await get_valuation_by_vin(
-                    session, vin,
+                    session,
+                    vin,
                     city_name=city_name,
                     reg_date=reg_date,
                     mile_age=mileage,
                     condition=condition,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    module=module,
+                    request_id=request_id,
+                    valuation_level=valuation_level,
+                    vehicle_value=item.get("vehicle_value"),
+                    profit_margin=item.get("profit_margin"),
+                    risk_tags=item.get("risk_tags"),
+                    manual_selected=item.get("manual_selected", manual_selected),
+                    approval_mode=item.get("approval_mode", approval_mode),
+                    single_task_budget=single_task_budget,
+                    strict_policy=strict_policy,
                 )
             else:
-                val = await get_valuation(session, model_id, reg_date or "2020-01", mileage, condition=condition)
+                val = await get_valuation(
+                    session,
+                    model_id,
+                    reg_date or "2020-01",
+                    mileage,
+                    condition=condition,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    module=module,
+                    request_id=request_id,
+                    valuation_level=valuation_level,
+                    vehicle_value=item.get("vehicle_value"),
+                    profit_margin=item.get("profit_margin"),
+                    risk_tags=item.get("risk_tags"),
+                    manual_selected=item.get("manual_selected", manual_selected),
+                    approval_mode=item.get("approval_mode", approval_mode),
+                    single_task_budget=single_task_budget,
+                    strict_policy=strict_policy,
+                )
             results[row_num] = val
+        except BusinessError:
+            if strict_policy:
+                raise
+            results[row_num] = ValuationResult(
+                model_id=vin or model_id,
+                model_name="商业化策略拦截，已降级为基础估值",
+                is_mock=True,
+            )
         except Exception as e:
             results[row_num] = ValuationResult(
                 model_id=vin or model_id,

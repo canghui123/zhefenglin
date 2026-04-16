@@ -73,3 +73,32 @@ class Forbidden(BusinessError):
 class ReportNotGenerated(BusinessError):
     def __init__(self):
         super().__init__("REPORT_NOT_GENERATED", "尚未生成报告", 404)
+
+
+class ApprovalNotFound(BusinessError):
+    def __init__(self):
+        super().__init__("APPROVAL_NOT_FOUND", "审批单不存在", 404)
+
+
+class ApprovalAlreadyDecided(BusinessError):
+    def __init__(self):
+        super().__init__("APPROVAL_ALREADY_DECIDED", "审批单已处理，不能重复操作", 409)
+
+
+class QuotaExceeded(BusinessError):
+    def __init__(self, detail: str = "当前额度已用尽", details: Optional[Dict[str, Any]] = None):
+        super().__init__("QUOTA_EXCEEDED", detail, 409, details)
+
+
+class BudgetExceeded(BusinessError):
+    def __init__(self, detail: str = "当前预算不足", details: Optional[Dict[str, Any]] = None):
+        super().__init__("BUDGET_EXCEEDED", detail, 409, details)
+
+
+class HighCostActionBlocked(BusinessError):
+    def __init__(
+        self,
+        detail: str = "当前请求未满足高成本能力触发条件",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__("HIGH_COST_ACTION_BLOCKED", detail, 409, details)

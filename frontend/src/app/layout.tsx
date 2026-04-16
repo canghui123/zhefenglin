@@ -45,6 +45,13 @@ const navSections = [
   {
     title: "系统管理",
     items: [
+      { href: "/admin/settings", label: "系统设置" },
+      { href: "/admin/billing", label: "套餐计费" },
+      { href: "/admin/cost-center", label: "成本中心" },
+      { href: "/admin/model-routing", label: "模型路由" },
+      { href: "/admin/valuation-rules", label: "估值规则" },
+      { href: "/admin/approval-requests", label: "审批请求" },
+      { href: "/admin/value-dashboard", label: "价值看板" },
       { href: "/admin/users", label: "用户管理" },
     ],
   },

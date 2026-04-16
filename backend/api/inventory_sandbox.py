@@ -157,7 +157,13 @@ async def generate_report(
     _tenant_id = tenant_id
 
     async def _do_report():
-        html = await generate_report_html(result)
+        html = await generate_report_html(
+            result,
+            session=session,
+            tenant_id=_tenant_id,
+            user_id=user.id,
+            request_id=getattr(request.state, "request_id", None),
+        )
 
         report_key = f"reports/sandbox_{_result_id}.html"
         store = get_storage()

@@ -19,6 +19,11 @@ from api.inventory_sandbox import router as sandbox_router
 from api.portfolio import router as portfolio_router
 from api.jobs import router as jobs_router
 from api.metrics import router as metrics_router
+from api.admin_settings import router as admin_settings_router
+from api.admin_cost_center import router as admin_cost_center_router
+from api.admin_model_routing import router as admin_model_routing_router
+from api.admin_valuation_rules import router as admin_valuation_rules_router
+from api.admin_approval_requests import router as admin_approval_requests_router
 from api.admin import router as admin_router
 from middleware.request_context import RequestContextMiddleware
 from middleware.metrics import MetricsMiddleware
@@ -130,6 +135,11 @@ app.include_router(valuation_router)
 app.include_router(asset_router)
 app.include_router(sandbox_router)
 app.include_router(portfolio_router)
+app.include_router(admin_settings_router)
+app.include_router(admin_cost_center_router)
+app.include_router(admin_model_routing_router)
+app.include_router(admin_valuation_rules_router)
+app.include_router(admin_approval_requests_router)
 app.include_router(jobs_router)
 app.include_router(metrics_router)
 app.include_router(admin_router)
