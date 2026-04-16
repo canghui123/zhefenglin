@@ -1,6 +1,7 @@
 """车300 API客户端 — VIN估值接口 + 正确签名算法"""
 
 import hashlib
+import re
 import time
 import json
 import random
@@ -77,18 +78,27 @@ async def get_valuation_by_vin(
     city_name: Optional[str] = None,
     reg_date: Optional[str] = None,
     mile_age: Optional[float] = None,
+    condition: Optional[str] = None,  # excellent/good/normal
 ) -> ValuationResult:
-    """通过VIN码获取估值 — 自动选择真实API或Mock"""
-    cache_key = f"vin_{vin}"
+    """通过VIN码获取估值 — 自动选择真实API或Mock
+
+    condition: 车300车况选项，可选 excellent(优秀) / good(良好) / normal(一般)
+               不传时车300使用默认值（通常是 good）
+    """
+    # cache key 包含 reg_date、mileage、condition，避免不同参数命中同一缓存
+    reg_key = (reg_date or "unknown")[:7]  # YYYY-MM
+    mile_key = f"{mile_age:.1f}" if mile_age else "none"
+    cond_key = condition or "default"
+    cache_key = f"vin_{vin}_{reg_key}_{mile_key}_{cond_key}"
 
     cached = _check_cache(session, cache_key)
     if cached:
         return cached
 
     if settings.che300_access_key and settings.che300_access_secret:
-        return await _real_vin_valuation(session, vin, city_name, reg_date, mile_age)
+        return await _real_vin_valuation(session, vin, city_name, reg_date, mile_age, cache_key, condition)
     else:
-        return _mock_valuation(session, vin, reg_date or "2020-01")
+        return _mock_valuation(session, vin, reg_date or "2020-01", mile_age, cache_key)
 
 
 async def _real_vin_valuation(
@@ -97,6 +107,8 @@ async def _real_vin_valuation(
     city_name: Optional[str],
     reg_date: Optional[str],
     mile_age: Optional[float],
+    cache_key: Optional[str] = None,
+    condition: Optional[str] = None,
 ) -> ValuationResult:
     """调用车300 VIN估值真实API"""
     timestamp = str(int(time.time() * 1000))  # 毫秒级时间戳
@@ -104,11 +116,26 @@ async def _real_vin_valuation(
     # 业务参数（city_name是必传字段）
     if not city_name:
         city_name = settings.default_city_name
+    # all_level=1 仍保留，车300会返回全部车况档位；同时显式传 condition 作为默认档位
     business_params = {"vin": vin, "all_level": "1", "city_name": city_name}
+
+    # 车况参数：车300支持 excellent/good/normal，默认 good
+    cond = condition if condition in ("excellent", "good", "normal") else "good"
+    business_params["condition"] = cond
+
+    # 车300 要求 reg_date 为 "YYYY-MM" 格式（不是 YYYY-MM-DD）
     if reg_date:
-        business_params["reg_date"] = reg_date
-    if mile_age is not None:
-        business_params["mile_age"] = str(mile_age)
+        rd = str(reg_date).strip()
+        # 兼容 "YYYY-MM-DD" / "YYYY/MM/DD" / "YYYY-MM" / "YYYY.MM.DD"
+        parts = re.split(r"[-/.]", rd)
+        if len(parts) >= 2:
+            business_params["reg_date"] = f"{parts[0]}-{parts[1].zfill(2)}"
+        else:
+            business_params["reg_date"] = rd
+
+    # 里程数（万公里），车300 API 要求单位为"万公里"
+    if mile_age is not None and mile_age > 0:
+        business_params["mile_age"] = f"{float(mile_age):.2f}"
 
     # 生成签名
     sn = _generate_signature(
@@ -183,7 +210,8 @@ async def _real_vin_valuation(
     if good is None and medium:
         good = round(medium * 1.06, -2)
 
-    cache_key = f"vin_{vin}"
+    if not cache_key:
+        cache_key = f"vin_{vin}"
     result = ValuationResult(
         model_id=str(car.get("model_id", vin)),
         model_name=model_name.strip(),
@@ -217,21 +245,33 @@ async def get_valuation(
     registration_date: str,
     mileage: Optional[float] = None,
     city_code: Optional[str] = None,
+    condition: Optional[str] = None,
 ) -> ValuationResult:
     """兼容旧接口 — 如果model_id是VIN则用VIN接口，否则用Mock"""
     if len(model_id) == 17 and model_id.isalnum():
-        return await get_valuation_by_vin(session, model_id, reg_date=registration_date, mile_age=mileage)
+        return await get_valuation_by_vin(
+            session, model_id, reg_date=registration_date, mile_age=mileage, condition=condition
+        )
 
-    cache_key = model_id
+    reg_key = (registration_date or "unknown")[:7]
+    mile_key = f"{mileage:.1f}" if mileage else "none"
+    cond_key = condition or "default"
+    cache_key = f"{model_id}_{reg_key}_{mile_key}_{cond_key}"
     cached = _check_cache(session, cache_key)
     if cached:
         return cached
 
-    return _mock_valuation(session, model_id, registration_date)
+    return _mock_valuation(session, model_id, registration_date, mileage, cache_key)
 
 
-def _mock_valuation(session: Session, model_id: str, registration_date: str) -> ValuationResult:
-    """Mock估值 — 基于上牌年份生成合理假数据"""
+def _mock_valuation(
+    session: Session,
+    model_id: str,
+    registration_date: str,
+    mileage: Optional[float] = None,
+    cache_key: Optional[str] = None,
+) -> ValuationResult:
+    """Mock估值 — 基于上牌年份和里程生成合理假数据"""
     try:
         reg_year = int(registration_date[:4])
     except (ValueError, IndexError):
@@ -241,15 +281,25 @@ def _mock_valuation(session: Session, model_id: str, registration_date: str) -> 
     age = max(current_year - reg_year, 0)
 
     base_price = 150000
+    # 年限折旧：每年 12%
     depreciation = base_price * (0.88 ** age)
+
+    # 里程折旧：标准年均2万公里，超出部分每万公里扣1.5%
+    if mileage is not None and mileage > 0:
+        expected_mileage = age * 2.0  # 万公里
+        excess = max(mileage - expected_mileage, 0)
+        depreciation *= max(1 - excess * 0.015, 0.5)
+
     noise = random.uniform(0.92, 1.08)
     medium = round(depreciation * noise, -2)
     excellent = round(medium * 1.15, -2)
     good = round(medium * 1.08, -2)
     fair = round(medium * 0.85, -2)
 
+    if not cache_key:
+        cache_key = model_id
     result = ValuationResult(
-        model_id=model_id,
+        model_id=cache_key,
         model_name=f"Mock车型_{model_id}",
         excellent_price=excellent,
         good_price=good,
@@ -259,24 +309,39 @@ def _mock_valuation(session: Session, model_id: str, registration_date: str) -> 
         dealer_sell_price=round(medium * 1.05, -2),
         is_mock=True,
     )
-    _save_cache(session, model_id, result, '{"mock": true}')
+    _save_cache(session, cache_key, result, '{"mock": true}')
     return result
 
 
-async def batch_valuation(session: Session, items: list[dict]) -> dict[int, ValuationResult]:
-    """批量估值 — 优先使用VIN，回退到Mock"""
+async def batch_valuation(
+    session: Session,
+    items: list[dict],
+    condition: Optional[str] = None,
+) -> dict[int, ValuationResult]:
+    """批量估值 — 优先使用VIN，回退到Mock
+
+    condition: 车况档位 excellent/good/normal，全局应用到所有车辆
+    """
     results = {}
     for item in items:
         row_num = item["row_number"]
         vin = item.get("vin")
         model_id = item.get("model_id", "unknown")
-        reg_date = item.get("registration_date", "2020-01")
+        reg_date = item.get("registration_date")
+        mileage = item.get("mileage")  # 单位：万公里
+        city_name = item.get("city_name")
 
         try:
             if vin and len(vin) == 17:
-                val = await get_valuation_by_vin(session, vin, reg_date=reg_date)
+                val = await get_valuation_by_vin(
+                    session, vin,
+                    city_name=city_name,
+                    reg_date=reg_date,
+                    mile_age=mileage,
+                    condition=condition,
+                )
             else:
-                val = await get_valuation(session, model_id, reg_date)
+                val = await get_valuation(session, model_id, reg_date or "2020-01", mileage, condition=condition)
             results[row_num] = val
         except Exception as e:
             results[row_num] = ValuationResult(

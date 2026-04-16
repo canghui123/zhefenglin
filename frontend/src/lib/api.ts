@@ -52,7 +52,9 @@ export async function uploadExcel(file: File) {
       assets: Array<{
         row_number: number;
         car_description: string;
+        vin: string | null;
         first_registration: string | null;
+        mileage: number | null;
         gps_online: boolean | null;
         insurance_lapsed: boolean | null;
         ownership_transferred: boolean | null;
@@ -62,20 +64,53 @@ export async function uploadExcel(file: File) {
       errors: Array<{ row_number: number; field: string; message: string }>;
       total_rows: number;
       success_rows: number;
+      column_mapping: Record<string, string>;
+      unmapped_columns: string[];
+      suggested_strategy: "direct" | "discount" | "ai_suggest";
+      strategy_message: string;
     };
   }>("/api/asset-package/upload", { method: "POST", body: form });
+}
+
+// AI 买断价建议
+export interface BuyoutSuggestion {
+  row_number: number;
+  car_description: string;
+  first_registration: string | null;
+  mileage: number | null;
+  che300_valuation: number | null;
+  suggested_buyout_low: number;
+  suggested_buyout_mid: number;
+  suggested_buyout_high: number;
+}
+
+export async function suggestBuyout(packageId: number, vehicleCondition: string) {
+  return request<{
+    package_id: number;
+    vehicle_condition: string;
+    total_suggested_buyout: number;
+    suggestions: BuyoutSuggestion[];
+    ai_comment: string;
+  }>("/api/asset-package/suggest-buyout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ package_id: packageId, vehicle_condition: vehicleCondition }),
+  });
 }
 
 // 运行定价计算 (returns 202 with job reference)
 export async function calculatePackage(
   packageId: number,
-  parameters: PricingParameters
+  parameters: PricingParameters,
+  aiBuyoutOverrides?: Record<number, number>,
 ): Promise<{ job_id: number; status: string }> {
+  const body: Record<string, unknown> = { package_id: packageId, parameters };
+  if (aiBuyoutOverrides) body.ai_buyout_overrides = aiBuyoutOverrides;
   const res = await fetch(`${API_BASE}/api/asset-package/calculate`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ package_id: packageId, parameters }),
+    body: JSON.stringify(body),
   });
   if (!res.ok && res.status !== 202) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -211,6 +246,9 @@ export interface PricingParameters {
   daily_parking: number;
   capital_rate: number;
   disposal_period: number;
+  vehicle_condition?: "excellent" | "good" | "normal";
+  buyout_strategy?: "direct" | "discount" | "ai_suggest";
+  discount_rate?: number | null;
 }
 
 export interface AssetPricingResult {

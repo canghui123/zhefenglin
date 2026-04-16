@@ -8,6 +8,30 @@ from models.asset import (
 from models.valuation import ValuationResult
 
 
+def _pick_condition_price(valuation: ValuationResult, condition: str) -> Optional[float]:
+    """根据车况从估值中选对应价格"""
+    if condition == "excellent":
+        return valuation.excellent_price or valuation.good_price or valuation.medium_price
+    if condition == "normal":
+        return valuation.medium_price or valuation.fair_price or valuation.good_price
+    # 默认 good（良好）
+    return valuation.good_price or valuation.medium_price or valuation.excellent_price
+
+
+def _compute_buyout(asset: Asset, params: PricingParameters) -> float:
+    """根据策略计算单车买断价"""
+    strategy = params.buyout_strategy
+    if strategy == "discount":
+        if asset.loan_principal and params.discount_rate:
+            return round(asset.loan_principal * params.discount_rate, 2)
+        return 0
+    if strategy == "ai_suggest":
+        # ai_suggest 模式下 buyout_price 由 AI endpoint 预先写入 asset.buyout_price
+        return asset.buyout_price or 0
+    # direct 模式：直接用 Excel 解析出的 buyout_price
+    return asset.buyout_price or 0
+
+
 def calculate_single_asset(
     asset: Asset,
     params: PricingParameters,
@@ -15,7 +39,7 @@ def calculate_single_asset(
     depreciation_rate: Optional[float],
 ) -> AssetPricingResult:
     """计算单台车的成本、收入、利润和风险"""
-    buyout = asset.buyout_price or 0
+    buyout = _compute_buyout(asset, params)
     risk_flags = []
 
     # --- 成本计算 ---
@@ -28,8 +52,10 @@ def calculate_single_asset(
     che300_val = None
     expected_revenue = 0
 
-    if valuation and valuation.medium_price:
-        che300_val = valuation.medium_price
+    if valuation:
+        che300_val = _pick_condition_price(valuation, params.vehicle_condition)
+
+    if che300_val:
         dep_rate = depreciation_rate if depreciation_rate is not None else 0.02
         expected_revenue = che300_val * (1 - dep_rate)
     elif buyout > 0:

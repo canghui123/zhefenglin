@@ -8,7 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_TRUSTED_HOST=
+RUN if [ -n "$PIP_TRUSTED_HOST" ]; then \
+      pip install --no-cache-dir -i "$PIP_INDEX_URL" --trusted-host "$PIP_TRUSTED_HOST" -r requirements.txt; \
+    else \
+      pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements.txt; \
+    fi
 
 COPY . .
 

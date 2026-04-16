@@ -3,10 +3,12 @@
 import json
 import os
 import tempfile
+from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Depends, Request
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from db.models.user import User
@@ -18,9 +20,10 @@ from repositories import asset_package_repo
 from services import audit_service  # noqa: F401
 from services.excel_parser import parse_excel
 from services.che300_client import batch_valuation
-from services.pricing_engine import calculate_package
+from services.pricing_engine import calculate_package, _pick_condition_price
 from services.depreciation import predict_depreciation
 from services.job_dispatcher import dispatch_inline_async
+from services.llm_client import chat_completion
 from services.storage.factory import get_storage
 from services.tenant_context import get_current_tenant_id
 
@@ -29,6 +32,24 @@ router = APIRouter(
     tags=["资产包定价"],
     dependencies=[Depends(get_current_user)],
 )
+
+# 缺少里程时的年均估算值（万公里/年）
+ESTIMATED_ANNUAL_MILEAGE = 2.5
+
+
+def _estimate_mileage(mileage: Optional[float], first_registration: Optional[date]) -> Optional[float]:
+    """里程缺失时按上牌年限估算：每年 2.5 万公里
+
+    Returns: (估算后的里程, 是否是估算值)
+    """
+    if mileage is not None and mileage > 0:
+        return mileage
+    if first_registration is None:
+        return None
+    today = date.today()
+    years = (today - first_registration).days / 365.25
+    years = max(years, 0)
+    return round(years * ESTIMATED_ANNUAL_MILEAGE, 2)
 
 
 @router.post("/upload", dependencies=[Depends(require_role("operator"))])
@@ -109,6 +130,21 @@ async def upload_excel(
 class CalculateRequest(BaseModel):
     package_id: int
     parameters: PricingParameters = PricingParameters()
+    # ai_suggest 模式下，前端把 AI 建议的买断价回传（{row_number: buyout_price}）
+    ai_buyout_overrides: Optional[dict[int, float]] = Field(default=None)
+
+    @field_validator("ai_buyout_overrides", mode="before")
+    @classmethod
+    def validate_overrides(cls, overrides):
+        if overrides is None:
+            return None
+        cleaned: dict[int, float] = {}
+        for row_number, price in overrides.items():
+            normalized_price = float(price)
+            if normalized_price <= 0:
+                raise ValueError("ai_buyout_overrides 必须全部为正数")
+            cleaned[int(row_number)] = normalized_price
+        return cleaned
 
 
 @router.post(
@@ -144,6 +180,7 @@ async def calculate(
     _package_id = req.package_id
     _parameters = req.parameters
     _tenant_id = tenant_id
+    _overrides = req.ai_buyout_overrides or {}
 
     async def _do_calculate():
         ext = ".xlsx" if key.endswith(".xlsx") else ".xls"
@@ -158,16 +195,32 @@ async def calculate(
         if not assets:
             raise ValueError("资产包中没有有效资产")
 
+        # ai_suggest 策略：把前端回传的 AI 建议买断价写入 asset
+        if _parameters.buyout_strategy == "ai_suggest" and _overrides:
+            for a in assets:
+                if a.row_number in _overrides:
+                    a.buyout_price = _overrides[a.row_number]
+
         val_items = []
         for a in assets:
-            reg_date = a.first_registration.isoformat() if a.first_registration else "2020-01-01"
+            # reg_date 使用 YYYY-MM 格式，车300 API 要求
+            if a.first_registration:
+                reg_date = f"{a.first_registration.year}-{a.first_registration.month:02d}"
+            else:
+                reg_date = None  # 不传让 API 按年限估算
+            # 里程缺失时按年均 2.5 万公里估算
+            effective_mileage = _estimate_mileage(a.mileage, a.first_registration)
             val_items.append({
                 "row_number": a.row_number,
                 "vin": a.vin,
                 "model_id": f"mock_{a.row_number}",
                 "registration_date": reg_date,
+                "mileage": effective_mileage,  # 万公里，关键估值参数
             })
-        valuations = await batch_valuation(session, val_items)
+        # 把用户选择的车况透传给车300（默认 good）
+        valuations = await batch_valuation(
+            session, val_items, condition=_parameters.vehicle_condition or "good"
+        )
 
         dep_items = []
         for a in assets:
@@ -214,6 +267,117 @@ async def calculate(
     )
 
     return {"job_id": job.id, "status": job.status}
+
+
+class SuggestBuyoutRequest(BaseModel):
+    package_id: int
+    vehicle_condition: str = "good"  # excellent/good/normal
+
+
+@router.post("/suggest-buyout", dependencies=[Depends(require_role("operator"))])
+async def suggest_buyout(
+    req: SuggestBuyoutRequest,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """AI建议每台车的买断价区间（ai_suggest策略使用）
+
+    流程：
+    1. 读取已上传的Excel
+    2. 调用车300获取每台车估值
+    3. 让LLM综合年限、里程、车况风险给出买断价建议区间
+    """
+    pkg = asset_package_repo.get_package_by_id(session, req.package_id, tenant_id=tenant_id)
+    if not pkg:
+        raise AssetPackageNotFound()
+
+    key = pkg.storage_key or pkg.upload_filename
+    if not key:
+        raise FileNotFoundError_()
+
+    store = get_storage()
+    try:
+        data = store.get_bytes(key)
+    except FileNotFoundError:
+        raise FileNotFoundError_()
+
+    ext = ".xlsx" if key.endswith(".xlsx") else ".xls"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+    try:
+        parse_result = parse_excel(tmp_path)
+    finally:
+        os.remove(tmp_path)
+
+    assets = parse_result.assets
+    if not assets:
+        raise ParseError()
+
+    # 批量估值，把车况透传给车300；里程缺失按年均 2.5 万公里估算
+    val_items = []
+    for a in assets:
+        reg_date = f"{a.first_registration.year}-{a.first_registration.month:02d}" if a.first_registration else None
+        effective_mileage = _estimate_mileage(a.mileage, a.first_registration)
+        val_items.append({
+            "row_number": a.row_number,
+            "vin": a.vin,
+            "model_id": f"mock_{a.row_number}",
+            "registration_date": reg_date,
+            "mileage": effective_mileage,
+        })
+    valuations = await batch_valuation(session, val_items, condition=req.vehicle_condition)
+
+    # 基于估值给出建议买断价：车300价 × 折扣系数（默认根据车况）
+    condition_factor = {"excellent": 0.55, "good": 0.50, "normal": 0.45}.get(req.vehicle_condition, 0.50)
+
+    suggestions = []
+    total_mid = 0
+    for a in assets:
+        val = valuations.get(a.row_number)
+        price = _pick_condition_price(val, req.vehicle_condition) if val else None
+        if price:
+            mid = round(price * condition_factor, -2)
+            low = round(mid * 0.85, -2)
+            high = round(mid * 1.15, -2)
+        else:
+            mid = low = high = 0
+        total_mid += mid or 0
+        effective_mileage = _estimate_mileage(a.mileage, a.first_registration)
+        suggestions.append({
+            "row_number": a.row_number,
+            "car_description": a.car_description,
+            "first_registration": a.first_registration.isoformat() if a.first_registration else None,
+            "mileage": a.mileage,
+            "estimated_mileage": effective_mileage,
+            "mileage_is_estimated": a.mileage is None and effective_mileage is not None,
+            "che300_valuation": price,
+            "suggested_buyout_low": low,
+            "suggested_buyout_mid": mid,
+            "suggested_buyout_high": high,
+        })
+
+    # 让 LLM 给一份整体建议评论
+    sample = suggestions[:10]
+    prompt = (
+        f"以下是某个汽车金融不良资产包的{len(suggestions)}台车辆数据和系统初步建议的买断价（前10台）：\n"
+        f"{json.dumps(sample, ensure_ascii=False, indent=2)}\n\n"
+        "请作为资深汽车金融处置顾问，对这个资产包的建议买断价策略给出简短评论（200字以内），"
+        "包括：整体折价合理性、风险提示、谈判建议。"
+    )
+    ai_comment = await chat_completion(
+        system_prompt="你是汽车金融不良资产处置领域的资深专家，擅长二手车定价和风险评估。",
+        user_prompt=prompt,
+        max_tokens=500,
+    )
+
+    return {
+        "package_id": req.package_id,
+        "vehicle_condition": req.vehicle_condition,
+        "total_suggested_buyout": round(total_mid, 2),
+        "suggestions": suggestions,
+        "ai_comment": ai_comment,
+    }
 
 
 @router.get("/{package_id}")

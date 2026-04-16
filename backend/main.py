@@ -49,6 +49,19 @@ app = FastAPI(
     },
 )
 
+
+def _json_safe(value):
+    if isinstance(value, BaseException):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_json_safe(item) for item in value)
+    return value
+
+
 def _get_request_id(request: Request) -> str:
     return getattr(getattr(request, "state", None), "request_id", "")
 
@@ -93,7 +106,7 @@ async def _validation_error_handler(request: Request, exc: RequestValidationErro
                 "code": "VALIDATION_ERROR",
                 "message": "请求参数校验失败",
                 "request_id": _get_request_id(request),
-                "details": {"errors": exc.errors()},
+                "details": {"errors": _json_safe(exc.errors())},
             }
         },
     )

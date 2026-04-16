@@ -16,8 +16,9 @@ COLUMN_KEYWORDS = {
     "gps_online": ["gps", "GPS", "定位"],
     "insurance_lapsed": ["脱保", "保险", "交强险"],
     "ownership_transferred": ["过户", "转移"],
-    "loan_principal": ["本金", "债权", "贷款金额", "剩余本金", "贷款余额"],
-    "buyout_price": ["买断", "折扣价", "收购价", "转让价", "处置价"],
+    "loan_principal": ["本金", "债权", "贷款金额", "剩余本金", "贷款余额", "欠款", "欠息"],
+    "buyout_price": ["买断", "折扣价", "收购价", "转让价"],
+    "mileage": ["里程", "公里", "表显", "行驶里程", "km", "KM", "万公里"],
 }
 
 
@@ -81,9 +82,25 @@ def _parse_bool(val) -> Optional[bool]:
 def _parse_float(val) -> Optional[float]:
     if pd.isna(val):
         return None
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return float(val)
     try:
-        cleaned = re.sub(r"[,，元¥\s]", "", str(val))
-        return float(cleaned)
+        cleaned = str(val).strip().lower()
+        cleaned = re.sub(r"[,，¥￥元\s]", "", cleaned)
+        cleaned = re.sub(r"(公里|km)$", "", cleaned)
+
+        multiplier = 1.0
+        if cleaned.endswith("万元"):
+            cleaned = cleaned[:-2]
+            multiplier = 10000.0
+        elif cleaned.endswith("万"):
+            cleaned = cleaned[:-1]
+            multiplier = 10000.0
+        elif cleaned.endswith("w"):
+            cleaned = cleaned[:-1]
+            multiplier = 10000.0
+
+        return float(cleaned) * multiplier
     except (ValueError, TypeError):
         return None
 
@@ -102,8 +119,11 @@ def parse_excel(
     """
     df = pd.read_excel(file_path, sheet_name=sheet_name)
 
+    all_columns = list(df.columns)
     if column_mapping is None:
-        column_mapping = _auto_detect_mapping(list(df.columns))
+        column_mapping = _auto_detect_mapping(all_columns)
+
+    unmapped = [c for c in all_columns if c not in column_mapping]
 
     # 反转映射：系统字段名 → Excel列名
     field_to_col = {v: k for k, v in column_mapping.items()}
@@ -144,11 +164,20 @@ def parse_excel(
         principal = _parse_float(row.get(field_to_col.get("loan_principal", ""), None)) if "loan_principal" in field_to_col else None
         buyout = _parse_float(row.get(field_to_col.get("buyout_price", ""), None)) if "buyout_price" in field_to_col else None
 
+        # 里程数：智能识别单位
+        mileage = None
+        if "mileage" in field_to_col:
+            raw = _parse_float(row.get(field_to_col["mileage"], None))
+            if raw is not None:
+                # 如果数字超过100，视作"公里"，转成万公里
+                mileage = raw / 10000 if raw > 100 else raw
+
         assets.append(Asset(
             row_number=row_num,
             car_description=car_desc,
             vin=vin,
             first_registration=reg_date,
+            mileage=mileage,
             gps_online=gps,
             insurance_lapsed=insurance,
             ownership_transferred=transferred,
@@ -156,9 +185,25 @@ def parse_excel(
             buyout_price=buyout,
         ))
 
+    # 推断买断价策略
+    mapped_fields = set(column_mapping.values())
+    if "buyout_price" in mapped_fields:
+        strategy = "direct"
+        msg = "已识别到买断价/收购价/转让价列，直接使用该列数据作为买断价"
+    elif "loan_principal" in mapped_fields:
+        strategy = "discount"
+        msg = "已识别到本金/债权列但没有买断价，请输入买断折扣率（如 0.3 表示按本金的30%买断）"
+    else:
+        strategy = "ai_suggest"
+        msg = "未识别到买断价或本金列，可使用AI根据车300估值自动建议每台车的买断价"
+
     return AssetParseResult(
         assets=assets,
         errors=errors,
         total_rows=len(df),
         success_rows=len(assets),
+        column_mapping=column_mapping,
+        unmapped_columns=unmapped,
+        suggested_strategy=strategy,
+        strategy_message=msg,
     )
