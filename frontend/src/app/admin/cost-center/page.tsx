@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 
 import { AdminAccess } from "@/components/admin/admin-access";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  ApiError,
   exportCostCenterCsv,
   getCostCenterOverview,
   getCostCenterTenants,
@@ -20,18 +22,51 @@ export default function AdminCostCenterPage() {
   const [tenants, setTenants] = useState<CostCenterTenantRow[]>([]);
   const [valueDashboard, setValueDashboard] = useState<ValueDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [valueDashboardError, setValueDashboardError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportLocked, setExportLocked] = useState(false);
 
   useEffect(() => {
     (async () => {
+      setLoading(true);
+      setPageError(null);
+      setValueDashboardError(null);
       try {
-        const [overviewData, tenantRows, valueData] = await Promise.all([
+        const [overviewResult, tenantResult, valueDashboardResult] = await Promise.allSettled([
           getCostCenterOverview(),
           getCostCenterTenants(),
           getValueDashboard(),
         ]);
-        setOverview(overviewData);
-        setTenants(tenantRows);
-        setValueDashboard(valueData);
+
+        if (overviewResult.status === "fulfilled") {
+          setOverview(overviewResult.value);
+        } else {
+          setOverview(null);
+          setPageError(
+            overviewResult.reason instanceof Error
+              ? overviewResult.reason.message
+              : "成本总览加载失败",
+          );
+        }
+
+        if (tenantResult.status === "fulfilled") {
+          setTenants(tenantResult.value);
+        } else {
+          setTenants([]);
+          setPageError((prev) => prev || "租户成本明细加载失败");
+        }
+
+        if (valueDashboardResult.status === "fulfilled") {
+          setValueDashboard(valueDashboardResult.value);
+        } else {
+          setValueDashboard(null);
+          setValueDashboardError(
+            valueDashboardResult.reason instanceof Error
+              ? valueDashboardResult.reason.message
+              : "价值看板暂不可用",
+          );
+        }
       } finally {
         setLoading(false);
       }
@@ -39,6 +74,7 @@ export default function AdminCostCenterPage() {
   }, []);
 
   async function handleExport() {
+    setExportError(null);
     try {
       const csv = await exportCostCenterCsv();
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -49,7 +85,11 @@ export default function AdminCostCenterPage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "导出失败");
+      const message = err instanceof Error ? err.message : "导出失败";
+      setExportError(message);
+      if (err instanceof ApiError && err.code === "FEATURE_NOT_ENABLED") {
+        setExportLocked(true);
+      }
     }
   }
 
@@ -61,8 +101,22 @@ export default function AdminCostCenterPage() {
             <h1 className="text-2xl font-bold">成本中心</h1>
             <p className="text-sm text-gray-500 mt-1">按租户、模块、成本口径查看本月使用与毛利情况。</p>
           </div>
-          <Button onClick={handleExport} variant="outline">导出 CSV</Button>
+          <Button onClick={handleExport} variant="outline" disabled={exportLocked}>
+            {exportLocked ? "导出未开通" : "导出 CSV"}
+          </Button>
         </div>
+
+        {pageError && (
+          <Alert variant="destructive">
+            <AlertDescription>{pageError}</AlertDescription>
+          </Alert>
+        )}
+
+        {exportError && (
+          <Alert>
+            <AlertDescription>{exportError}</AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <MetricCard title="VIN 调用量" value={overview?.totals.vin_calls} />
@@ -70,6 +124,12 @@ export default function AdminCostCenterPage() {
           <MetricCard title="本月总成本" value={overview ? `¥${overview.totals.total_cost.toFixed(1)}` : "-"} />
           <MetricCard title="估算毛利" value={overview ? `¥${overview.totals.estimated_gross_profit.toFixed(1)}` : "-"} />
         </div>
+
+        {valueDashboardError && (
+          <Alert>
+            <AlertDescription>{valueDashboardError}</AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard title="已节省工时" value={valueDashboard ? `${valueDashboard.estimated_hours_saved}h` : "-"} />

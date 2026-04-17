@@ -21,6 +21,23 @@ export class ApiError extends Error {
   }
 }
 
+async function buildApiError(
+  res: Response,
+  fallbackMessage: string = "请求失败",
+): Promise<ApiError> {
+  const body = await res.json().catch(() => ({ detail: res.statusText }));
+  if (body?.error?.code) {
+    return new ApiError(
+      body.error.message || fallbackMessage,
+      res.status,
+      body.error.code,
+      body.error.request_id || "",
+      body.error.details || null,
+    );
+  }
+  return new ApiError(body.detail || fallbackMessage, res.status);
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
@@ -30,17 +47,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }));
-    if (body?.error?.code) {
-      throw new ApiError(
-        body.error.message || "请求失败",
-        res.status,
-        body.error.code,
-        body.error.request_id || "",
-        body.error.details || null,
-      );
-    }
-    throw new ApiError(body.detail || "请求失败", res.status);
+    throw await buildApiError(res);
   }
   return res.json();
 }
@@ -149,17 +156,7 @@ export async function calculatePackage(
     body: JSON.stringify(body),
   });
   if (!res.ok && res.status !== 202) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    if (err?.error?.code) {
-      throw new ApiError(
-        err.error.message || "计算请求失败",
-        res.status,
-        err.error.code,
-        err.error.request_id || "",
-        err.error.details || null,
-      );
-    }
-    throw new ApiError(err.detail || "计算请求失败", res.status);
+    throw await buildApiError(res, "计算请求失败");
   }
   return res.json();
 }
@@ -501,7 +498,7 @@ export async function exportCostCenterCsv() {
   const res = await fetch(`${API_BASE}/api/admin/cost-center/export`, {
     credentials: "include",
   });
-  if (!res.ok) throw new ApiError("成本中心导出失败", res.status);
+  if (!res.ok) throw await buildApiError(res, "成本中心导出失败");
   return res.text();
 }
 

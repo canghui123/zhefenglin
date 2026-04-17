@@ -106,6 +106,10 @@ python -m scripts.seed_commercial_defaults
 - 操作员可直接从业务页发起审批请求
 - 审批通过后，业务页可以带 `approval_request_id` 重试高成本动作
 - 审批单在成功执行后会记录消费时间和消费来源请求
+- `seat_limit` 已经接入运行时校验，租户席位满额时会阻止继续分配 membership
+- `feature_entitlements` 已经支持运行时解析，按“租户 override -> 套餐默认 -> plan feature_flags”顺序生效
+- 成本中心 `export` 已接入 `audit.export` 权益控制
+- 租户价值看板 API 已接入 `tenant.value_dashboard` 权益控制
 
 ## 前端页面
 
@@ -143,3 +147,4 @@ npm run build
 - 高级车况定价审批闭环已经打通到资产包页和单车估值 API，但还未扩展为“审批通过后自动恢复执行”的异步工作流
 - 价值看板指标当前为可替换的估算逻辑，适合销售演示和运营驾驶舱一期
 - 套餐和内部成本价格目前已进入配置层和数据库层，下一步可继续做更细的后台调价和审计历史
+- 后台导航本身还未做全量 feature gate，当前优先落地的是高价值 API 与页面反馈层

@@ -70,6 +70,24 @@ class Forbidden(BusinessError):
         super().__init__("FORBIDDEN", detail, 403)
 
 
+class FeatureNotEnabled(BusinessError):
+    def __init__(
+        self,
+        detail: str = "当前套餐未开通该功能",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__("FEATURE_NOT_ENABLED", detail, 403, details)
+
+
+class SeatLimitExceeded(BusinessError):
+    def __init__(
+        self,
+        detail: str = "当前套餐席位已满，请升级套餐或释放现有席位后重试",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__("SEAT_LIMIT_EXCEEDED", detail, 409, details)
+
+
 class ReportNotGenerated(BusinessError):
     def __init__(self):
         super().__init__("REPORT_NOT_GENERATED", "尚未生成报告", 404)

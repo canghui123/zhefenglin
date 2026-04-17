@@ -135,3 +135,76 @@ def test_register_assigns_default_tenant_membership_and_session():
             next(gen)
         except StopIteration:
             pass
+
+
+def test_register_blocks_when_default_tenant_seat_limit_is_exhausted():
+    from sqlalchemy import select
+
+    from db.models.plan import Plan
+    from db.models.subscription import TenantSubscription
+    from scripts.seed_commercial_defaults import seed_defaults
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        seed_defaults(session)
+        default_tenant = tenant_repo.get_or_create_tenant(
+            session, code="default", name="默认租户"
+        )
+        plan = session.scalars(
+            select(Plan).where(Plan.code == "standard").limit(1)
+        ).first()
+        assert plan is not None
+        plan.seat_limit = 1
+        session.add(
+            TenantSubscription(
+                tenant_id=default_tenant.id,
+                plan_id=plan.id,
+                status="active",
+                monthly_budget_limit=5000,
+                alert_threshold_percent=80,
+                is_current=True,
+            )
+        )
+        session.commit()
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+    client = TestClient(app)
+
+    first = client.post(
+        "/api/auth/register",
+        json={
+            "email": "seat-first@example.com",
+            "password": "Passw0rd!",
+            "display_name": "Seat First",
+        },
+    )
+    assert first.status_code == 200, first.text
+
+    second = client.post(
+        "/api/auth/register",
+        json={
+            "email": "seat-second@example.com",
+            "password": "Passw0rd!",
+            "display_name": "Seat Second",
+        },
+    )
+
+    assert second.status_code == 409, second.text
+    body = second.json()
+    assert body["error"]["code"] == "SEAT_LIMIT_EXCEEDED"
+    assert "席位" in body["error"]["message"]
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        assert user_repo.get_user_by_email(session, "seat-second@example.com") is None
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass

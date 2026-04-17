@@ -60,3 +60,58 @@ def test_admin_cost_center_returns_overview_and_tenant_breakdown():
     exported = client.get("/api/admin/cost-center/export")
     assert exported.status_code == 200, exported.text
     assert "tenant_id,tenant_code" in exported.text
+
+
+def test_cost_center_export_requires_audit_export_entitlement():
+    from tests.api.admin_commercial_helpers import seed_subscription, seed_user_and_login
+
+    client = seed_user_and_login(
+        "cost-standard@example.com", role="manager", tenant_code="standard-tenant"
+    )
+    seed_subscription(tenant_code="standard-tenant", plan_code="standard")
+
+    exported = client.get("/api/admin/cost-center/export")
+
+    assert exported.status_code == 403, exported.text
+    body = exported.json()
+    assert body["error"]["code"] == "FEATURE_NOT_ENABLED"
+    assert body["error"]["details"]["feature_key"] == "audit.export"
+
+
+def test_value_dashboard_respects_tenant_feature_override():
+    from db.models.subscription import FeatureEntitlement
+    from db.session import get_db_session
+
+    from tests.api.admin_commercial_helpers import seed_subscription, seed_user_and_login
+
+    client = seed_user_and_login(
+        "value-override@example.com", role="manager", tenant_code="value-tenant"
+    )
+    tenant_id = seed_subscription(tenant_code="value-tenant", plan_code="pro_manager")
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        session.add(
+            FeatureEntitlement(
+                scope="tenant",
+                plan_id=None,
+                tenant_id=tenant_id,
+                feature_key="tenant.value_dashboard",
+                is_enabled=False,
+            )
+        )
+        session.commit()
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+    response = client.get("/api/admin/cost-center/value-dashboard")
+
+    assert response.status_code == 403, response.text
+    body = response.json()
+    assert body["error"]["code"] == "FEATURE_NOT_ENABLED"
+    assert body["error"]["details"]["feature_key"] == "tenant.value_dashboard"
+    assert body["error"]["details"]["source"] == "tenant"

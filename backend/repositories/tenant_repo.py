@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from db.models.membership import Membership
 from db.models.tenant import Tenant
+from services import entitlement_service
 
 
 # ---------- tenants ----------
@@ -50,6 +51,7 @@ def create_membership(
     ).first()
     if existing is not None:
         return existing
+    entitlement_service.ensure_seat_available(session, tenant_id=tenant_id)
     row = Membership(user_id=user_id, tenant_id=tenant_id, role=role)
     session.add(row)
     session.flush()

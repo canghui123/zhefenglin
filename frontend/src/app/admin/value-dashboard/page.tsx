@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AdminAccess } from "@/components/admin/admin-access";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getValueDashboard, type ValueDashboardData } from "@/lib/api";
 
@@ -16,9 +17,23 @@ const metricMeta = [
 
 export default function AdminValueDashboardPage() {
   const [data, setData] = useState<ValueDashboardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getValueDashboard().then(setData).catch(() => setData(null));
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const result = await getValueDashboard();
+        setData(result);
+      } catch (err) {
+        setData(null);
+        setError(err instanceof Error ? err.message : "价值看板加载失败");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
   return (
@@ -29,6 +44,12 @@ export default function AdminValueDashboardPage() {
           <p className="text-sm text-gray-500 mt-1">用于销售演示和续费沟通的价值指标总览。</p>
         </div>
 
+        {error && (
+          <Alert>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
           {metricMeta.map((metric) => (
             <Card key={metric.label}>
@@ -36,7 +57,7 @@ export default function AdminValueDashboardPage() {
                 <CardTitle className="text-sm text-gray-500">{metric.label}</CardTitle>
               </CardHeader>
               <CardContent className="text-3xl font-semibold">
-                {data ? `${metric.getValue(data)}${metric.suffix}` : "-"}
+                {loading ? "-" : data ? `${metric.getValue(data)}${metric.suffix}` : "-"}
               </CardContent>
             </Card>
           ))}
