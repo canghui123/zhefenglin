@@ -74,3 +74,33 @@ def test_alembic_can_upgrade_to_head(test_db_url, monkeypatch):
 
     for tbl in REQUIRED_TABLES:
         assert tbl in tables, f"Missing table: {tbl}"
+
+
+def test_tenant_deployment_profile_constraints_and_foreign_keys(test_db_url, monkeypatch):
+    """The deployment profile table should enforce its tenant and user links."""
+    monkeypatch.setenv("DATABASE_URL", test_db_url)
+    alembic_cfg = Config(
+        os.path.join(os.path.dirname(__file__), "..", "..", "alembic.ini")
+    )
+
+    upgrade(alembic_cfg, "head")
+
+    engine = create_engine(test_db_url)
+    inspector = inspect(engine)
+
+    unique_constraints = inspector.get_unique_constraints("tenant_deployment_profiles")
+    unique_cols = {
+        tuple(constraint["column_names"])
+        for constraint in unique_constraints
+    }
+    assert ("tenant_id",) in unique_cols
+
+    fk_map = {
+        tuple(fk["constrained_columns"]): fk["referred_table"]
+        for fk in inspector.get_foreign_keys("tenant_deployment_profiles")
+    }
+    assert fk_map[("tenant_id",)] == "tenants"
+    assert fk_map[("created_by",)] == "users"
+    assert fk_map[("updated_by",)] == "users"
+
+    engine.dispose()

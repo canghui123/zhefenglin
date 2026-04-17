@@ -46,6 +46,22 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
+        sa.CheckConstraint(
+            "deployment_mode IN ('saas_dedicated', 'private_vpc', 'on_premise')",
+            name="ck_tenant_deployment_profiles_deployment_mode",
+        ),
+        sa.CheckConstraint(
+            "delivery_status IN ('planning', 'provisioning', 'active', 'paused')",
+            name="ck_tenant_deployment_profiles_delivery_status",
+        ),
+        sa.CheckConstraint(
+            "storage_mode IN ('platform_managed', 'customer_s3', 'hybrid')",
+            name="ck_tenant_deployment_profiles_storage_mode",
+        ),
+        sa.CheckConstraint(
+            "backup_level IN ('standard', 'enhanced', 'regulated')",
+            name="ck_tenant_deployment_profiles_backup_level",
+        ),
         sa.ForeignKeyConstraint(
             ["tenant_id"],
             ["tenants.id"],
@@ -67,17 +83,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_tenant_deployment_profiles"),
         sa.UniqueConstraint("tenant_id", name="uq_tenant_deployment_profiles_tenant_id"),
     )
-    op.create_index(
-        "ix_tenant_deployment_profiles_tenant_id",
-        "tenant_deployment_profiles",
-        ["tenant_id"],
-        unique=False,
-    )
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_tenant_deployment_profiles_tenant_id",
-        table_name="tenant_deployment_profiles",
-    )
     op.drop_table("tenant_deployment_profiles")

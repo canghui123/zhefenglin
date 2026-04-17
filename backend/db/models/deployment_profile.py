@@ -4,6 +4,7 @@ from typing import Optional
 from sqlalchemy import (
     Boolean,
     DateTime,
+    CheckConstraint,
     ForeignKey,
     Integer,
     String,
@@ -20,6 +21,22 @@ class TenantDeploymentProfile(Base):
     __tablename__ = "tenant_deployment_profiles"
     __table_args__ = (
         UniqueConstraint("tenant_id", name="uq_tenant_deployment_profiles_tenant_id"),
+        CheckConstraint(
+            "deployment_mode IN ('saas_dedicated', 'private_vpc', 'on_premise')",
+            name="ck_tenant_deployment_profiles_deployment_mode",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('planning', 'provisioning', 'active', 'paused')",
+            name="ck_tenant_deployment_profiles_delivery_status",
+        ),
+        CheckConstraint(
+            "storage_mode IN ('platform_managed', 'customer_s3', 'hybrid')",
+            name="ck_tenant_deployment_profiles_storage_mode",
+        ),
+        CheckConstraint(
+            "backup_level IN ('standard', 'enhanced', 'regulated')",
+            name="ck_tenant_deployment_profiles_backup_level",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -27,7 +44,6 @@ class TenantDeploymentProfile(Base):
         Integer,
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     deployment_mode: Mapped[str] = mapped_column(
         String(32), nullable=False, default="saas_dedicated"
