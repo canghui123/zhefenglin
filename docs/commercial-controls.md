@@ -110,10 +110,12 @@ python -m scripts.seed_commercial_defaults
 - `feature_entitlements` 已经支持运行时解析，按“租户 override -> 套餐默认 -> plan feature_flags”顺序生效
 - 登录态 `/api/auth/me` / `/api/auth/login` 已经返回 capability snapshot，前端可据此做导航和页面级 gate
 - 成本中心 `export` 已接入 `audit.export` 权益控制
+- 成本中心导出按钮已按 capability 预先禁用，并显示升级提示
 - 成本中心 `overview` / `tenants` 已接入 `dashboard.advanced` 权益控制
 - 模型路由 API 已接入 `routing.model_control` 权益控制
 - 高管驾驶页与经理作战手册 API 已接入 `portfolio.advanced_pages` 权益控制
 - 租户价值看板 API 已接入 `tenant.value_dashboard` 权益控制
+- 库存沙盘“打印/保存PDF”按钮已接入 `audit.export` 能力控制，不会影响报告预览主链路
 - 前端侧边栏已经按角色 + feature capability 过滤，高阶页和中台页不会再对未开通租户暴露入口
 
 ## 前端页面

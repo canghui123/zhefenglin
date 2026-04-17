@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AdminAccess } from "@/components/admin/admin-access";
+import { useSession } from "@/components/auth/session-provider";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,6 +17,7 @@ import {
   type CostCenterTenantRow,
   type ValueDashboardData,
 } from "@/lib/api";
+import { hasFeature } from "@/lib/auth";
 
 export default function AdminCostCenterPage() {
   return (
@@ -30,6 +32,7 @@ export default function AdminCostCenterPage() {
 }
 
 function AdminCostCenterContent() {
+  const { user } = useSession();
   const [overview, setOverview] = useState<CostCenterOverview | null>(null);
   const [tenants, setTenants] = useState<CostCenterTenantRow[]>([]);
   const [valueDashboard, setValueDashboard] = useState<ValueDashboardData | null>(null);
@@ -38,6 +41,7 @@ function AdminCostCenterContent() {
   const [valueDashboardError, setValueDashboardError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportLocked, setExportLocked] = useState(false);
+  const exportAllowed = hasFeature(user, "audit.export");
 
   useEffect(() => {
     (async () => {
@@ -112,8 +116,8 @@ function AdminCostCenterContent() {
           <h1 className="text-2xl font-bold">成本中心</h1>
           <p className="text-sm text-gray-500 mt-1">按租户、模块、成本口径查看本月使用与毛利情况。</p>
         </div>
-        <Button onClick={handleExport} variant="outline" disabled={exportLocked}>
-          {exportLocked ? "导出未开通" : "导出 CSV"}
+        <Button onClick={handleExport} variant="outline" disabled={exportLocked || !exportAllowed}>
+          {exportLocked || !exportAllowed ? "导出未开通" : "导出 CSV"}
         </Button>
       </div>
 
@@ -126,6 +130,12 @@ function AdminCostCenterContent() {
       {exportError && (
         <Alert>
           <AlertDescription>{exportError}</AlertDescription>
+        </Alert>
+      )}
+
+      {!exportAllowed && (
+        <Alert>
+          <AlertDescription>当前套餐未开通审计导出能力，如需导出 CSV，请升级到支持 `audit.export` 的套餐。</AlertDescription>
         </Alert>
       )}
 

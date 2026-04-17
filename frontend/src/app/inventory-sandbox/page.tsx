@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "@/components/auth/session-provider";
 import { simulateSandbox, generateReport, downloadReport, type SandboxResult, type TimePoint, type LitigationScenario, type AuctionRound } from "@/lib/api";
+import { hasFeature } from "@/lib/auth";
 import { pollJob } from "@/lib/jobs";
 
 function fmt(n: number) {
@@ -32,10 +34,12 @@ interface FormState {
 }
 
 export default function InventorySandboxPage() {
+  const { user } = useSession();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<SandboxResult | null>(null);
   const [reportHtml, setReportHtml] = useState("");
+  const canExportAudit = hasFeature(user, "audit.export");
 
   const [form, setForm] = useState<FormState>({
     car_description: "",
@@ -98,6 +102,10 @@ export default function InventorySandboxPage() {
   }
 
   function printReport() {
+    if (!canExportAudit) {
+      setError("当前套餐未开通审计导出能力，暂不支持打印或保存 PDF");
+      return;
+    }
     const win = window.open("", "_blank");
     if (win) {
       win.document.write(reportHtml);
@@ -365,9 +373,20 @@ export default function InventorySandboxPage() {
               生成报告预览
             </button>
             {reportHtml && (
-              <button className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm" onClick={printReport}>
-                打印/保存PDF
-              </button>
+              <div className="space-y-2">
+                <button
+                  className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={printReport}
+                  disabled={!canExportAudit}
+                >
+                  {canExportAudit ? "打印/保存PDF" : "打印/保存PDF未开通"}
+                </button>
+                {!canExportAudit && (
+                  <p className="text-xs text-gray-500">
+                    当前套餐未开通审计导出能力，如需打印或保存 PDF，请升级到支持 `audit.export` 的套餐。
+                  </p>
+                )}
+              </div>
             )}
           </div>
           {reportHtml && (
