@@ -16,3 +16,4 @@ from repositories import usage_repo  # noqa: F401
 from repositories import model_routing_repo  # noqa: F401
 from repositories import valuation_rule_repo  # noqa: F401
 from repositories import approval_repo  # noqa: F401
+from repositories import deployment_profile_repo  # noqa: F401
