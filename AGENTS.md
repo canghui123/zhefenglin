@@ -36,11 +36,13 @@ npm run build
 - 后端读取仓库根目录 `.env`
 - 前端读取 `frontend/.env` 和 `frontend/.env.local`
 - 前端不会自动读取仓库根目录 `.env`
+- 后端运行时数据库策略为 PostgreSQL-only，不要把 `DATABASE_PATH` 当作本地运行入口
 - 生产环境变量说明以 [docs/ops/env-matrix.md](/Users/canghui/Desktop/汽车金融ai平台/docs/ops/env-matrix.md) 为准
 
 ## 修改代码时的项目约束
 
 - 涉及数据库时，优先走 SQLAlchemy 模型、仓储层和 Alembic，不要回退到散落的原始 SQL
+- 不要为应用运行时继续补 SQLite 兼容逻辑；测试里的临时 SQLite 仅用于隔离测试
 - 涉及上传、报告、文件落盘时，优先走存储抽象，不要重新引入基于用户文件名的本地路径拼接
 - 涉及租户数据时，保持 `tenant_id` 过滤和权限边界，避免跨租户读写
 - 涉及资产包定价时，重点关注：

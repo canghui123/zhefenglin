@@ -8,7 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from config import settings
-from database import init_db
 from errors import BusinessError
 from logging_config import setup_logging
 from schemas.error import ErrorEnvelope  # noqa: F401 — used in OpenAPI
@@ -34,10 +33,8 @@ setup_logging(json=os.environ.get("LOG_FORMAT") != "console")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Schema for PostgreSQL is owned by Alembic (`alembic upgrade head`).
-    # Only the legacy SQLite path bootstraps tables in-process.
-    if settings.database_url.startswith("sqlite") or os.environ.get("DATABASE_PATH"):
-        init_db()
+    # Runtime schema management is externalized to Alembic.
+    # The app no longer bootstraps legacy SQLite tables at startup.
     yield
 
 

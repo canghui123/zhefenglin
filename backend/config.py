@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     # ---------- Database ----------
     # PostgreSQL (生产目标, Task 3+)
     database_url: str = "postgresql+psycopg://app:app@localhost:5432/auto_finance"
-    # SQLite (本地开发兼容, 将逐步淘汰)
+    # Legacy only: historical SQLite path retained for manual inspection.
+    # Application runtime no longer uses this as a supported DB entrypoint.
     database_path: str = os.path.join(_THIS_DIR, "data", "npl.db")
 
     # ---------- Redis (Task 8+) ----------

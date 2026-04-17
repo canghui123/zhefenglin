@@ -7,7 +7,6 @@
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | `DATABASE_URL` | 是 | `postgresql+psycopg://app:app@localhost:5432/auto_finance` | 生产用 PostgreSQL 连接串 |
-| `DATABASE_PATH` | 否 | `backend/data/npl.db` | SQLite 路径（仅本地开发兼容） |
 | `REDIS_URL` | 否 | `redis://localhost:6379/0` | 异步任务队列（Task 8 起需要） |
 | `JWT_SECRET` | 是 | — | JWT 签名密钥，生产必须设置 |
 | `JWT_REFRESH_SECRET` | 是 | — | Refresh Token 签名密钥 |
@@ -42,3 +41,10 @@ frontend/.env         ← 前端默认值（已提交）
 .env                  ← 本地开发实际值（.gitignore 排除）
 frontend/.env.local   ← 前端本地覆盖（.gitignore 排除）
 ```
+
+## 数据库策略说明
+
+- 应用运行时只支持 `DATABASE_URL`
+- 本地和生产都应通过 `alembic upgrade head` 管理 schema
+- `backend/data/npl.db` 属于历史遗留 SQLite 文件，不代表当前运行时基线
+- `DATABASE_PATH` 不再作为应用启动入口，最多只用于手工排查旧数据文件

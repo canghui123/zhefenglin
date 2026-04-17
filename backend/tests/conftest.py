@@ -10,7 +10,6 @@ def isolated_backend_env(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         db_file = os.path.join(tmp, "test.db")
         monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
-        monkeypatch.setenv("DATABASE_PATH", db_file)
         monkeypatch.setenv("UPLOAD_DIR", os.path.join(tmp, "uploads"))
 
         # Rebuild the lazy engine against the new DATABASE_URL and create

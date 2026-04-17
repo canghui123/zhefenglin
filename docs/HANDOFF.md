@@ -27,6 +27,7 @@
 - Excel 解析不再把 `挂牌价`、`拍卖价`、`成交价`、`报价`、`底价` 这类销售侧价格列误识别成买断成本
 - 资产定价前端会在上传、切换策略、切换车况时清理 AI 建议状态，避免沿用旧包或旧车况的建议
 - 后端 Dockerfile 不再强依赖单一镜像源，改为通过可选构建参数配置
+- 应用运行时数据库策略已明确收口为 PostgreSQL-only，不再支持基于 `DATABASE_PATH` 的 SQLite 启动路径
 
 ## 本轮新增回归测试
 
@@ -62,14 +63,20 @@ npm run lint
 npm run build
 ```
 
+数据库注意事项：
+
+- `backend/data/npl.db` 是历史遗留文件，缺少认证、租户、审计、任务等后续表
+- 运行时 schema 以 Alembic 迁移结果为准，不要把旧 SQLite 文件当成真实基线
+
 ## 当前仍值得继续完善的点
 
 下面这些不一定是 blocker，但很适合作为下一轮 Codex 任务：
 
 1. 消除 Pydantic v2 的 `class-based Config` 弃用告警，迁移到 `ConfigDict`
 2. 为 `pytest-asyncio` 明确 `asyncio_default_fixture_loop_scope`，避免未来版本行为变化
-3. 给前端补自动化测试，至少覆盖资产定价页的关键状态切换与 API 交互
-4. 继续按照 [docs/plans/2026-04-03-commercial-readiness.md](/Users/canghui/Desktop/汽车金融ai平台/docs/plans/2026-04-03-commercial-readiness.md) 推进商用化收口
+3. 收口 Alembic 与 ORM metadata 的唯一约束漂移，避免 autogenerate 持续报 diff
+4. 给前端补自动化测试，至少覆盖资产定价页的关键状态切换与 API 交互
+5. 继续按照 [docs/plans/2026-04-03-commercial-readiness.md](/Users/canghui/Desktop/汽车金融ai平台/docs/plans/2026-04-03-commercial-readiness.md) 推进商用化收口
 
 ## 对 Codex 最友好的提示方式
 

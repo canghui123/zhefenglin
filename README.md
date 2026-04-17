@@ -8,6 +8,7 @@
 
 当前代码已经具备本地开发、基础认证、多租户数据隔离、资产包上传解析、定价计算、库存沙盘、组合分析等能力，并且已经补上了基础测试与 CI 验证链路。
 
+运行时数据库策略已经收口为 PostgreSQL-only：应用通过 `DATABASE_URL` 连接数据库，schema 统一由 Alembic 管理。
 ## 仓库结构
 
 ```text
@@ -43,6 +44,10 @@ cd /Users/canghui/Desktop/汽车金融ai平台/backend
 alembic upgrade head
 ```
 
+说明：
+
+- 应用运行时不再支持 SQLite 本地模式
+- `backend/data/npl.db` 只是历史遗留文件，不能代表当前可运行 schema
 ### 2. 启动后端
 
 ```bash
@@ -82,6 +87,7 @@ npm run build
 ```
 
 说明：
+- 后端运行时只支持 PostgreSQL；不要再把 `DATABASE_PATH` 当作本地启动入口
 
 - 请优先使用 `python3 -m pytest -q`，不要假设系统里有可直接执行的 `pytest`
 - Next.js 前端不会读取仓库根目录 `.env`，前端变量请放在 `frontend/.env` 或 `frontend/.env.local`
