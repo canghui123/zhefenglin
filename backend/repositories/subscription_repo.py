@@ -101,3 +101,39 @@ def get_feature_entitlement(
     if tenant_id is not None:
         stmt = stmt.where(FeatureEntitlement.tenant_id == tenant_id)
     return session.scalars(stmt).first()
+
+
+def replace_feature_entitlement(
+    session: Session,
+    *,
+    scope: str,
+    feature_key: str,
+    is_enabled: Optional[bool],
+    plan_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    config_json: Optional[str] = None,
+) -> Optional[FeatureEntitlement]:
+    stmt = select(FeatureEntitlement).where(FeatureEntitlement.feature_key == feature_key)
+    if plan_id is not None:
+        stmt = stmt.where(FeatureEntitlement.plan_id == plan_id)
+    if tenant_id is not None:
+        stmt = stmt.where(FeatureEntitlement.tenant_id == tenant_id)
+
+    for row in session.scalars(stmt).all():
+        session.delete(row)
+    session.flush()
+
+    if is_enabled is None:
+        return None
+
+    row = FeatureEntitlement(
+        scope=scope,
+        plan_id=plan_id,
+        tenant_id=tenant_id,
+        feature_key=feature_key,
+        is_enabled=bool(is_enabled),
+        config_json=config_json,
+    )
+    session.add(row)
+    session.flush()
+    return row

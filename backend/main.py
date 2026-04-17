@@ -21,6 +21,7 @@ from api.metrics import router as metrics_router
 from api.admin import router as admin_router
 from api.admin_settings import router as admin_settings_router
 from api.admin_cost_center import router as admin_cost_center_router
+from api.admin_feature_flags import router as admin_feature_flags_router
 from api.admin_model_routing import router as admin_model_routing_router
 from api.admin_valuation_rules import router as admin_valuation_rules_router
 from api.admin_approval_requests import router as admin_approval_requests_router
@@ -137,6 +138,7 @@ app.include_router(metrics_router)
 app.include_router(admin_router)
 app.include_router(admin_settings_router)
 app.include_router(admin_cost_center_router)
+app.include_router(admin_feature_flags_router)
 app.include_router(admin_model_routing_router)
 app.include_router(admin_valuation_rules_router)
 app.include_router(admin_approval_requests_router)

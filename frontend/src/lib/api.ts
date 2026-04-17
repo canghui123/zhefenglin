@@ -343,6 +343,36 @@ export interface SubscriptionUpdateInput {
   alert_threshold_percent: number;
 }
 
+export interface FeatureCatalogItem {
+  key: string;
+  label: string;
+  category: string;
+  description: string;
+}
+
+export interface PlanFeatureRow {
+  plan_id: number;
+  plan_code: string;
+  plan_name: string;
+  features: Record<string, boolean>;
+}
+
+export interface TenantFeatureRow {
+  tenant_id: number;
+  tenant_code: string | null;
+  tenant_name: string | null;
+  plan_code: string | null;
+  plan_name: string | null;
+  overrides: Record<string, boolean | null>;
+  effective_features: Record<string, boolean>;
+}
+
+export interface FeatureFlagsSnapshot {
+  catalog: FeatureCatalogItem[];
+  plans: PlanFeatureRow[];
+  tenants: TenantFeatureRow[];
+}
+
 export interface CostCenterOverview {
   month: string;
   tenant_count: number;
@@ -484,6 +514,32 @@ export async function updateSubscription(tenantId: number, input: SubscriptionUp
       body: JSON.stringify(input),
     },
   );
+}
+
+export async function getFeatureFlagsSnapshot() {
+  return request<FeatureFlagsSnapshot>("/api/admin/feature-flags");
+}
+
+export async function updatePlanFeatureFlags(
+  planCode: string,
+  features: Record<string, boolean>,
+) {
+  return request<PlanFeatureRow>(`/api/admin/feature-flags/plans/${planCode}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ features }),
+  });
+}
+
+export async function updateTenantFeatureFlags(
+  tenantId: number,
+  features: Record<string, boolean | null>,
+) {
+  return request<TenantFeatureRow>(`/api/admin/feature-flags/tenants/${tenantId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ features }),
+  });
 }
 
 export async function getCostCenterOverview() {

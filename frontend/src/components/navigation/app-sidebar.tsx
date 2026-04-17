@@ -58,6 +58,7 @@ const navSections: Array<{ title: string; items: NavItem[] }> = [
     items: [
       { href: "/admin/settings", label: "系统设置", minRole: "manager" },
       { href: "/admin/billing", label: "套餐计费", minRole: "manager" },
+      { href: "/admin/feature-flags", label: "功能开关", minRole: "manager" },
       {
         href: "/admin/cost-center",
         label: "成本中心",

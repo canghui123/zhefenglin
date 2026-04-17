@@ -9,15 +9,7 @@ from sqlalchemy import func, select
 from db.models.membership import Membership
 from errors import FeatureNotEnabled, SeatLimitExceeded
 from repositories import plan_repo, subscription_repo
-
-FRONTEND_FEATURE_KEYS = (
-    "dashboard.advanced",
-    "audit.export",
-    "deployment.private_config",
-    "portfolio.advanced_pages",
-    "routing.model_control",
-    "tenant.value_dashboard",
-)
+from services.feature_catalog import FEATURE_KEYS
 
 
 def _load_subscription_plan(session, *, tenant_id: int):
@@ -154,7 +146,7 @@ def build_feature_capabilities(
     tenant_id: Optional[int],
     feature_keys: Optional[Iterable[str]] = None,
 ) -> dict[str, bool]:
-    keys = tuple(feature_keys or FRONTEND_FEATURE_KEYS)
+    keys = tuple(feature_keys or FEATURE_KEYS)
     if tenant_id is None:
         return {key: True for key in keys}
     return {

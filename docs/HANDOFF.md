@@ -40,6 +40,8 @@
 - 登录态现在会返回 feature capability snapshot，前端可直接做导航和页面级 gating
 - 模型路由页、成本中心页、高管驾驶页、经理作战手册都已接入 feature gate，侧边栏入口也会随 capability 自动收敛
 - `audit.export` 现在不仅控制后台导出，还会控制库存沙盘里的“打印/保存PDF”按钮，并提供升级提示
+- 商业化中台新增了 `/admin/feature-flags`，可以按套餐调整默认能力，并按租户做“继承套餐 / 强制开启 / 强制关闭”的覆盖
+- `deployment.private_config` 已从静态种子能力升级为真实后台可管理项，后续 Codex 可以在这套框架上继续补私有化交付配置
 
 ## 本轮新增回归测试
 
@@ -59,6 +61,7 @@
 - `backend/tests/api/test_admin_cost_center.py` 中的 `audit.export` / `tenant.value_dashboard` 权益限制回归
 - `backend/tests/api/test_admin_model_routing.py` 中的 `routing.model_control` 权益限制回归
 - `backend/tests/api/test_portfolio_entitlements.py` 中的 `portfolio.advanced_pages` 权益限制回归
+- `backend/tests/api/test_admin_feature_flags.py` 中的功能目录读取、套餐默认更新、租户三态覆盖与审计回归
 
 ## 建议的会话恢复步骤
 
@@ -96,7 +99,7 @@ npm run build
 2. 为 `pytest-asyncio` 明确 `asyncio_default_fixture_loop_scope`，避免未来版本行为变化
 3. 收口 Alembic 与 ORM metadata 的唯一约束漂移，避免 autogenerate 持续报 diff
 4. 给前端补自动化测试，至少覆盖资产定价页的关键状态切换与 API 交互
-5. 给更多按钮级动作补 capability 感知和升级引导，例如导出、批量操作、私有化配置项
+5. 给更多按钮级动作补 capability 感知和升级引导，例如导出、批量操作、私有化交付表单项
 6. 继续按照 [docs/plans/2026-04-03-commercial-readiness.md](/Users/canghui/Desktop/汽车金融ai平台/docs/plans/2026-04-03-commercial-readiness.md) 推进商用化收口
 
 ## 对 Codex 最友好的提示方式

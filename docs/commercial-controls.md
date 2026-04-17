@@ -88,6 +88,9 @@ python -m scripts.seed_commercial_defaults
 
 ### 路由与规则
 
+- `GET /api/admin/feature-flags`
+- `PUT /api/admin/feature-flags/plans/{plan_code}`
+- `PUT /api/admin/feature-flags/tenants/{tenant_id}`
 - `GET /api/admin/model-routing`
 - `PUT /api/admin/model-routing`
 - `GET /api/admin/valuation-rules`
@@ -117,6 +120,8 @@ python -m scripts.seed_commercial_defaults
 - 租户价值看板 API 已接入 `tenant.value_dashboard` 权益控制
 - 库存沙盘“打印/保存PDF”按钮已接入 `audit.export` 能力控制，不会影响报告预览主链路
 - 前端侧边栏已经按角色 + feature capability 过滤，高阶页和中台页不会再对未开通租户暴露入口
+- `/admin/feature-flags` 已上线，支持查看统一功能目录、调整套餐默认能力，并对租户做“继承套餐 / 强制开启 / 强制关闭”的三态覆盖
+- `deployment.private_config` 不再只是种子数据中的能力键，而是已经进入后台可视化管理闭环
 
 ## 前端页面
 
@@ -124,6 +129,7 @@ python -m scripts.seed_commercial_defaults
 
 - `/admin/settings`
 - `/admin/billing`
+- `/admin/feature-flags`
 - `/admin/cost-center`
 - `/admin/model-routing`
 - `/admin/valuation-rules`
@@ -154,4 +160,4 @@ npm run build
 - 高级车况定价审批闭环已经打通到资产包页和单车估值 API，但还未扩展为“审批通过后自动恢复执行”的异步工作流
 - 价值看板指标当前为可替换的估算逻辑，适合销售演示和运营驾驶舱一期
 - 套餐和内部成本价格目前已进入配置层和数据库层，下一步可继续做更细的后台调价和审计历史
-- 目前已经覆盖导航、页面和高价值 API 的主要 feature gate；剩余可继续补的是更细粒度按钮级控制和套餐升级引导
+- 目前已经覆盖导航、页面、套餐默认能力和租户级 override 的主要 feature gate；剩余可继续补的是更细粒度按钮级控制和套餐升级引导
