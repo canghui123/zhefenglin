@@ -16,6 +16,11 @@
 
 如果后续改动由 Codex 接手，建议先把这里当作“会话恢复点”。
 
+推荐同时阅读：
+
+- [docs/CODEX_PLAYBOOK.md](/Users/canghui/Desktop/汽车金融ai平台/docs/CODEX_PLAYBOOK.md)
+- [docs/plans/2026-04-17-approval-closure-design.md](/Users/canghui/Desktop/汽车金融ai平台/docs/plans/2026-04-17-approval-closure-design.md)
+
 ## 本轮已确认的修复
 
 本次交接前，已经补上的问题包括：
@@ -49,7 +54,8 @@
 2. 阅读 [AGENTS.md](/Users/canghui/Desktop/汽车金融ai平台/AGENTS.md)
 3. 阅读 [docs/ops/env-matrix.md](/Users/canghui/Desktop/汽车金融ai平台/docs/ops/env-matrix.md)
 4. 如果要碰前端，再阅读 [frontend/AGENTS.md](/Users/canghui/Desktop/汽车金融ai平台/frontend/AGENTS.md)
-5. 运行基线验证命令，确认当前工作区是否仍然健康
+5. 阅读 [docs/CODEX_PLAYBOOK.md](/Users/canghui/Desktop/汽车金融ai平台/docs/CODEX_PLAYBOOK.md)
+6. 运行基线验证命令，确认当前工作区是否仍然健康
 
 推荐验证命令：
 

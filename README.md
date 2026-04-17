@@ -100,10 +100,12 @@ npm run build
 ## 关键文档
 
 - 交接说明：[docs/HANDOFF.md](/Users/canghui/Desktop/汽车金融ai平台/docs/HANDOFF.md)
+- Codex 接手手册：[docs/CODEX_PLAYBOOK.md](/Users/canghui/Desktop/汽车金融ai平台/docs/CODEX_PLAYBOOK.md)
 - 代理协作约束：[AGENTS.md](/Users/canghui/Desktop/汽车金融ai平台/AGENTS.md)
 - 环境变量矩阵：[docs/ops/env-matrix.md](/Users/canghui/Desktop/汽车金融ai平台/docs/ops/env-matrix.md)
 - 商用化实施计划：[docs/plans/2026-04-03-commercial-readiness.md](/Users/canghui/Desktop/汽车金融ai平台/docs/plans/2026-04-03-commercial-readiness.md)
 - 商业化控制中台说明：[docs/commercial-controls.md](/Users/canghui/Desktop/汽车金融ai平台/docs/commercial-controls.md)
+- 高级车况定价审批闭环设计：[docs/plans/2026-04-17-approval-closure-design.md](/Users/canghui/Desktop/汽车金融ai平台/docs/plans/2026-04-17-approval-closure-design.md)
 - 部署指南：[deploy/README.md](/Users/canghui/Desktop/汽车金融ai平台/deploy/README.md)
 
 ## 推荐接手顺序
