@@ -33,18 +33,20 @@ def upsert_profile(
     **fields,
 ) -> TenantDeploymentProfile:
     row = get_profile_by_tenant_id(session, tenant_id=tenant_id)
-    if row is None:
-        row = TenantDeploymentProfile(tenant_id=tenant_id, **fields)
-        session.add(row)
-    try:
-        if row is not None:
-            for key, value in fields.items():
-                if key == "tenant_id":
-                    continue
-                setattr(row, key, value)
+    if row is not None:
+        for key, value in fields.items():
+            if key == "tenant_id":
+                continue
+            setattr(row, key, value)
         session.flush()
+        return row
+
+    try:
+        with session.begin_nested():
+            row = TenantDeploymentProfile(tenant_id=tenant_id, **fields)
+            session.add(row)
+            session.flush()
     except IntegrityError:
-        session.rollback()
         row = get_profile_by_tenant_id(session, tenant_id=tenant_id)
         if row is None:
             raise
