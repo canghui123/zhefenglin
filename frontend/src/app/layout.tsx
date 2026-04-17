@@ -11,8 +11,8 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "汽车金融不良资产AI平台",
-  description: "AI智能定价与库存决策引擎",
+  title: "汽车金融资产处置经营决策系统",
+  description: "汽车金融资产处置经营决策系统",
 };
 
 const navSections = [
@@ -69,7 +69,7 @@ export default function RootLayout({
           {/* Sidebar */}
           <aside className="w-64 bg-slate-900 text-white flex flex-col shrink-0">
             <div className="p-6 border-b border-slate-700">
-              <h1 className="text-lg font-bold">AI资产决策引擎</h1>
+              <h1 className="text-lg font-bold">汽车金融资产处置经营决策系统</h1>
               <p className="text-xs text-slate-400 mt-1">汽车金融不良资产处置</p>
             </div>
             <nav className="flex-1 p-4 space-y-4 overflow-y-auto">
