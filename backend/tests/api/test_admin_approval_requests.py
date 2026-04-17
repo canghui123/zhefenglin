@@ -19,6 +19,9 @@ def test_approval_request_flow_supports_create_approve_and_reject():
     assert created.status_code == 200, created.text
     approval_id = created.json()["id"]
     assert created.json()["status"] == "pending"
+    assert created.json()["is_consumed"] is False
+    assert created.json()["consumed_at"] is None
+    assert created.json()["consumed_request_id"] is None
 
     listing = admin_client.get("/api/admin/approval-requests")
     assert listing.status_code == 200, listing.text
@@ -30,6 +33,7 @@ def test_approval_request_flow_supports_create_approve_and_reject():
     )
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "approved"
+    assert approved.json()["is_consumed"] is False
 
     created_reject = manager_client.post(
         "/api/admin/approval-requests",

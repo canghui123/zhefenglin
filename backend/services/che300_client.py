@@ -93,6 +93,10 @@ async def get_valuation_by_vin(
     approval_mode: bool = False,
     single_task_budget: Optional[float] = None,
     strict_policy: bool = False,
+    approval_granted: bool = False,
+    approval_request_id: Optional[int] = None,
+    approval_object_type: Optional[str] = None,
+    approval_object_id: Optional[str] = None,
 ) -> ValuationResult:
     """通过VIN码获取估值 — 自动选择真实API或Mock
 
@@ -110,6 +114,9 @@ async def get_valuation_by_vin(
             approval_mode=approval_mode,
             single_task_budget=single_task_budget,
             strict_policy=strict_policy,
+            approval_granted=approval_granted,
+            related_object_type=approval_object_type or "vehicle",
+            related_object_id=approval_object_id or vin,
         )
     elif tenant_id is not None:
         policy = commercial_policy_service.preflight_vin_valuation(
@@ -187,6 +194,10 @@ async def get_valuation_by_vin(
                 "cached": from_cache,
                 "is_mock": result.is_mock,
                 "condition": effective_condition,
+                "approval_granted": approval_granted,
+                "approval_request_id": approval_request_id,
+                "approval_object_type": approval_object_type,
+                "approval_object_id": approval_object_id,
             },
         )
 
@@ -350,6 +361,10 @@ async def get_valuation(
     approval_mode: bool = False,
     single_task_budget: Optional[float] = None,
     strict_policy: bool = False,
+    approval_granted: bool = False,
+    approval_request_id: Optional[int] = None,
+    approval_object_type: Optional[str] = None,
+    approval_object_id: Optional[str] = None,
 ) -> ValuationResult:
     """兼容旧接口 — 如果model_id是VIN则用VIN接口，否则用Mock"""
     if len(model_id) == 17 and model_id.isalnum():
@@ -371,6 +386,10 @@ async def get_valuation(
             approval_mode=approval_mode,
             single_task_budget=single_task_budget,
             strict_policy=strict_policy,
+            approval_granted=approval_granted,
+            approval_request_id=approval_request_id,
+            approval_object_type=approval_object_type,
+            approval_object_id=approval_object_id,
         )
 
     reg_key = (registration_date or "unknown")[:7]
@@ -407,6 +426,10 @@ async def get_valuation(
                 "cached": from_cache,
                 "is_mock": result.is_mock,
                 "condition": cond_key,
+                "approval_granted": approval_granted,
+                "approval_request_id": approval_request_id,
+                "approval_object_type": approval_object_type,
+                "approval_object_id": approval_object_id,
             },
         )
     return result
@@ -474,6 +497,10 @@ async def batch_valuation(
     manual_selected: bool = False,
     approval_mode: bool = False,
     strict_policy: bool = False,
+    approval_granted: bool = False,
+    approval_request_id: Optional[int] = None,
+    approval_object_type: Optional[str] = None,
+    approval_object_id: Optional[str] = None,
 ) -> dict[int, ValuationResult]:
     """批量估值 — 优先使用VIN，回退到Mock
 
@@ -509,6 +536,10 @@ async def batch_valuation(
                     approval_mode=item.get("approval_mode", approval_mode),
                     single_task_budget=single_task_budget,
                     strict_policy=strict_policy,
+                    approval_granted=approval_granted,
+                    approval_request_id=approval_request_id,
+                    approval_object_type=approval_object_type,
+                    approval_object_id=approval_object_id,
                 )
             else:
                 val = await get_valuation(
@@ -529,6 +560,10 @@ async def batch_valuation(
                     approval_mode=item.get("approval_mode", approval_mode),
                     single_task_budget=single_task_budget,
                     strict_policy=strict_policy,
+                    approval_granted=approval_granted,
+                    approval_request_id=approval_request_id,
+                    approval_object_type=approval_object_type,
+                    approval_object_id=approval_object_id,
                 )
             results[row_num] = val
         except BusinessError:

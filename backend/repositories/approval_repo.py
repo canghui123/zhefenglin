@@ -67,3 +67,18 @@ def set_decision(
     row.decided_at = datetime.utcnow()
     session.flush()
     return row
+
+
+def mark_consumed(
+    session: Session,
+    *,
+    approval_request_id: int,
+    consumed_request_id: Optional[str],
+) -> Optional[ApprovalRequest]:
+    row = get_request_by_id(session, approval_request_id=approval_request_id)
+    if row is None:
+        return None
+    row.consumed_at = datetime.utcnow()
+    row.consumed_request_id = consumed_request_id
+    session.flush()
+    return row

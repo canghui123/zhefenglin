@@ -63,3 +63,5 @@ class ApprovalRequest(Base):
         DateTime, server_default=func.now(), nullable=False
     )
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    consumed_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

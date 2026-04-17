@@ -102,8 +102,10 @@ export default function AdminApprovalRequestsPage() {
                   <tr className="border-b text-left text-gray-500">
                     <th className="pb-3 font-medium">ID</th>
                     <th className="pb-3 font-medium">类型</th>
+                    <th className="pb-3 font-medium">关联对象</th>
                     <th className="pb-3 font-medium">原因</th>
                     <th className="pb-3 font-medium">状态</th>
+                    <th className="pb-3 font-medium">消费情况</th>
                     <th className="pb-3 font-medium">预计成本</th>
                     <th className="pb-3 font-medium">操作</th>
                   </tr>
@@ -113,8 +115,14 @@ export default function AdminApprovalRequestsPage() {
                     <tr key={row.id} className="border-b last:border-0">
                       <td className="py-3">#{row.id}</td>
                       <td className="py-3">{row.type}</td>
+                      <td className="py-3 text-xs text-gray-500">
+                        {(row.related_object_type || "-")}/{row.related_object_id || "-"}
+                      </td>
                       <td className="py-3">{row.reason}</td>
                       <td className="py-3">{row.status}</td>
+                      <td className="py-3 text-xs text-gray-500">
+                        {row.is_consumed && row.consumed_at ? `已消费 ${row.consumed_at}` : "未消费"}
+                      </td>
                       <td className="py-3">¥{row.estimated_cost}</td>
                       <td className="py-3">
                         {user?.role === "admin" && row.status === "pending" ? (

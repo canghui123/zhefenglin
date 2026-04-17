@@ -17,7 +17,7 @@ from dependencies.auth import get_current_user, require_role
 from errors import AssetPackageNotFound, FileNotFoundError_, InvalidFileFormat, ParseError
 from models.asset import PricingParameters, PackageCalculationResult
 from repositories import asset_package_repo
-from services import audit_service  # noqa: F401
+from services import approval_service, audit_service  # noqa: F401
 from services.excel_parser import parse_excel
 from services.che300_client import batch_valuation
 from services.pricing_engine import calculate_package, _pick_condition_price
@@ -181,6 +181,17 @@ async def calculate(
     _parameters = req.parameters
     _tenant_id = tenant_id
     _overrides = req.ai_buyout_overrides or {}
+    approval_granted = False
+    if _parameters.advanced_condition_pricing and _parameters.approval_request_id is not None:
+        approval_service.validate_for_execution(
+            session,
+            approval_request_id=_parameters.approval_request_id,
+            tenant_id=tenant_id,
+            type="condition_pricing",
+            related_object_type="asset_package",
+            related_object_id=str(req.package_id),
+        )
+        approval_granted = True
 
     async def _do_calculate():
         ext = ".xlsx" if key.endswith(".xlsx") else ".xls"
@@ -244,7 +255,27 @@ async def calculate(
             manual_selected=_parameters.manual_selected,
             approval_mode=_parameters.approval_mode,
             strict_policy=_parameters.strict_policy,
+            approval_granted=approval_granted,
+            approval_request_id=_parameters.approval_request_id,
+            approval_object_type="asset_package",
+            approval_object_id=str(_package_id),
         )
+        if approval_granted and _parameters.approval_request_id is not None:
+            approval_service.consume_request(
+                session,
+                approval_request_id=_parameters.approval_request_id,
+                consumed_request_id=getattr(request.state, "request_id", None),
+            )
+            audit_service.record(
+                session,
+                request,
+                action="approval_consume",
+                tenant_id=_tenant_id,
+                user_id=user.id,
+                resource_type="approval_request",
+                resource_id=_parameters.approval_request_id,
+                after={"source": "asset-package.calculate", "package_id": _package_id},
+            )
 
         dep_items = []
         for a in assets:
@@ -299,6 +330,7 @@ class SuggestBuyoutRequest(BaseModel):
     advanced_condition_pricing: bool = False
     manual_selected: bool = False
     approval_mode: bool = False
+    approval_request_id: Optional[int] = None
     strict_policy: bool = False
     single_task_budget: Optional[float] = None
 
@@ -345,6 +377,18 @@ async def suggest_buyout(
     if not assets:
         raise ParseError()
 
+    approval_granted = False
+    if req.advanced_condition_pricing and req.approval_request_id is not None:
+        approval_service.validate_for_execution(
+            session,
+            approval_request_id=req.approval_request_id,
+            tenant_id=tenant_id,
+            type="condition_pricing",
+            related_object_type="asset_package",
+            related_object_id=str(req.package_id),
+        )
+        approval_granted = True
+
     # 批量估值，把车况透传给车300；里程缺失按年均 2.5 万公里估算
     val_items = []
     for a in assets:
@@ -381,7 +425,27 @@ async def suggest_buyout(
         manual_selected=req.manual_selected,
         approval_mode=req.approval_mode,
         strict_policy=req.strict_policy,
+        approval_granted=approval_granted,
+        approval_request_id=req.approval_request_id,
+        approval_object_type="asset_package",
+        approval_object_id=str(req.package_id),
     )
+    if approval_granted and req.approval_request_id is not None:
+        approval_service.consume_request(
+            session,
+            approval_request_id=req.approval_request_id,
+            consumed_request_id=getattr(request.state, "request_id", None),
+        )
+        audit_service.record(
+            session,
+            request,
+            action="approval_consume",
+            tenant_id=tenant_id,
+            user_id=user.id,
+            resource_type="approval_request",
+            resource_id=req.approval_request_id,
+            after={"source": "asset-package.suggest-buyout", "package_id": req.package_id},
+        )
 
     # 基于估值给出建议买断价：车300价 × 折扣系数（默认根据车况）
     condition_factor = {"excellent": 0.55, "good": 0.50, "normal": 0.45}.get(req.vehicle_condition, 0.50)

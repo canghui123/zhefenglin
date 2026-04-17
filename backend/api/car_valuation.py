@@ -8,6 +8,7 @@ from dependencies.auth import get_current_user, require_role
 from errors import BusinessError
 from db.models.user import User
 from models.valuation import ValuationRequest, ValuationResult
+from services import approval_service, audit_service
 from services.che300_client import get_valuation, batch_valuation
 from services.tenant_context import get_current_tenant_id
 
@@ -32,6 +33,18 @@ async def single_valuation(
 ):
     """单车估值"""
     try:
+        approval_granted = False
+        if req.advanced_condition_pricing and req.approval_request_id is not None:
+            approval_service.validate_for_execution(
+                session,
+                approval_request_id=req.approval_request_id,
+                tenant_id=tenant_id,
+                type="condition_pricing",
+                related_object_type="vehicle",
+                related_object_id=req.model_id,
+            )
+            approval_granted = True
+
         result = await get_valuation(
             session,
             model_id=req.model_id,
@@ -45,9 +58,29 @@ async def single_valuation(
             valuation_level="condition_pricing" if req.advanced_condition_pricing else "basic",
             manual_selected=req.manual_selected,
             approval_mode=req.approval_mode,
+            approval_request_id=req.approval_request_id,
             single_task_budget=req.single_task_budget,
             strict_policy=req.strict_policy,
+            approval_granted=approval_granted,
+            approval_object_type="vehicle",
+            approval_object_id=req.model_id,
         )
+        if approval_granted and req.approval_request_id is not None:
+            approval_service.consume_request(
+                session,
+                approval_request_id=req.approval_request_id,
+                consumed_request_id=getattr(request.state, "request_id", None),
+            )
+            audit_service.record(
+                session,
+                request,
+                action="approval_consume",
+                tenant_id=tenant_id,
+                user_id=user.id,
+                resource_type="approval_request",
+                resource_id=req.approval_request_id,
+                after={"source": "car-valuation", "model_id": req.model_id},
+            )
         return result
     except BusinessError:
         raise

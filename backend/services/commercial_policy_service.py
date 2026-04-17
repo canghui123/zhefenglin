@@ -8,7 +8,30 @@ from errors import BudgetExceeded, HighCostActionBlocked, QuotaExceeded
 from services import model_routing_service, quota_service, valuation_control_service
 
 
-def _raise_allowance_error(allowance: dict, *, fallback_action: str) -> None:
+def _build_approval_context(
+    *,
+    reason: str,
+    related_object_type: Optional[str],
+    related_object_id: Optional[str],
+    metadata: Optional[dict] = None,
+) -> dict:
+    return {
+        "recommended": True,
+        "approval_type": "condition_pricing",
+        "reason": reason,
+        "related_object_type": related_object_type,
+        "related_object_id": related_object_id,
+        "estimated_cost": settings.che300_condition_pricing_unit_cost,
+        "metadata": metadata or {},
+    }
+
+
+def _raise_allowance_error(
+    allowance: dict,
+    *,
+    fallback_action: str,
+    approval_context: Optional[dict] = None,
+) -> None:
     details = {
         "reason": allowance.get("reason"),
         "quota_limit": allowance.get("quota_limit"),
@@ -18,6 +41,8 @@ def _raise_allowance_error(allowance: dict, *, fallback_action: str) -> None:
         "projected_budget_used": allowance.get("projected_budget_used"),
         "fallback_action": fallback_action,
     }
+    if approval_context is not None:
+        details["approval_context"] = approval_context
     reason = allowance.get("reason")
     if reason == "quota_exceeded":
         raise QuotaExceeded(details=details)
@@ -138,7 +163,29 @@ def preflight_condition_pricing(
     approval_mode: bool,
     single_task_budget: Optional[float] = None,
     strict_policy: bool = False,
+    approval_granted: bool = False,
+    related_object_type: Optional[str] = None,
+    related_object_id: Optional[str] = None,
 ) -> dict:
+    if approval_granted:
+        return {
+            "requested_level": "condition_pricing",
+            "executed_level": "condition_pricing",
+            "degraded": False,
+            "reason": None,
+            "valuation_decision": {
+                "allow_condition_pricing": True,
+                "matched_rule_types": ["manual_approval_override"],
+                "reason": "approved_override",
+            },
+            "allowance": {
+                "allowed": True,
+                "reason": "approved_override",
+            },
+            "allowed": True,
+            "approval_granted": True,
+        }
+
     valuation_decision = valuation_control_service.evaluate_request(
         session,
         tenant_id=tenant_id,
@@ -148,6 +195,17 @@ def preflight_condition_pricing(
         manual_selected=manual_selected,
         approval_mode=approval_mode,
     )
+    approval_context = _build_approval_context(
+        reason=valuation_decision["reason"] or "condition_pricing_blocked",
+        related_object_type=related_object_type,
+        related_object_id=related_object_id,
+        metadata={
+            "matched_rule_types": valuation_decision["matched_rule_types"],
+            "vehicle_value": vehicle_value,
+            "profit_margin": profit_margin,
+            "risk_tags": risk_tags,
+        },
+    )
     if not valuation_decision["allow_condition_pricing"]:
         if strict_policy:
             raise HighCostActionBlocked(
@@ -155,6 +213,7 @@ def preflight_condition_pricing(
                     "reason": valuation_decision["reason"],
                     "matched_rule_types": valuation_decision["matched_rule_types"],
                     "fallback_action": "回退基础VIN估值 + AI解释",
+                    "approval_context": approval_context,
                 }
             )
         basic = preflight_vin_valuation(
@@ -164,6 +223,7 @@ def preflight_condition_pricing(
         basic["degraded"] = True
         basic["reason"] = valuation_decision["reason"]
         basic["valuation_decision"] = valuation_decision
+        basic["approval_context"] = approval_context
         return basic
 
     allowance = quota_service.check_allowance(
@@ -176,7 +236,11 @@ def preflight_condition_pricing(
     )
     if allowance["reason"] == "subscription_missing":
         if strict_policy:
-            _raise_allowance_error(allowance, fallback_action="回退基础VIN估值 + AI解释")
+            _raise_allowance_error(
+                allowance,
+                fallback_action="回退基础VIN估值 + AI解释",
+                approval_context=approval_context,
+            )
         basic = preflight_vin_valuation(
             session, tenant_id=tenant_id, single_task_budget=single_task_budget
         )
@@ -184,10 +248,15 @@ def preflight_condition_pricing(
         basic["degraded"] = True
         basic["reason"] = "subscription_missing"
         basic["valuation_decision"] = valuation_decision
+        basic["approval_context"] = approval_context
         return basic
     if not allowance["allowed"]:
         if strict_policy:
-            _raise_allowance_error(allowance, fallback_action="回退基础VIN估值 + AI解释")
+            _raise_allowance_error(
+                allowance,
+                fallback_action="回退基础VIN估值 + AI解释",
+                approval_context=approval_context,
+            )
         basic = preflight_vin_valuation(
             session, tenant_id=tenant_id, single_task_budget=single_task_budget
         )
@@ -195,6 +264,7 @@ def preflight_condition_pricing(
         basic["degraded"] = True
         basic["reason"] = allowance["reason"]
         basic["valuation_decision"] = valuation_decision
+        basic["approval_context"] = approval_context
         return basic
 
     return {
@@ -205,4 +275,5 @@ def preflight_condition_pricing(
         "valuation_decision": valuation_decision,
         "allowance": allowance,
         "allowed": True,
+        "approval_granted": False,
     }

@@ -5,11 +5,19 @@ export class ApiError extends Error {
   status: number;
   code: string;
   requestId: string;
-  constructor(message: string, status: number, code: string = "", requestId: string = "") {
+  details: unknown;
+  constructor(
+    message: string,
+    status: number,
+    code: string = "",
+    requestId: string = "",
+    details: unknown = null,
+  ) {
     super(message);
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.details = details;
   }
 }
 
@@ -29,6 +37,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
         res.status,
         body.error.code,
         body.error.request_id || "",
+        body.error.details || null,
       );
     }
     throw new ApiError(body.detail || "请求失败", res.status);
@@ -84,7 +93,30 @@ export interface BuyoutSuggestion {
   suggested_buyout_high: number;
 }
 
-export async function suggestBuyout(packageId: number, vehicleCondition: string) {
+export interface ApprovalContext {
+  recommended: boolean;
+  approval_type: string;
+  reason: string;
+  related_object_type: string | null;
+  related_object_id: string | null;
+  estimated_cost: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface SuggestBuyoutOptions {
+  advanced_condition_pricing?: boolean;
+  manual_selected?: boolean;
+  approval_mode?: boolean;
+  approval_request_id?: number | null;
+  strict_policy?: boolean;
+  single_task_budget?: number | null;
+}
+
+export async function suggestBuyout(
+  packageId: number,
+  vehicleCondition: string,
+  options: SuggestBuyoutOptions = {},
+) {
   return request<{
     package_id: number;
     vehicle_condition: string;
@@ -94,7 +126,11 @@ export async function suggestBuyout(packageId: number, vehicleCondition: string)
   }>("/api/asset-package/suggest-buyout", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ package_id: packageId, vehicle_condition: vehicleCondition }),
+    body: JSON.stringify({
+      package_id: packageId,
+      vehicle_condition: vehicleCondition,
+      ...options,
+    }),
   });
 }
 
@@ -114,6 +150,15 @@ export async function calculatePackage(
   });
   if (!res.ok && res.status !== 202) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
+    if (err?.error?.code) {
+      throw new ApiError(
+        err.error.message || "计算请求失败",
+        res.status,
+        err.error.code,
+        err.error.request_id || "",
+        err.error.details || null,
+      );
+    }
     throw new ApiError(err.detail || "计算请求失败", res.status);
   }
   return res.json();
@@ -404,6 +449,9 @@ export interface ApprovalRequestInfo {
   metadata: Record<string, unknown>;
   created_at: string | null;
   decided_at: string | null;
+  consumed_at: string | null;
+  consumed_request_id: string | null;
+  is_consumed: boolean;
 }
 
 export async function listCommercialPlans() {
@@ -530,6 +578,12 @@ export interface PricingParameters {
   vehicle_condition?: "excellent" | "good" | "normal";
   buyout_strategy?: "direct" | "discount" | "ai_suggest";
   discount_rate?: number | null;
+  advanced_condition_pricing?: boolean;
+  manual_selected?: boolean;
+  approval_mode?: boolean;
+  approval_request_id?: number | null;
+  strict_policy?: boolean;
+  single_task_budget?: number | null;
 }
 
 export interface AssetPricingResult {

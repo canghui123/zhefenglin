@@ -57,13 +57,16 @@ def _approval_out(row):
         "metadata": _json_loads(row.metadata_json),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+        "consumed_at": row.consumed_at.isoformat() if row.consumed_at else None,
+        "consumed_request_id": row.consumed_request_id,
+        "is_consumed": row.consumed_at is not None,
     }
 
 
 @router.get("")
 def list_requests(
     session: Session = Depends(get_db_session),
-    user: User = Depends(require_any_role("manager", "admin")),
+    user: User = Depends(require_any_role("operator", "manager", "admin")),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     rows = (
@@ -79,7 +82,7 @@ def create_request(
     req: ApprovalCreateRequest,
     request: Request,
     session: Session = Depends(get_db_session),
-    user: User = Depends(require_any_role("manager", "admin")),
+    user: User = Depends(require_any_role("operator", "manager", "admin")),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     row = approval_service.create_request(

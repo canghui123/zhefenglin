@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,10 +16,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  ApiError,
   uploadExcel,
   calculatePackage,
   getPackage,
   suggestBuyout,
+  createApprovalRequest,
+  listApprovalRequests,
+  type ApprovalContext,
+  type ApprovalRequestInfo,
   type PricingParameters,
   type PackageCalculationResult,
   type BuyoutSuggestion,
@@ -64,6 +69,11 @@ export default function AssetPricingPage() {
   const [aiSuggestions, setAiSuggestions] = useState<BuyoutSuggestion[] | null>(null);
   const [aiComment, setAiComment] = useState<string>("");
   const [aiOverrides, setAiOverrides] = useState<Record<number, number>>({});
+  const [advancedConditionPricing, setAdvancedConditionPricing] = useState(false);
+  const [approvalContext, setApprovalContext] = useState<ApprovalContext | null>(null);
+  const [approvalRequest, setApprovalRequest] = useState<ApprovalRequestInfo | null>(null);
+  const [creatingApproval, setCreatingApproval] = useState(false);
+  const [refreshingApproval, setRefreshingApproval] = useState(false);
   const [result, setResult] = useState<PackageCalculationResult | null>(null);
   const [error, setError] = useState("");
 
@@ -81,12 +91,73 @@ export default function AssetPricingPage() {
     setAiComment("");
   }
 
+  function clearApprovalFlow() {
+    setApprovalContext(null);
+    setApprovalRequest(null);
+  }
+
+  function extractApprovalContext(err: unknown): ApprovalContext | null {
+    if (!(err instanceof ApiError) || !err.details || typeof err.details !== "object") {
+      return null;
+    }
+    const maybeContext = (err.details as { approval_context?: ApprovalContext }).approval_context;
+    if (!maybeContext || typeof maybeContext !== "object") {
+      return null;
+    }
+    return maybeContext;
+  }
+
+  async function refreshApprovalStatus(approvalId: number) {
+    setRefreshingApproval(true);
+    try {
+      const rows = await listApprovalRequests();
+      const current = rows.find((row) => row.id === approvalId) || null;
+      setApprovalRequest(current);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "审批状态刷新失败");
+    } finally {
+      setRefreshingApproval(false);
+    }
+  }
+
+  async function handleCreateApproval() {
+    if (!approvalContext) return;
+    setCreatingApproval(true);
+    setError("");
+    try {
+      const created = await createApprovalRequest({
+        type: approvalContext.approval_type,
+        reason: approvalContext.reason,
+        related_object_type: approvalContext.related_object_type || undefined,
+        related_object_id: approvalContext.related_object_id || undefined,
+        estimated_cost: approvalContext.estimated_cost,
+        metadata: approvalContext.metadata,
+      });
+      setApprovalRequest(created);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "发起审批失败");
+    } finally {
+      setCreatingApproval(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!approvalRequest || approvalRequest.status !== "pending") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void refreshApprovalStatus(approvalRequest.id);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [approvalRequest]);
+
   async function handleUpload() {
     if (!file) return;
     setUploading(true);
     setError("");
     setResult(null);
     clearAiState();
+    clearApprovalFlow();
     try {
       const res = await uploadExcel(file);
       setPackageId(res.package_id);
@@ -112,7 +183,15 @@ export default function AssetPricingPage() {
     setSuggesting(true);
     setError("");
     try {
-      const res = await suggestBuyout(packageId, params.vehicle_condition || "good");
+      const approvalRequestId =
+        approvalRequest && approvalRequest.status === "approved" && !approvalRequest.is_consumed
+          ? approvalRequest.id
+          : null;
+      const res = await suggestBuyout(packageId, params.vehicle_condition || "good", {
+        advanced_condition_pricing: advancedConditionPricing,
+        approval_request_id: approvalRequestId,
+        strict_policy: advancedConditionPricing,
+      });
       setAiSuggestions(res.suggestions);
       setAiComment(res.ai_comment);
       const overrides: Record<number, number> = {};
@@ -120,7 +199,15 @@ export default function AssetPricingPage() {
         overrides[s.row_number] = s.suggested_buyout_mid;
       });
       setAiOverrides(overrides);
+      setApprovalContext(null);
+      if (approvalRequestId) {
+        await refreshApprovalStatus(approvalRequestId);
+      }
     } catch (e: unknown) {
+      const nextApprovalContext = extractApprovalContext(e);
+      if (nextApprovalContext) {
+        setApprovalContext(nextApprovalContext);
+      }
       setError(e instanceof Error ? e.message : "AI建议失败");
     } finally {
       setSuggesting(false);
@@ -347,6 +434,21 @@ export default function AssetPricingPage() {
                   <Button onClick={handleAiSuggest} disabled={suggesting} variant="secondary">
                     {suggesting ? "AI 分析中..." : aiSuggestions ? "重新获取AI建议" : "获取 AI 建议"}
                   </Button>
+                  <Button
+                    type="button"
+                    variant={advancedConditionPricing ? "default" : "outline"}
+                    onClick={() => {
+                      setAdvancedConditionPricing((current) => {
+                        const next = !current;
+                        if (!next) {
+                          setApprovalContext(null);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {advancedConditionPricing ? "已启用高级车况定价" : "启用高级车况定价"}
+                  </Button>
                   {aiSuggestions && (
                     <span className="text-sm text-gray-600">
                       已生成 {aiSuggestions.length} 条建议，总建议买断成本 {formatMoney(
@@ -355,6 +457,76 @@ export default function AssetPricingPage() {
                     </span>
                   )}
                 </div>
+                {advancedConditionPricing && (
+                  <Alert>
+                    <AlertDescription>
+                      高级车况定价属于高成本能力，单次预计内部成本约 ¥36。若当前租户额度、预算或触发规则不满足，系统会提示发起审批。
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {(approvalContext || approvalRequest) && (
+                  <Card className="border-amber-200 bg-amber-50">
+                    <CardContent className="pt-6 space-y-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-amber-900">高级车况定价审批</span>
+                            {approvalRequest && (
+                              <Badge variant={approvalRequest.is_consumed ? "secondary" : "default"}>
+                                {approvalRequest.is_consumed
+                                  ? "已消费"
+                                  : approvalRequest.status === "approved"
+                                    ? "已通过"
+                                    : approvalRequest.status === "rejected"
+                                      ? "已拒绝"
+                                      : "审批中"}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-amber-900">
+                            {approvalContext?.reason || "高级车况定价已进入审批链路。"}
+                          </p>
+                          <p className="text-xs text-amber-800">
+                            关联对象：
+                            {(approvalContext?.related_object_type || approvalRequest?.related_object_type || "-")}
+                            {" / "}
+                            {(approvalContext?.related_object_id || approvalRequest?.related_object_id || "-")}
+                            {" · "}
+                            预计成本：¥
+                            {approvalContext?.estimated_cost ?? approvalRequest?.estimated_cost ?? 36}
+                          </p>
+                          {approvalRequest?.consumed_at && (
+                            <p className="text-xs text-amber-800">
+                              审批已于 {new Date(approvalRequest.consumed_at).toLocaleString("zh-CN")} 被业务动作消费。
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {!approvalRequest && approvalContext && (
+                            <Button type="button" onClick={handleCreateApproval} disabled={creatingApproval}>
+                              {creatingApproval ? "提交中..." : "发起审批"}
+                            </Button>
+                          )}
+                          {approvalRequest?.status === "pending" && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => void refreshApprovalStatus(approvalRequest.id)}
+                              disabled={refreshingApproval}
+                            >
+                              {refreshingApproval ? "刷新中..." : "刷新审批状态"}
+                            </Button>
+                          )}
+                          {approvalRequest?.status === "approved" && !approvalRequest.is_consumed && (
+                            <Button type="button" onClick={handleAiSuggest} disabled={suggesting}>
+                              {suggesting ? "重试中..." : "使用已审批额度重试"}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
                 {aiComment && (
                   <Alert>
                     <AlertDescription>

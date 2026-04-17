@@ -85,6 +85,21 @@ class ApprovalAlreadyDecided(BusinessError):
         super().__init__("APPROVAL_ALREADY_DECIDED", "审批单已处理，不能重复操作", 409)
 
 
+class ApprovalNotApproved(BusinessError):
+    def __init__(self):
+        super().__init__("APPROVAL_NOT_APPROVED", "审批单尚未通过，不能执行高成本动作", 409)
+
+
+class ApprovalContextMismatch(BusinessError):
+    def __init__(self):
+        super().__init__("APPROVAL_CONTEXT_MISMATCH", "审批单与当前执行对象不匹配", 409)
+
+
+class ApprovalAlreadyConsumed(BusinessError):
+    def __init__(self):
+        super().__init__("APPROVAL_ALREADY_CONSUMED", "审批单已被消费，不能重复使用", 409)
+
+
 class QuotaExceeded(BusinessError):
     def __init__(self, detail: str = "当前额度已用尽", details: Optional[Dict[str, Any]] = None):
         super().__init__("QUOTA_EXCEEDED", detail, 409, details)

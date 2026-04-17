@@ -71,6 +71,10 @@ class PricingParameters(BaseModel):
         default=False,
         description="是否走审批报告模式",
     )
+    approval_request_id: Optional[int] = Field(
+        default=None,
+        description="已通过审批的审批单ID",
+    )
     strict_policy: bool = Field(
         default=False,
         description="被商业规则拦截时是否直接报错",
