@@ -2,13 +2,22 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from sqlalchemy import func, select
 
 from db.models.membership import Membership
 from errors import FeatureNotEnabled, SeatLimitExceeded
 from repositories import plan_repo, subscription_repo
+
+FRONTEND_FEATURE_KEYS = (
+    "dashboard.advanced",
+    "audit.export",
+    "deployment.private_config",
+    "portfolio.advanced_pages",
+    "routing.model_control",
+    "tenant.value_dashboard",
+)
 
 
 def _load_subscription_plan(session, *, tenant_id: int):
@@ -137,3 +146,18 @@ def ensure_feature_enabled(session, *, tenant_id: int, feature_key: str) -> dict
         detail = "当前租户策略已关闭该功能"
 
     raise FeatureNotEnabled(detail=detail, details=result)
+
+
+def build_feature_capabilities(
+    session,
+    *,
+    tenant_id: Optional[int],
+    feature_keys: Optional[Iterable[str]] = None,
+) -> dict[str, bool]:
+    keys = tuple(feature_keys or FRONTEND_FEATURE_KEYS)
+    if tenant_id is None:
+        return {key: True for key in keys}
+    return {
+        key: bool(get_effective_feature(session, tenant_id=tenant_id, feature_key=key)["enabled"])
+        for key in keys
+    }

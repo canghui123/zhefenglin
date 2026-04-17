@@ -108,8 +108,13 @@ python -m scripts.seed_commercial_defaults
 - 审批单在成功执行后会记录消费时间和消费来源请求
 - `seat_limit` 已经接入运行时校验，租户席位满额时会阻止继续分配 membership
 - `feature_entitlements` 已经支持运行时解析，按“租户 override -> 套餐默认 -> plan feature_flags”顺序生效
+- 登录态 `/api/auth/me` / `/api/auth/login` 已经返回 capability snapshot，前端可据此做导航和页面级 gate
 - 成本中心 `export` 已接入 `audit.export` 权益控制
+- 成本中心 `overview` / `tenants` 已接入 `dashboard.advanced` 权益控制
+- 模型路由 API 已接入 `routing.model_control` 权益控制
+- 高管驾驶页与经理作战手册 API 已接入 `portfolio.advanced_pages` 权益控制
 - 租户价值看板 API 已接入 `tenant.value_dashboard` 权益控制
+- 前端侧边栏已经按角色 + feature capability 过滤，高阶页和中台页不会再对未开通租户暴露入口
 
 ## 前端页面
 
@@ -147,4 +152,4 @@ npm run build
 - 高级车况定价审批闭环已经打通到资产包页和单车估值 API，但还未扩展为“审批通过后自动恢复执行”的异步工作流
 - 价值看板指标当前为可替换的估算逻辑，适合销售演示和运营驾驶舱一期
 - 套餐和内部成本价格目前已进入配置层和数据库层，下一步可继续做更细的后台调价和审计历史
-- 后台导航本身还未做全量 feature gate，当前优先落地的是高价值 API 与页面反馈层
+- 目前已经覆盖导航、页面和高价值 API 的主要 feature gate；剩余可继续补的是更细粒度按钮级控制和套餐升级引导

@@ -22,16 +22,24 @@ router = APIRouter(prefix="/api/admin/cost-center", tags=["成本中心"])
 @router.get("/overview")
 def overview(
     session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
     _user: User = Depends(require_role("manager")),
 ):
+    entitlement_service.ensure_feature_enabled(
+        session, tenant_id=tenant_id, feature_key="dashboard.advanced"
+    )
     return build_overview(session)
 
 
 @router.get("/tenants")
 def tenants(
     session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
     _user: User = Depends(require_role("manager")),
 ):
+    entitlement_service.ensure_feature_enabled(
+        session, tenant_id=tenant_id, feature_key="dashboard.advanced"
+    )
     return build_tenant_breakdown(session)
 
 

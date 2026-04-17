@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AccessGate } from "@/components/auth/access-gate";
 import { getManagerPlaybook, type ManagerData } from "@/lib/api";
 
 function fmt(n: number) {
@@ -8,6 +9,18 @@ function fmt(n: number) {
 }
 
 export default function ManagerPage() {
+  return (
+    <AccessGate
+      minRole="manager"
+      featureKey="portfolio.advanced_pages"
+      featureFallback="当前套餐未开通高阶经营页"
+    >
+      <ManagerContent />
+    </AccessGate>
+  );
+}
+
+function ManagerContent() {
   const [data, setData] = useState<ManagerData | null>(null);
   const [loading, setLoading] = useState(true);
 

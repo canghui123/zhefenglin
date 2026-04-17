@@ -8,6 +8,7 @@ export interface CurrentUser {
   display_name: string | null;
   role: Role;
   last_login_at: string | null;
+  feature_capabilities?: Record<string, boolean>;
 }
 
 const ROLE_RANK: Record<Role, number> = {
@@ -20,6 +21,11 @@ const ROLE_RANK: Record<Role, number> = {
 export function hasRole(user: CurrentUser | null, required: Role): boolean {
   if (!user) return false;
   return ROLE_RANK[user.role] >= ROLE_RANK[required];
+}
+
+export function hasFeature(user: CurrentUser | null, featureKey: string): boolean {
+  if (!user) return false;
+  return user.feature_capabilities?.[featureKey] ?? true;
 }
 
 export async function login(email: string, password: string): Promise<CurrentUser> {

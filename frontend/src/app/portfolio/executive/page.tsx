@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AccessGate } from "@/components/auth/access-gate";
 import { getExecutiveDashboard, type ExecutiveData } from "@/lib/api";
 
 function fmt(n: number) {
@@ -11,6 +12,18 @@ function pct(n: number) {
 }
 
 export default function ExecutivePage() {
+  return (
+    <AccessGate
+      minRole="manager"
+      featureKey="portfolio.advanced_pages"
+      featureFallback="当前套餐未开通高阶经营页"
+    >
+      <ExecutiveContent />
+    </AccessGate>
+  );
+}
+
+function ExecutiveContent() {
   const [data, setData] = useState<ExecutiveData | null>(null);
   const [loading, setLoading] = useState(true);
 

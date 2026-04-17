@@ -2,13 +2,17 @@
 
 from fastapi import APIRouter, Depends, Query
 from typing import Optional
+from sqlalchemy.orm import Session
 
 from dependencies.auth import get_current_user, require_role
+from db.models.user import User
+from db.session import get_db_session
 from services.portfolio_engine import (
     generate_mock_portfolio,
     compute_strategy_comparison,
     compute_cashflow_projection,
 )
+from services import entitlement_service
 from services.recommendation_engine import (
     get_executive_dashboard,
     get_manager_playbook,
@@ -30,6 +34,10 @@ def _get_portfolio():
     if "data" not in _cache:
         _cache["data"] = generate_mock_portfolio()
     return _cache["data"]
+
+
+def _resolve_tenant_id_for_user(user: User) -> Optional[int]:
+    return user.default_tenant_id
 
 
 @router.get("/overview")
@@ -191,15 +199,31 @@ async def portfolio_cashflow():
 # ============ 管理智能决策 ============
 
 @router.get("/executive", dependencies=[Depends(require_role("manager"))])
-async def executive_dashboard():
+async def executive_dashboard(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+):
     """高管驾驶页"""
+    tenant_id = _resolve_tenant_id_for_user(user)
+    if tenant_id is not None:
+        entitlement_service.ensure_feature_enabled(
+            session, tenant_id=tenant_id, feature_key="portfolio.advanced_pages"
+        )
     data = _get_portfolio()
     return get_executive_dashboard(data["overview"], data["segments"])
 
 
 @router.get("/manager-playbook", dependencies=[Depends(require_role("manager"))])
-async def manager_playbook():
+async def manager_playbook(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+):
     """经理作战手册"""
+    tenant_id = _resolve_tenant_id_for_user(user)
+    if tenant_id is not None:
+        entitlement_service.ensure_feature_enabled(
+            session, tenant_id=tenant_id, feature_key="portfolio.advanced_pages"
+        )
     data = _get_portfolio()
     return get_manager_playbook(data["overview"], data["segments"])
 

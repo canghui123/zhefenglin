@@ -11,6 +11,8 @@ from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
 from repositories import model_routing_repo
+from services import entitlement_service
+from services.tenant_context import get_current_tenant_id
 
 
 router = APIRouter(prefix="/api/admin/model-routing", tags=["模型路由"])
@@ -32,8 +34,12 @@ class ModelRoutingRuleRequest(BaseModel):
 @router.get("")
 def list_rules(
     session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
     _user: User = Depends(require_role("manager")),
 ):
+    entitlement_service.ensure_feature_enabled(
+        session, tenant_id=tenant_id, feature_key="routing.model_control"
+    )
     rows = []
     for rule in model_routing_repo.list_rules(session):
         rows.append(
@@ -58,8 +64,12 @@ def list_rules(
 def upsert_rule(
     req: ModelRoutingRuleRequest,
     session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
     user: User = Depends(require_role("admin")),
 ):
+    entitlement_service.ensure_feature_enabled(
+        session, tenant_id=tenant_id, feature_key="routing.model_control"
+    )
     row = model_routing_repo.upsert_rule(
         session,
         scope=req.scope,

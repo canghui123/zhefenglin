@@ -78,6 +78,22 @@ def test_cost_center_export_requires_audit_export_entitlement():
     assert body["error"]["details"]["feature_key"] == "audit.export"
 
 
+def test_cost_center_overview_requires_dashboard_advanced():
+    from tests.api.admin_commercial_helpers import seed_subscription, seed_user_and_login
+
+    client = seed_user_and_login(
+        "cost-trial@example.com", role="manager", tenant_code="trial-tenant"
+    )
+    seed_subscription(tenant_code="trial-tenant", plan_code="trial_poc")
+
+    overview = client.get("/api/admin/cost-center/overview")
+
+    assert overview.status_code == 403, overview.text
+    body = overview.json()
+    assert body["error"]["code"] == "FEATURE_NOT_ENABLED"
+    assert body["error"]["details"]["feature_key"] == "dashboard.advanced"
+
+
 def test_value_dashboard_respects_tenant_feature_override():
     from db.models.subscription import FeatureEntitlement
     from db.session import get_db_session

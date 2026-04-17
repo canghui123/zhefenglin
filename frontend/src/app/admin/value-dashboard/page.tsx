@@ -16,6 +16,18 @@ const metricMeta = [
 ];
 
 export default function AdminValueDashboardPage() {
+  return (
+    <AdminAccess
+      minRole="manager"
+      featureKey="tenant.value_dashboard"
+      featureFallback="当前套餐未开通租户价值看板或已被管理员关闭"
+    >
+      <AdminValueDashboardContent />
+    </AdminAccess>
+  );
+}
+
+function AdminValueDashboardContent() {
   const [data, setData] = useState<ValueDashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,43 +49,41 @@ export default function AdminValueDashboardPage() {
   }, []);
 
   return (
-    <AdminAccess minRole="manager">
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold">租户价值看板</h1>
-          <p className="text-sm text-gray-500 mt-1">用于销售演示和续费沟通的价值指标总览。</p>
-        </div>
-
-        {error && (
-          <Alert>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
-          {metricMeta.map((metric) => (
-            <Card key={metric.label}>
-              <CardHeader>
-                <CardTitle className="text-sm text-gray-500">{metric.label}</CardTitle>
-              </CardHeader>
-              <CardContent className="text-3xl font-semibold">
-                {loading ? "-" : data ? `${metric.getValue(data)}${metric.suffix}` : "-"}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>指标说明</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-gray-600">
-            <p>工时节省：根据本月 VIN 估值、AI 报告和沙盘调用量按经验系数估算。</p>
-            <p>高风险车辆：以审批请求和高级车况定价触发次数作为阶段性代理指标。</p>
-            <p>覆盖率：以高价值建议动作次数占总处理动作的比例估算，后续可接真实运营埋点替换。</p>
-          </CardContent>
-        </Card>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">租户价值看板</h1>
+        <p className="text-sm text-gray-500 mt-1">用于销售演示和续费沟通的价值指标总览。</p>
       </div>
-    </AdminAccess>
+
+      {error && (
+        <Alert>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        {metricMeta.map((metric) => (
+          <Card key={metric.label}>
+            <CardHeader>
+              <CardTitle className="text-sm text-gray-500">{metric.label}</CardTitle>
+            </CardHeader>
+            <CardContent className="text-3xl font-semibold">
+              {loading ? "-" : data ? `${metric.getValue(data)}${metric.suffix}` : "-"}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>指标说明</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-gray-600">
+          <p>工时节省：根据本月 VIN 估值、AI 报告和沙盘调用量按经验系数估算。</p>
+          <p>高风险车辆：以审批请求和高级车况定价触发次数作为阶段性代理指标。</p>
+          <p>覆盖率：以高价值建议动作次数占总处理动作的比例估算，后续可接真实运营埋点替换。</p>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

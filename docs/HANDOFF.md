@@ -37,6 +37,8 @@
 - 高级车况定价现在支持业务页内发起审批、审批通过后带审批单重试，并记录审批单消费状态
 - 商业化中台现在会在 membership 创建时执行 `seat_limit` 校验，阻止超额占位
 - 成本中心导出和租户价值看板现在支持按套餐 / 租户权益做运行时限制，并在前端给出明确提示
+- 登录态现在会返回 feature capability snapshot，前端可直接做导航和页面级 gating
+- 模型路由页、成本中心页、高管驾驶页、经理作战手册都已接入 feature gate，侧边栏入口也会随 capability 自动收敛
 
 ## 本轮新增回归测试
 
@@ -54,6 +56,8 @@
 
 - `backend/tests/api/test_auth_login.py` 中的默认租户席位限制回归
 - `backend/tests/api/test_admin_cost_center.py` 中的 `audit.export` / `tenant.value_dashboard` 权益限制回归
+- `backend/tests/api/test_admin_model_routing.py` 中的 `routing.model_control` 权益限制回归
+- `backend/tests/api/test_portfolio_entitlements.py` 中的 `portfolio.advanced_pages` 权益限制回归
 
 ## 建议的会话恢复步骤
 
@@ -91,7 +95,7 @@ npm run build
 2. 为 `pytest-asyncio` 明确 `asyncio_default_fixture_loop_scope`，避免未来版本行为变化
 3. 收口 Alembic 与 ORM metadata 的唯一约束漂移，避免 autogenerate 持续报 diff
 4. 给前端补自动化测试，至少覆盖资产定价页的关键状态切换与 API 交互
-5. 给后台页面补统一的 feature-entitlement 可见性控制，减少“点进去才知道未开通”
+5. 给更多按钮级动作补 capability 感知和升级引导，例如导出、批量操作、私有化配置项
 6. 继续按照 [docs/plans/2026-04-03-commercial-readiness.md](/Users/canghui/Desktop/汽车金融ai平台/docs/plans/2026-04-03-commercial-readiness.md) 推进商用化收口
 
 ## 对 Codex 最友好的提示方式

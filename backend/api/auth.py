@@ -11,6 +11,7 @@ from db.session import get_db_session
 from dependencies.auth import SESSION_COOKIE_NAME, get_current_user
 from repositories import user_repo, tenant_repo
 from services import audit_service  # noqa: F401
+from services import entitlement_service
 from services.auth_service import AuthError, authenticate, revoke
 from services.password_service import hash_password
 
@@ -50,6 +51,7 @@ class UserOut(BaseModel):
     display_name: Optional[str] = None
     role: str
     last_login_at: Optional[datetime] = None
+    feature_capabilities: dict[str, bool] = {}
 
 
 class LoginResponse(BaseModel):
@@ -59,13 +61,16 @@ class LoginResponse(BaseModel):
     user: UserOut
 
 
-def _user_out(u: User) -> UserOut:
+def _user_out(session: Session, u: User) -> UserOut:
     return UserOut(
         id=u.id,
         email=u.email,
         display_name=u.display_name,
         role=u.role,
         last_login_at=u.last_login_at,
+        feature_capabilities=entitlement_service.build_feature_capabilities(
+            session, tenant_id=u.default_tenant_id
+        ),
     )
 
 
@@ -126,7 +131,7 @@ def register(
     return LoginResponse(
         access_token=issued.access_token,
         expires_at=issued.expires_at,
-        user=_user_out(issued.user),
+        user=_user_out(session, issued.user),
     )
 
 
@@ -195,7 +200,7 @@ def login(
     return LoginResponse(
         access_token=issued.access_token,
         expires_at=issued.expires_at,
-        user=_user_out(issued.user),
+        user=_user_out(session, issued.user),
     )
 
 
@@ -221,5 +226,8 @@ def logout(
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)):
-    return _user_out(user)
+def me(
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+):
+    return _user_out(session, user)

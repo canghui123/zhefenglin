@@ -208,3 +208,67 @@ def test_register_blocks_when_default_tenant_seat_limit_is_exhausted():
             next(gen)
         except StopIteration:
             pass
+
+
+def test_login_and_me_include_feature_capabilities():
+    from sqlalchemy import select
+
+    from db.models.plan import Plan
+    from db.models.subscription import TenantSubscription
+    from scripts.seed_commercial_defaults import seed_defaults
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        seed_defaults(session)
+        tenant = tenant_repo.get_or_create_tenant(
+            session, code="auth-feature", name="AUTH-FEATURE"
+        )
+        user = user_repo.create_user(
+            session,
+            email="feature-user@example.com",
+            password_hash=hash_password("Passw0rd!"),
+            role="manager",
+            display_name="Feature User",
+        )
+        tenant_repo.create_membership(
+            session, user_id=user.id, tenant_id=tenant.id, role="manager"
+        )
+        user_repo.set_default_tenant(session, user.id, tenant.id)
+        plan = session.scalars(
+            select(Plan).where(Plan.code == "standard").limit(1)
+        ).first()
+        assert plan is not None
+        session.add(
+            TenantSubscription(
+                tenant_id=tenant.id,
+                plan_id=plan.id,
+                status="active",
+                monthly_budget_limit=5000,
+                alert_threshold_percent=80,
+                is_current=True,
+            )
+        )
+        session.commit()
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+    client = TestClient(app)
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "feature-user@example.com", "password": "Passw0rd!"},
+    )
+    assert login.status_code == 200, login.text
+    login_body = login.json()
+    assert login_body["user"]["feature_capabilities"]["dashboard.advanced"] is True
+    assert login_body["user"]["feature_capabilities"]["routing.model_control"] is False
+    assert login_body["user"]["feature_capabilities"]["portfolio.advanced_pages"] is False
+
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200, me.text
+    me_body = me.json()
+    assert me_body["feature_capabilities"]["dashboard.advanced"] is True
+    assert me_body["feature_capabilities"]["routing.model_control"] is False
