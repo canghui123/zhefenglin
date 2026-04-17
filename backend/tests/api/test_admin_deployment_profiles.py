@@ -12,9 +12,19 @@ def test_admin_can_list_deployment_profiles():
 
     response = client.get("/api/admin/settings/deployment-profiles")
 
+    expected_row_keys = {
+        "tenant_id",
+        "tenant_code",
+        "tenant_name",
+        "plan_code",
+        "plan_name",
+        "private_config_enabled",
+        "private_config_source",
+    }
     assert response.status_code == 200, response.text
     body = response.json()
     assert any(row["tenant_id"] == tenant_id for row in body)
+    assert expected_row_keys.issubset(body[0].keys())
 
 
 def test_admin_can_upsert_profile_for_enabled_tenant():
@@ -63,10 +73,16 @@ def test_upsert_rejects_tenant_without_private_config():
         json={"deployment_mode": "private_vpc"},
     )
 
+    expected_detail_keys = {
+        "feature_key",
+        "tenant_id",
+        "source",
+    }
     assert response.status_code == 403, response.text
     body = response.json()
     assert body["error"]["code"] == "FEATURE_NOT_ENABLED"
     assert body["error"]["details"]["feature_key"] == "deployment.private_config"
+    assert expected_detail_keys.issubset(body["error"]["details"].keys())
 
 
 def test_manager_can_read_but_cannot_write_deployment_profiles():

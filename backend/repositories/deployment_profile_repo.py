@@ -3,6 +3,7 @@
 from typing import List, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from db.models.deployment_profile import TenantDeploymentProfile
@@ -20,7 +21,8 @@ def get_profile_by_tenant_id(
 
 
 def list_profiles(session: Session) -> List[TenantDeploymentProfile]:
-    stmt = select(TenantDeploymentProfile).order_by(TenantDeploymentProfile.id.desc())
+    # Keep the admin list stable and tenant-oriented rather than relying on insert order.
+    stmt = select(TenantDeploymentProfile).order_by(TenantDeploymentProfile.tenant_id.asc())
     return list(session.scalars(stmt).all())
 
 
@@ -34,10 +36,21 @@ def upsert_profile(
     if row is None:
         row = TenantDeploymentProfile(tenant_id=tenant_id, **fields)
         session.add(row)
-    else:
+    try:
+        if row is not None:
+            for key, value in fields.items():
+                if key == "tenant_id":
+                    continue
+                setattr(row, key, value)
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        row = get_profile_by_tenant_id(session, tenant_id=tenant_id)
+        if row is None:
+            raise
         for key, value in fields.items():
             if key == "tenant_id":
                 continue
             setattr(row, key, value)
-    session.flush()
+        session.flush()
     return row
