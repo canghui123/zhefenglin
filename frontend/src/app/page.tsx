@@ -19,7 +19,7 @@ export default function HomePage() {
     <div>
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">AI智能定价与库存决策引擎</h1>
+          <h1 className="text-3xl font-bold text-gray-900">汽车金融资产处置经营决策系统</h1>
           <p className="text-gray-500 mt-2">汽车金融不良资产处置 -- 内部MVP</p>
         </div>
         <Badge variant={status === "connected" ? "default" : "destructive"}>
