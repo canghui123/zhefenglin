@@ -26,3 +26,4 @@ from db.models.valuation_control import (  # noqa: F401
     ValuationTriggerRule,
     ApprovalRequest,
 )
+from db.models.deployment_profile import TenantDeploymentProfile  # noqa: F401

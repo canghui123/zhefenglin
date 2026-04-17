@@ -34,6 +34,7 @@ REQUIRED_TABLES = sorted([
     "model_routing_rules",
     "valuation_trigger_rules",
     "approval_requests",
+    "tenant_deployment_profiles",
 ])
 
 
