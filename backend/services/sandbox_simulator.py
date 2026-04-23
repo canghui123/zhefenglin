@@ -68,6 +68,15 @@ VEHICLE_TYPE_KEYWORDS = {
                    "理想", "零跑", "哪吒", "极氪", "EV", "纯电", "插混", "PHEV"],
 }
 
+OVERDUE_BUCKET_ORDER = {
+    "M1": 1,
+    "M2": 2,
+    "M3": 3,
+    "M4": 4,
+    "M5": 5,
+    "M6": 6,
+}
+
 
 def _detect_vehicle_type(description: str) -> str:
     """从车型描述自动识别车辆类型"""
@@ -87,6 +96,39 @@ def _get_age_bucket(age_years: float) -> str:
         return "5-8"
     else:
         return "8+"
+
+
+def _overdue_stage_rank(overdue_bucket: str) -> int:
+    normalized = (overdue_bucket or "").strip().upper()
+    for prefix, rank in OVERDUE_BUCKET_ORDER.items():
+        if normalized.startswith(prefix):
+            return rank
+    # 未传或无法识别时保持历史默认：按 M3 处理，避免旧调用被误伤。
+    return 3
+
+
+def _is_m3_or_later(overdue_bucket: str) -> bool:
+    return _overdue_stage_rank(overdue_bucket) >= 3
+
+
+def _special_procedure_block_reasons(inp: SandboxInput) -> list[str]:
+    reasons: list[str] = []
+    if not inp.vehicle_recovered:
+        reasons.append(
+            "实现担保物权特别程序要求债权人已取得担保物占有；当前车辆尚未收回，"
+            "请先完成收车或改走普通诉讼/保全路径。"
+        )
+    elif not inp.vehicle_in_inventory:
+        reasons.append(
+            "实现担保物权特别程序需车辆已入库并形成入库证据链；当前车辆已收回但未入库，"
+            "请先完成入库登记后再申请。"
+        )
+    if not _is_m3_or_later(inp.overdue_bucket):
+        reasons.append(
+            "实现担保物权特别程序仅适用于至少 M3 以上逾期资产；当前逾期阶段较早，"
+            "请优先催收、重组或常规诉讼评估。"
+        )
+    return reasons
 
 
 def estimate_depreciation(days: int, vehicle_type: str, vehicle_age_years: float) -> float:
@@ -335,7 +377,7 @@ def simulate_path_c(inp: SandboxInput) -> PathCResult:
     parking = inp.daily_parking * sale_days
     net = sale_price - commission - parking - inp.recovery_cost
 
-    return PathCResult(
+    result = PathCResult(
         expected_sale_days=sale_days,
         sale_price=round(sale_price, 2),
         commission=round(commission, 2),
@@ -343,6 +385,12 @@ def simulate_path_c(inp: SandboxInput) -> PathCResult:
         recovery_cost=round(inp.recovery_cost, 2),
         net_recovery=round(net, 2),
     )
+
+    if not inp.vehicle_recovered:
+        result.available = False
+        result.unavailable_reason = "车辆尚未回收，无法上架竞拍。请先完成收车再评估此路径。"
+
+    return result
 
 
 # ============================================================
@@ -394,7 +442,7 @@ def simulate_path_d(inp: SandboxInput) -> PathDResult:
     total_cost = legal_cost.total_legal_cost + parking + interest + inp.recovery_cost
     net = expected_price - total_cost
 
-    return PathDResult(
+    result = PathDResult(
         duration_months=duration_months,
         duration_days=days,
         legal_cost=legal_cost,
@@ -406,6 +454,13 @@ def simulate_path_d(inp: SandboxInput) -> PathDResult:
         total_cost=round(total_cost, 2),
         net_recovery=round(net, 2),
     )
+
+    d_block_reasons = _special_procedure_block_reasons(inp)
+    if d_block_reasons:
+        result.available = False
+        result.unavailable_reason = " ".join(d_block_reasons)
+
+    return result
 
 
 # ============================================================
@@ -475,15 +530,21 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
     # E: 重组
     e_value = path_e.net_recovery
 
-    paths = {
+    # 构建候选路径集合；不满足硬前提的路径不能进入推荐候选。
+    candidate_paths: dict[str, float] = {
         "A": a_best,
         "B": b_value,
-        "C": c_value,
-        "D": d_value,
         "E": e_value,
     }
-    best_path = max(paths, key=paths.get)
-    best_value = paths[best_path]
+    if path_c.available:
+        candidate_paths["C"] = c_value
+    if path_d.available:
+        candidate_paths["D"] = d_value
+
+    # 保留所有路径数值用于对比展示
+    paths = {"A": a_best, "B": b_value, "C": c_value, "D": d_value, "E": e_value}
+    best_path = max(candidate_paths, key=candidate_paths.get)
+    best_value = candidate_paths[best_path]
 
     # 生成建议文本
     path_names = {
@@ -494,14 +555,22 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
         "E": "分期重组/和解",
     }
 
-    lines = [f"综合对比五条路径，推荐【{path_names[best_path]}】（预计净回收¥{best_value:,.0f}）。\n"]
+    unavailable_notes = []
+    if not path_c.available:
+        unavailable_notes.append(f"路径 C 不可选：{path_c.unavailable_reason}")
+    if not path_d.available:
+        unavailable_notes.append(f"路径 D 不可选：{path_d.unavailable_reason}")
+    header = ""
+    if unavailable_notes:
+        header = "（" + "；".join(unavailable_notes) + " 已从决策候选中自动排除。）\n"
+    lines = [header + f"综合对比可用路径，推荐【{path_names[best_path]}】（预计净回收¥{best_value:,.0f}）。\n"]
 
     if best_path == "C":
         lines.append(
             f"立即竞拍可在{path_c.expected_sale_days}天内回款，"
             f"成交价¥{path_c.sale_price:,.0f}，扣除佣金和停车费后净回收¥{c_value:,.0f}。"
         )
-        if d_value > b_value:
+        if path_d.available and d_value > b_value:
             lines.append(f"若竞拍不可行，次优选择为担保物权特别程序（净回收¥{d_value:,.0f}，约3个月）。")
     elif best_path == "D":
         lines.append(
@@ -514,7 +583,7 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
             f"常规诉讼预期情况下净回收¥{b_value:,.0f}，"
             f"但周期约9个月且不确定性较大。"
         )
-        if d_value > 0:
+        if path_d.available and d_value > 0:
             lines.append(f"建议评估是否可走担保物权特别程序（净回收¥{d_value:,.0f}，仅需3个月）。")
     elif best_path == "A":
         lines.append(

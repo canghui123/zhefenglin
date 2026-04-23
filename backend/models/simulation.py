@@ -1,10 +1,11 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 
 
 class SandboxInput(BaseModel):
     car_description: str = Field(..., description="车辆描述")
     entry_date: str = Field(..., description="入库日期 YYYY-MM-DD")
+    overdue_bucket: str = Field(default="M3(61-90天)", description="逾期阶段: M1/M2/M3/M4/M5/M6+")
     overdue_amount: float = Field(..., description="逾期金额(元)")
     che300_value: float = Field(..., description="当前车300估值(元)")
 
@@ -16,6 +17,18 @@ class SandboxInput(BaseModel):
     daily_parking: float = Field(default=30, description="日停车费(元)")
     recovery_cost: float = Field(default=0, description="收车成本(元)，含拖车/GPS/人工等")
     annual_interest_rate: float = Field(default=24, description="逾期年利率(%)")
+
+    # 车辆占有状态 — 影响路径 C/D 是否可选
+    # 实现担保物权特别程序要求债权人已取得担保物占有，并形成入库证据链；
+    # 未收回或未入库时系统自动屏蔽路径 D。
+    vehicle_recovered: bool = Field(
+        default=True,
+        description="车辆是否已回收（影响路径C/D是否可选）",
+    )
+    vehicle_in_inventory: bool = Field(
+        default=True,
+        description="车辆是否已入库（路径D特别程序的硬前提）",
+    )
 
     # 竞拍参数
     expected_sale_days: int = Field(default=7, description="预计成交天数")
@@ -35,6 +48,12 @@ class SandboxInput(BaseModel):
     restructure_monthly_payment: float = Field(default=0, description="重组月还款额(元)")
     restructure_months: int = Field(default=12, description="重组期数(月)")
     restructure_redefault_rate: float = Field(default=0.30, description="重组后再违约率")
+
+    @model_validator(mode="after")
+    def normalize_vehicle_inventory_state(self):
+        if not self.vehicle_recovered:
+            self.vehicle_in_inventory = False
+        return self
 
 
 # ============ 路径A：等待赎车 ============
@@ -108,6 +127,9 @@ class PathCResult(BaseModel):
     recovery_cost: float = 0
     net_recovery: float
     summary: str = ""
+    # 路径可用性 — 车辆未回收时为 False
+    available: bool = True
+    unavailable_reason: str = ""
 
 
 # ============ 路径D：实现担保物权特别程序 ============
@@ -125,6 +147,9 @@ class PathDResult(BaseModel):
     total_cost: float = 0
     net_recovery: float = 0
     summary: str = ""
+    # 路径可用性 — 需债权人已占有担保物、车辆已入库，且至少 M3 以上
+    available: bool = True
+    unavailable_reason: str = ""
 
 
 # ============ 路径E：分期重组/和解 ============

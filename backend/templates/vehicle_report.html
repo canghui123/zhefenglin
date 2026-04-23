@@ -49,11 +49,13 @@
 <h2>一、车辆基本信息</h2>
 <table class="info-table">
   <tr><td>车辆描述</td><td>{{ car_description }}</td></tr>
-  <tr><td>入库日期</td><td>{{ entry_date }}</td></tr>
+  <tr><td>入库/评估日期</td><td>{{ entry_date }}</td></tr>
+  <tr><td>逾期阶段</td><td>{{ overdue_bucket }}</td></tr>
   <tr><td>逾期金额</td><td class="amount">¥{{ overdue_amount }}</td></tr>
   <tr><td>当前市场估值（车300）</td><td class="amount">¥{{ che300_value }}</td></tr>
   <tr><td>车辆类型</td><td>{{ vehicle_type_label }}</td></tr>
   <tr><td>车龄</td><td>{{ vehicle_age_years }}年</td></tr>
+  <tr><td>车辆状态</td><td>{{ vehicle_recovered_status }} / {{ vehicle_inventory_status }}</td></tr>
   <tr><td>收车成本</td><td class="amount">¥{{ recovery_cost }}</td></tr>
 </table>
 
@@ -82,7 +84,13 @@
   <tr class="{{ 'best' if best_path == 'D' else '' }}">
     <td>D</td><td>担保物权特别程序</td><td>约3个月</td>
     <td class="amount">¥{{ "{:,.0f}".format(path_d.net_recovery) }}</td>
-    <td>{{ "★ 推荐" if best_path == "D" else "" }}</td>
+    <td>
+      {% if path_d.available %}
+        {{ "★ 推荐" if best_path == "D" else "" }}
+      {% else %}
+        不可用
+      {% endif %}
+    </td>
   </tr>
   <tr class="{{ 'best' if best_path == 'E' else '' }}">
     <td>E</td><td>分期重组/和解</td><td>{{ path_e.total_months }}个月</td>
@@ -157,6 +165,12 @@
 
 <!-- 路径D -->
 <h3>路径D：实现担保物权特别程序</h3>
+{% if not path_d.available %}
+<div class="legal-cost-box">
+  <strong>当前不可用：</strong>
+  <span>{{ path_d.unavailable_reason }}</span>
+</div>
+{% endif %}
 <div class="legal-cost-box">
   <strong>法律费用明细：</strong>
   <span>申请费 ¥{{ "{:,.0f}".format(path_d.legal_cost.court_fee) }}</span>

@@ -72,35 +72,28 @@ export default function StrategiesPage() {
               <span className="text-xs text-gray-500">资产数</span>
               <div className="font-semibold">{data.segment_count}笔</div>
             </div>
-            {data.recommended_strategy && (
-              <div className="ml-auto">
-                <span className="px-3 py-1 bg-green-100 text-green-700 text-sm rounded-full font-medium">
-                  推荐: {data.strategies.find(s => s.strategy_type === data.recommended_strategy)?.strategy_name}
-                </span>
-              </div>
-            )}
+            <div className="ml-auto text-xs text-gray-400 max-w-md text-right">
+              系统仅展示各路径的量化测算与约束，不替代人工决策；请结合入库情况、法务资源、客户关系等综合判断。
+            </div>
           </div>
 
-          {/* 路径对比卡片 */}
+          {/* 路径对比卡片 —— 不做推荐，只展示数据与约束 */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {data.strategies.map((s) => {
-              const isRecommended = s.strategy_type === data.recommended_strategy;
-              const isDisabled = s.not_recommended_reasons.length > 0;
+              const hasConstraint = s.not_recommended_reasons.length > 0;
               return (
                 <div
                   key={s.strategy_type}
                   className={`rounded-xl border p-4 ${
-                    isRecommended
-                      ? "border-green-300 bg-green-50 ring-2 ring-green-200"
-                      : isDisabled
-                      ? "border-gray-200 bg-gray-50 opacity-60"
+                    hasConstraint
+                      ? "border-amber-200 bg-amber-50/30"
                       : "border-gray-200 bg-white"
                   }`}
                 >
                   <div className="flex items-center gap-2 mb-3">
                     <h3 className="text-sm font-semibold text-gray-900">{s.strategy_name}</h3>
-                    {isRecommended && (
-                      <span className="text-xs bg-green-200 text-green-800 px-1.5 py-0.5 rounded">推荐</span>
+                    {hasConstraint && (
+                      <span className="text-xs bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">约束</span>
                     )}
                   </div>
 
@@ -157,15 +150,18 @@ export default function StrategiesPage() {
                     })}
                   </div>
 
-                  {/* 风险/不建议 */}
+                  {/* 约束提示（法律/物权/入库等硬性不可行原因） */}
                   {s.not_recommended_reasons.length > 0 && (
-                    <div className="mt-2 p-2 bg-red-50 rounded text-xs text-red-600">
-                      {s.not_recommended_reasons.map((r, i) => <div key={i}>{r}</div>)}
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                      <div className="font-medium mb-0.5">约束提示</div>
+                      {s.not_recommended_reasons.map((r, i) => <div key={i}>· {r}</div>)}
                     </div>
                   )}
+                  {/* 风险提示（周期长/损失高等软性提示） */}
                   {s.risk_notes.length > 0 && (
                     <div className="mt-2 p-2 bg-yellow-50 rounded text-xs text-yellow-700">
-                      {s.risk_notes.map((r, i) => <div key={i}>{r}</div>)}
+                      <div className="font-medium mb-0.5">风险提示</div>
+                      {s.risk_notes.map((r, i) => <div key={i}>· {r}</div>)}
                     </div>
                   )}
                 </div>

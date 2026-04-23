@@ -207,10 +207,31 @@ def compute_strategy_comparison(segment: dict, funding_rate: float = 0.08) -> li
         cap = max(0, min(100, (1 - lr) * 80 + (1 / max(p["avg_recovery_days"], 1)) * 2000))
 
         nr = []
-        if status == "未收回" and stype in ("retail_auction", "vehicle_transfer", "bulk_clearance"):
-            nr.append("车辆尚未收回，无法执行")
+        # —— 物权占有/入库门禁 ——
+        # 未收回分层：没有占有，一切需要车在手的路径都不可行
+        if status == "未收回":
+            if stype in ("retail_auction", "vehicle_transfer", "bulk_clearance"):
+                nr.append("车辆尚未收回，无法上架处置")
+            if stype == "special_procedure":
+                nr.append(
+                    "实现担保物权特别程序要求债权人已取得担保物占有，车辆未收回不可用"
+                )
+        # 已收回但未入库：虽有事实占有，但缺少入库凭证/车辆定位/照片等证据链，
+        # 法院立案时难以证明"已占有担保物"；业务实践是入库后再提交特别程序申请。
+        # 因此此状态下仍屏蔽 special_procedure；
+        # 批量出清/资产包转让同理（都需入库台账才能对外处置/交付）。
+        elif status == "已收回未入库":
+            if stype == "special_procedure":
+                nr.append(
+                    "实现担保物权特别程序需已入库备案以证明占有，"
+                    "车辆已收回但未入库，请先完成入库登记后再申请"
+                )
+            if stype in ("vehicle_transfer", "bulk_clearance"):
+                nr.append("现车转让/批量出清需完成入库登记后方可操作")
         if bi <= 1 and stype in ("debt_transfer", "bulk_clearance"):
             nr.append("逾期时间较短，催收仍有机会")
+        if bi <= 1 and stype == "special_procedure":
+            nr.append("实现担保物权特别程序仅适用于至少M3以上逾期资产，M1-M2阶段不应直接启动")
         if sr < 0.2:
             nr.append("成功概率过低")
 
@@ -243,10 +264,10 @@ def compute_strategy_comparison(segment: dict, funding_rate: float = 0.08) -> li
             "not_recommended_reasons": nr,
         })
 
-    results.sort(
-        key=lambda x: x["net_recovery_pv"] if not x["not_recommended_reasons"] else -999999,
-        reverse=True,
-    )
+    # 2026-04-22 产品决策：不再对路径做"推荐"排序 —— 纯按净回收 PV 降序展示。
+    # 被物权/入库等硬约束限制的路径依然在列表中，由前端通过 not_recommended_reasons
+    # 显示"约束提示"，让使用者自己综合判断。
+    results.sort(key=lambda x: x["net_recovery_pv"], reverse=True)
     return results
 
 
@@ -384,14 +405,51 @@ def generate_role_recommendations(overview: dict, segments: list, role_level: st
 
         m4p = [s for s in segments if any(x in s.get("overdue_bucket", "") for x in ("M4", "M5", "M6"))]
         if m4p:
-            recs.append({
-                "role_level": "executive",
-                "recommendation_title": "评估法务资源配置",
-                "recommendation_text": f"M4+分层共{sum(s['asset_count'] for s in m4p)}笔，需评估法务承载力，考虑特别程序缩短回款周期",
-                "expected_impact": {"recovery_days_reduction": "预计缩短60-120天"},
-                "feasibility_score": 0.7, "realism_score": 0.75,
-                "priority": 3, "approval_needed": True,
-            })
+            # 特别程序的物权前提是债权人已占有且有入库证据链，只对"已入库"分层提。
+            # 已收回未入库：先催入库；未收回：先催收车/普通诉讼保全。
+            m4p_inv = [s for s in m4p if s.get("recovered_status") == "已入库"]
+            m4p_recovered_not_inv = [s for s in m4p if s.get("recovered_status") == "已收回未入库"]
+            m4p_not_recovered = [s for s in m4p if s.get("recovered_status") == "未收回"]
+            inv_count = sum(s["asset_count"] for s in m4p_inv)
+            rec_not_inv_count = sum(s["asset_count"] for s in m4p_recovered_not_inv)
+            not_rec_count = sum(s["asset_count"] for s in m4p_not_recovered)
+
+            if inv_count:
+                recs.append({
+                    "role_level": "executive",
+                    "recommendation_title": "评估法务资源配置（已入库部分）",
+                    "recommendation_text": (
+                        f"M4+已入库共{inv_count}笔，可直接走担保物权特别程序，"
+                        f"需评估法务承载力以缩短回款周期"
+                    ),
+                    "expected_impact": {"recovery_days_reduction": "预计缩短60-120天"},
+                    "feasibility_score": 0.7, "realism_score": 0.75,
+                    "priority": 3, "approval_needed": True,
+                })
+            if rec_not_inv_count:
+                recs.append({
+                    "role_level": "executive",
+                    "recommendation_title": "加速M4+已收回资产入库登记",
+                    "recommendation_text": (
+                        f"M4+已收回未入库共{rec_not_inv_count}笔，缺入库证据链"
+                        f"不可直接走特别程序；建议优先完成入库登记后再申请"
+                    ),
+                    "expected_impact": {"recovery_days_reduction": "完成入库后可立即启动特别程序"},
+                    "feasibility_score": 0.8, "realism_score": 0.8,
+                    "priority": 3, "approval_needed": False,
+                })
+            if not_rec_count:
+                recs.append({
+                    "role_level": "executive",
+                    "recommendation_title": "加速M4+未收回资产收车",
+                    "recommendation_text": (
+                        f"M4+未收回共{not_rec_count}笔，无物权占有前提，"
+                        f"不可直接走特别程序；建议加大收车资源或启动普通诉讼保全"
+                    ),
+                    "expected_impact": {"recovery_rate": "提升收车率"},
+                    "feasibility_score": 0.65, "realism_score": 0.7,
+                    "priority": 3, "approval_needed": True,
+                })
 
     elif role_level == "manager":
         recs.append({
