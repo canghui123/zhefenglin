@@ -11,6 +11,7 @@ function fmt(n: number) {
 interface FormState {
   car_description: string;
   entry_date: string;
+  overdue_bucket: string;
   overdue_amount: number;
   che300_value: number;
   vehicle_type: string;
@@ -18,6 +19,8 @@ interface FormState {
   daily_parking: number;
   recovery_cost: number;
   annual_interest_rate: number;
+  vehicle_recovered: boolean;
+  vehicle_in_inventory: boolean;
   expected_sale_days: number;
   commission_rate: number;
   litigation_lawyer_fee: number;
@@ -40,6 +43,7 @@ export default function InventorySandboxPage() {
   const [form, setForm] = useState<FormState>({
     car_description: "",
     entry_date: "",
+    overdue_bucket: "M3(61-90天)",
     overdue_amount: 0,
     che300_value: 0,
     vehicle_type: "auto",
@@ -47,6 +51,8 @@ export default function InventorySandboxPage() {
     daily_parking: 30,
     recovery_cost: 0,
     annual_interest_rate: 24,
+    vehicle_recovered: true,
+    vehicle_in_inventory: true,
     expected_sale_days: 7,
     commission_rate: 0.02,
     litigation_lawyer_fee: 5000,
@@ -61,12 +67,20 @@ export default function InventorySandboxPage() {
   });
 
   function upd(field: keyof FormState, value: string | number | boolean) {
+    if (field === "vehicle_recovered" && value === false) {
+      setForm((prev) => ({ ...prev, vehicle_recovered: false, vehicle_in_inventory: false }));
+      return;
+    }
+    if (field === "vehicle_in_inventory" && value === true) {
+      setForm((prev) => ({ ...prev, vehicle_recovered: true, vehicle_in_inventory: true }));
+      return;
+    }
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
   async function handleSimulate() {
     if (!form.car_description || !form.entry_date || !form.che300_value) {
-      setError("请填写车辆描述、入库日期和车300估值");
+      setError("请填写车辆描述、入库/评估日期和车300估值");
       return;
     }
     setLoading(true);
@@ -113,6 +127,8 @@ export default function InventorySandboxPage() {
     D: "担保物权特别程序",
     E: "分期重组/和解",
   };
+  const specialProcedureStageAllowed = !form.overdue_bucket.startsWith("M1") && !form.overdue_bucket.startsWith("M2");
+  const specialProcedureBlocked = !form.vehicle_recovered || !form.vehicle_in_inventory || !specialProcedureStageAllowed;
 
   return (
     <div className="space-y-6">
@@ -132,8 +148,18 @@ export default function InventorySandboxPage() {
           <Field label="车辆描述">
             <input className="inp" value={form.car_description} onChange={(e) => upd("car_description", e.target.value)} placeholder="如：2021丰田凯美瑞2.0G豪华版" />
           </Field>
-          <Field label="入库日期">
+          <Field label="入库/评估日期">
             <input className="inp" type="date" value={form.entry_date} onChange={(e) => upd("entry_date", e.target.value)} />
+          </Field>
+          <Field label="逾期阶段">
+            <select className="inp" value={form.overdue_bucket} onChange={(e) => upd("overdue_bucket", e.target.value)}>
+              <option value="M1(1-30天)">M1（1-30天）</option>
+              <option value="M2(31-60天)">M2（31-60天）</option>
+              <option value="M3(61-90天)">M3（61-90天）</option>
+              <option value="M4(91-120天)">M4（91-120天）</option>
+              <option value="M5(121-150天)">M5（121-150天）</option>
+              <option value="M6+(>150天)">M6+（150天以上）</option>
+            </select>
           </Field>
           <Field label="逾期金额 (元)">
             <input className="inp" type="number" value={form.overdue_amount || ""} onChange={(e) => upd("overdue_amount", +e.target.value)} />
@@ -160,7 +186,44 @@ export default function InventorySandboxPage() {
           <Field label="日停车费 (元)">
             <input className="inp" type="number" value={form.daily_parking} onChange={(e) => upd("daily_parking", +e.target.value)} />
           </Field>
+          <Field label="车辆是否已回收">
+            <div className="flex items-center gap-2 h-10">
+              <input
+                type="checkbox"
+                checked={form.vehicle_recovered}
+                onChange={(e) => upd("vehicle_recovered", e.target.checked)}
+                className="w-4 h-4"
+                id="vehicle_recovered"
+              />
+              <label htmlFor="vehicle_recovered" className="text-sm text-gray-700 cursor-pointer">
+                {form.vehicle_recovered ? "已收回" : "未收回（路径C/D将屏蔽）"}
+              </label>
+            </div>
+          </Field>
+          <Field label="车辆是否已入库">
+            <div className="flex items-center gap-2 h-10">
+              <input
+                type="checkbox"
+                checked={form.vehicle_in_inventory}
+                onChange={(e) => upd("vehicle_in_inventory", e.target.checked)}
+                className="w-4 h-4 disabled:opacity-50"
+                id="vehicle_in_inventory"
+                disabled={!form.vehicle_recovered}
+              />
+              <label htmlFor="vehicle_in_inventory" className="text-sm text-gray-700 cursor-pointer">
+                {form.vehicle_in_inventory ? "已入库（可形成特别程序证据链）" : "未入库（路径D将屏蔽）"}
+              </label>
+            </div>
+          </Field>
         </div>
+        {specialProcedureBlocked && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+            当前条件下，路径D“实现担保物权特别程序”不会进入推荐候选。硬前提为：车辆已收回、已入库形成证据链，且逾期阶段至少达到 M3。
+            {!form.vehicle_recovered && " 当前车辆未收回，请先完成收车。"}
+            {form.vehicle_recovered && !form.vehicle_in_inventory && " 当前车辆未入库，请先完成入库登记。"}
+            {!specialProcedureStageAllowed && " 当前为 M1/M2，建议优先催收、重组或常规诉讼评估。"}
+          </div>
+        )}
 
         <hr className="border-gray-200" />
         <h2 className="font-semibold text-gray-900">竞拍参数</h2>
@@ -308,7 +371,12 @@ export default function InventorySandboxPage() {
             </PathCard>
 
             {/* C: 立即竞拍 */}
-            <PathCard title="路径C：立即竞拍" best={result.best_path === "C"}>
+            <PathCard
+              title="路径C：立即竞拍"
+              best={result.best_path === "C"}
+              unavailable={result.path_c.available === false}
+              unavailableReason={result.path_c.unavailable_reason || ""}
+            >
               <div className="space-y-2 text-sm">
                 <Row label="预计成交天数" value={`${result.path_c.expected_sale_days}天`} />
                 <Row label="成交价" value={`¥${fmt(result.path_c.sale_price)}`} />
@@ -324,7 +392,12 @@ export default function InventorySandboxPage() {
             </PathCard>
 
             {/* D: 担保物权特别程序 */}
-            <PathCard title="路径D：担保物权特别程序" best={result.best_path === "D"}>
+            <PathCard
+              title="路径D：担保物权特别程序"
+              best={result.best_path === "D"}
+              unavailable={result.path_d.available === false}
+              unavailableReason={result.path_d.unavailable_reason || ""}
+            >
               <div className="text-xs text-gray-500 mb-2 space-y-0.5">
                 <div>申请费: ¥{fmt(result.path_d.legal_cost.court_fee)} | 执行费: ¥{fmt(result.path_d.legal_cost.execution_fee)}</div>
                 <div>律师费: ¥{fmt(result.path_d.legal_cost.lawyer_fee_fixed)}</div>
@@ -392,13 +465,42 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function PathCard({ title, best, children }: { title: string; best: boolean; children: React.ReactNode }) {
+function PathCard({
+  title,
+  best,
+  unavailable,
+  unavailableReason,
+  children,
+}: {
+  title: string;
+  best: boolean;
+  unavailable?: boolean;
+  unavailableReason?: string;
+  children: React.ReactNode;
+}) {
+  const base = "bg-white border rounded-xl p-4 relative";
+  const highlight = best && !unavailable ? "ring-2 ring-green-400 border-green-300" : "";
+  const disabled = unavailable ? "opacity-60 grayscale" : "";
   return (
-    <div className={`bg-white border rounded-xl p-4 ${best ? "ring-2 ring-green-400 border-green-300" : ""}`}>
+    <div className={`${base} ${highlight} ${disabled}`}>
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-semibold text-sm text-gray-900">{title}</h3>
-        {best && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">推荐</span>}
+        {best && !unavailable && (
+          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+            推荐
+          </span>
+        )}
+        {unavailable && (
+          <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-medium">
+            不可用
+          </span>
+        )}
       </div>
+      {unavailable && unavailableReason && (
+        <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+          {unavailableReason}
+        </div>
+      )}
       {children}
     </div>
   );

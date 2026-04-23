@@ -158,19 +158,17 @@ async def portfolio_strategies(
     seg = segments[segment_index]
     strategies = compute_strategy_comparison(seg)
 
-    recommended = None
-    for s in strategies:
-        if not s["not_recommended_reasons"]:
-            recommended = s["strategy_type"]
-            break
-
+    # 2026-04-22 产品决策：不再由系统做"推荐路径"判定 ——
+    # 业务规则过于复杂（物权、入库、法务资源、客户关系等），人工判断更靠谱。
+    # 前端仍展示每条路径的成本/净回收/损失率等完整数据以及约束提示，
+    # recommended_strategy 字段保留但固定为 None，避免打破既有前端契约。
     return {
         "segment_index": segment_index,
         "segment_name": seg["segment_name"],
         "segment_ead": seg["total_ead"],
         "segment_count": seg["asset_count"],
         "strategies": strategies,
-        "recommended_strategy": recommended,
+        "recommended_strategy": None,
         "total_segments": len(segments),
         "segment_list": [{"index": i, "name": s["segment_name"]} for i, s in enumerate(segments)],
     }

@@ -46,12 +46,15 @@ async def generate_report_html(result: SandboxResult) -> str:
         report_date=date.today().strftime("%Y年%m月%d日"),
         car_description=result.input.car_description,
         entry_date=result.input.entry_date,
+        overdue_bucket=result.input.overdue_bucket,
         overdue_amount=f"{result.input.overdue_amount:,.0f}",
         che300_value=f"{result.input.che300_value:,.0f}",
         vehicle_type_label=VEHICLE_TYPE_LABELS.get(
             result.input.vehicle_type, result.input.vehicle_type
         ),
         vehicle_age_years=result.input.vehicle_age_years,
+        vehicle_recovered_status="已收回" if result.input.vehicle_recovered else "未收回",
+        vehicle_inventory_status="已入库" if result.input.vehicle_in_inventory else "未入库",
         recovery_cost=f"{result.input.recovery_cost:,.0f}",
         commission_rate=result.input.commission_rate,
         path_a=result.path_a,

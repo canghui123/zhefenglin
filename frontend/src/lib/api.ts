@@ -249,6 +249,7 @@ export interface PackageCalculationResult {
 export interface SandboxInput {
   car_description: string;
   entry_date: string;
+  overdue_bucket?: string;
   overdue_amount: number;
   che300_value: number;
   vehicle_type?: string;
@@ -256,6 +257,8 @@ export interface SandboxInput {
   daily_parking?: number;
   recovery_cost?: number;
   annual_interest_rate?: number;
+  vehicle_recovered?: boolean;
+  vehicle_in_inventory?: boolean;
   expected_sale_days?: number;
   commission_rate?: number;
   litigation_lawyer_fee?: number;
@@ -333,6 +336,8 @@ export interface SandboxResult {
     recovery_cost: number;
     net_recovery: number;
     summary: string;
+    available?: boolean;
+    unavailable_reason?: string;
   };
   path_d: {
     name: string;
@@ -347,6 +352,8 @@ export interface SandboxResult {
     total_cost: number;
     net_recovery: number;
     summary: string;
+    available?: boolean;
+    unavailable_reason?: string;
   };
   path_e: {
     name: string;
