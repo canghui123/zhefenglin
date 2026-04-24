@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
+from config import settings
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import SESSION_COOKIE_NAME, get_current_user
-from repositories import user_repo
+from repositories import user_repo, tenant_repo
 from services import audit_service  # noqa: F401
 from services.auth_service import AuthError, authenticate, revoke
 from services.password_service import hash_password
@@ -83,12 +84,22 @@ def register(
             detail="该邮箱已被注册",
         )
 
-    user_repo.create_user(
+    new_user = user_repo.create_user(
         session,
         email=req.email,
         password_hash=hash_password(req.password),
         role="viewer",
         display_name=req.display_name or req.email.split("@")[0],
+    )
+
+    default_tenant = tenant_repo.get_or_create_tenant(
+        session,
+        code=settings.default_registration_tenant_code.strip() or "default",
+        name=settings.default_registration_tenant_name.strip() or "默认租户",
+    )
+    user_repo.set_default_tenant(session, new_user.id, default_tenant.id)
+    tenant_repo.create_membership(
+        session, user_id=new_user.id, tenant_id=default_tenant.id, role="viewer"
     )
     session.commit()
 

@@ -38,6 +38,9 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${BACKEND_PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${BACKEND_PIP_TRUSTED_HOST:-}
     container_name: af_backend
     restart: unless-stopped
     depends_on:
@@ -60,6 +63,8 @@ services:
       DEFAULT_CITY_NAME: ${DEFAULT_CITY_NAME:-南京}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEFAULT_REGISTRATION_TENANT_CODE: ${DEFAULT_REGISTRATION_TENANT_CODE:-default}
+      DEFAULT_REGISTRATION_TENANT_NAME: ${DEFAULT_REGISTRATION_TENANT_NAME:-默认租户}
       LOG_FORMAT: json
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]

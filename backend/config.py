@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # ---------- Auth (Task 5+) ----------
     jwt_secret: str = "dev-only-change-me"
     jwt_refresh_secret: str = "dev-only-change-me-refresh"
+    default_registration_tenant_code: str = "default"
+    default_registration_tenant_name: str = "默认租户"
 
     # ---------- CORS ----------
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"

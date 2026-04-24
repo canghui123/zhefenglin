@@ -8,9 +8,10 @@ These tests describe the contract:
 """
 from fastapi.testclient import TestClient
 
+from config import settings
 from main import app
 from db.session import get_db_session
-from repositories import user_repo
+from repositories import tenant_repo, user_repo
 from services.password_service import hash_password
 
 
@@ -95,3 +96,73 @@ def test_me_endpoint_requires_session_and_returns_user():
     me = client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["email"] == "admin@example.com"
+
+
+def test_register_assigns_default_tenant_membership_and_session():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": "new-user@example.com",
+            "password": "Passw0rd!",
+            "display_name": "New User",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["user"]["email"] == "new-user@example.com"
+    assert body["user"]["role"] == "viewer"
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        user = user_repo.get_user_by_email(session, "new-user@example.com")
+        tenant = tenant_repo.get_tenant_by_code(session, "default")
+        assert user is not None
+        assert tenant is not None
+        assert user.default_tenant_id == tenant.id
+        assert tenant_repo.has_membership(
+            session, user_id=user.id, tenant_id=tenant.id
+        )
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_register_uses_configured_default_registration_tenant(monkeypatch):
+    monkeypatch.setattr(settings, "default_registration_tenant_code", "poc-tenant")
+    monkeypatch.setattr(settings, "default_registration_tenant_name", "POC 租户")
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "email": "poc-user@example.com",
+            "password": "Passw0rd!",
+            "display_name": "POC User",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        user = user_repo.get_user_by_email(session, "poc-user@example.com")
+        tenant = tenant_repo.get_tenant_by_code(session, "poc-tenant")
+        assert user is not None
+        assert tenant is not None
+        assert tenant.name == "POC 租户"
+        assert user.default_tenant_id == tenant.id
+        assert tenant_repo.has_membership(
+            session, user_id=user.id, tenant_id=tenant.id
+        )
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
