@@ -84,3 +84,19 @@ def test_future_marginal_net_benefit_excludes_sunk_costs():
     assert with_sunk.path_c.future_marginal_net_benefit == without_sunk.path_c.future_marginal_net_benefit
     assert with_sunk.path_c.sunk_cost_excluded == 13000
     assert "未来边际净收益" in with_sunk.recommendation
+
+
+def test_dishonest_enforced_debtor_blocks_waiting_path():
+    result = run_simulation(
+        _input(
+            debtor_dishonest_enforced=True,
+            vehicle_recovered=True,
+            vehicle_in_inventory=True,
+        )
+    )
+
+    assert result.path_a.available is False
+    assert result.path_a.success_probability == 0
+    assert all(tp.success_probability == 0 for tp in result.path_a.timepoints)
+    assert result.best_path != "A"
+    assert "失信被执行人" in result.path_a.unavailable_reason

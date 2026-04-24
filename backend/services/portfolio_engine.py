@@ -183,12 +183,16 @@ def compute_strategy_comparison(segment: dict, funding_rate: float = 0.08) -> li
     for stype, sname in STRATEGY_TYPES.items():
         p = STRATEGY_PROFILES[stype]
         sr = p["success_rate_base"]
+        nr = []
         if bi >= 4:
             sr *= 0.7
         if status == "已入库" and stype in ("retail_auction", "vehicle_transfer", "bulk_clearance"):
             sr = min(0.98, sr * 1.2)
         if status == "未收回" and stype in ("retail_auction", "vehicle_transfer"):
             sr *= 0.5
+        if segment.get("debtor_dishonest_enforced") and stype == "collection":
+            sr = 0.0
+            nr.append("司法数据提示债务人为失信被执行人，继续催收等待还款路径被否决")
 
         rr = p["recovery_rate"] * (0.85 if bi >= 4 else 1.0)
         gross = ead * rr * sr
@@ -206,7 +210,6 @@ def compute_strategy_comparison(segment: dict, funding_rate: float = 0.08) -> li
         lr = loss_amt / ead if ead else 0
         cap = max(0, min(100, (1 - lr) * 80 + (1 / max(p["avg_recovery_days"], 1)) * 2000))
 
-        nr = []
         # —— 物权占有/入库门禁 ——
         # 未收回分层：没有占有，一切需要车在手的路径都不可行
         if status == "未收回":

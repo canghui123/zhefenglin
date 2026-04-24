@@ -33,6 +33,14 @@ class SandboxInput(BaseModel):
         default=True,
         description="车辆是否已入库（路径D特别程序的硬前提）",
     )
+    debtor_dishonest_enforced: bool = Field(
+        default=False,
+        description="外部司法数据是否提示债务人为失信被执行人",
+    )
+    external_find_car_score: Optional[float] = Field(
+        default=None,
+        description="外部寻车线索评分，0-100；用于后续派单优先级",
+    )
 
     # 竞拍参数
     expected_sale_days: int = Field(default=7, description="预计成交天数")
@@ -83,6 +91,8 @@ class PathAResult(BaseModel):
     success_probability: float = 0
     future_marginal_net_benefit: float = 0
     sunk_cost_excluded: float = 0
+    available: bool = True
+    unavailable_reason: str = ""
 
 
 # ============ 路径B：常规诉讼 ============

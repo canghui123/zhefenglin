@@ -179,6 +179,17 @@ def test_special_procedure_only_available_when_in_inventory():
             f"status={status} 时 special_procedure 必须带阻断原因"
         )
 
+
+def test_dishonest_enforced_debtor_blocks_collection_strategy():
+    seg = _seg(status="未收回", bucket="M3(61-90天)")
+    seg["debtor_dishonest_enforced"] = True
+
+    results = compute_strategy_comparison(seg)
+    collection = _by_type(results)["collection"]
+
+    assert collection["success_probability"] == 0
+    assert any("失信" in reason for reason in collection["not_recommended_reasons"])
+
     seg = _seg(
         status="已入库",
         bucket="M4(91-120天)",

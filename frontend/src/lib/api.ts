@@ -175,6 +175,70 @@ export async function getActionCenter() {
   return request<ActionCenterData>("/api/portfolio/action-center");
 }
 
+// ============ 外部数据生态 API ============
+
+export interface ExternalProviderCapability {
+  provider_code: string;
+  provider_name: string;
+  category: string;
+  capabilities: string[];
+  enabled: boolean;
+  integration_status: string;
+}
+
+export interface FindCarSignalRequest {
+  vehicle_identifier?: string | null;
+  province?: string | null;
+  city?: string | null;
+  gps_recent_days?: number | null;
+  etc_recent_days?: number | null;
+  violation_recent_days?: number | null;
+  manual_hint?: string | null;
+}
+
+export interface FindCarSignalResult {
+  score: number;
+  level: string;
+  signals: string[];
+  recommended_action: string;
+}
+
+export interface JudicialRiskRequest {
+  debtor_name: string;
+  id_card_last4?: string | null;
+  litigation_count?: number;
+  dishonest_enforced?: boolean;
+  restricted_consumption?: boolean;
+}
+
+export interface JudicialRiskResult {
+  risk_level: string;
+  score: number;
+  collection_blocked: boolean;
+  risk_tags: string[];
+  decision_note: string;
+}
+
+export async function listExternalProviders() {
+  return request<ExternalProviderCapability[]>("/api/external-data/providers");
+}
+
+export async function getFindCarScore(input: FindCarSignalRequest) {
+  return request<FindCarSignalResult>("/api/external-data/find-car-score", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getJudicialRisk(input: JudicialRiskRequest) {
+  return request<JudicialRiskResult>("/api/external-data/judicial-risk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 // ============ 用户管理 API ============
 
 export interface UserInfo {
@@ -269,6 +333,8 @@ export interface SandboxInput {
   annual_interest_rate?: number;
   vehicle_recovered?: boolean;
   vehicle_in_inventory?: boolean;
+  debtor_dishonest_enforced?: boolean;
+  external_find_car_score?: number | null;
   expected_sale_days?: number;
   commission_rate?: number;
   litigation_lawyer_fee?: number;
@@ -339,6 +405,8 @@ export interface SandboxResult {
     success_probability: number;
     future_marginal_net_benefit: number;
     sunk_cost_excluded: number;
+    available?: boolean;
+    unavailable_reason?: string;
   };
   path_b: {
     name: string;

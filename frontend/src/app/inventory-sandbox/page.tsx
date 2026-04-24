@@ -25,6 +25,8 @@ interface FormState {
   annual_interest_rate: number;
   vehicle_recovered: boolean;
   vehicle_in_inventory: boolean;
+  debtor_dishonest_enforced: boolean;
+  external_find_car_score: number;
   expected_sale_days: number;
   commission_rate: number;
   litigation_lawyer_fee: number;
@@ -61,6 +63,8 @@ export default function InventorySandboxPage() {
     annual_interest_rate: 24,
     vehicle_recovered: true,
     vehicle_in_inventory: true,
+    debtor_dishonest_enforced: false,
+    external_find_car_score: 0,
     expected_sale_days: 7,
     commission_rate: 0.02,
     litigation_lawyer_fee: 5000,
@@ -235,7 +239,37 @@ export default function InventorySandboxPage() {
               </label>
             </div>
           </Field>
+          <Field label="司法风险：失信被执行人">
+            <div className="flex items-center gap-2 h-10">
+              <input
+                type="checkbox"
+                checked={form.debtor_dishonest_enforced}
+                onChange={(e) => upd("debtor_dishonest_enforced", e.target.checked)}
+                className="w-4 h-4"
+                id="debtor_dishonest_enforced"
+              />
+              <label htmlFor="debtor_dishonest_enforced" className="text-sm text-gray-700 cursor-pointer">
+                {form.debtor_dishonest_enforced ? "否决继续等待赎车" : "未命中强司法阻断"}
+              </label>
+            </div>
+          </Field>
+          <Field label="寻车线索评分">
+            <input
+              className="inp"
+              type="number"
+              min="0"
+              max="100"
+              value={form.external_find_car_score || ""}
+              onChange={(e) => upd("external_find_car_score", +e.target.value)}
+              placeholder="0-100，可由外部数据接口生成"
+            />
+          </Field>
         </div>
+        {form.debtor_dishonest_enforced && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            已命中失信被执行人信号，路径A“继续等待赎车”会被系统自动排除，不进入推荐候选。
+          </div>
+        )}
         {specialProcedureBlocked && (
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
             当前条件下，路径D“实现担保物权特别程序”不会进入推荐候选。硬前提为：车辆已收回、已入库形成证据链，且逾期阶段至少达到 M3。
@@ -335,7 +369,12 @@ export default function InventorySandboxPage() {
           {/* 五路径卡片 */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* A: 等待赎车 */}
-            <PathCard title="路径A：等待赎车" best={result.best_path === "A"}>
+            <PathCard
+              title="路径A：等待赎车"
+              best={result.best_path === "A"}
+              unavailable={result.path_a.available === false}
+              unavailableReason={result.path_a.unavailable_reason || ""}
+            >
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-gray-500 text-xs">

@@ -147,6 +147,15 @@ def _special_procedure_block_reasons(inp: SandboxInput) -> list[str]:
     return reasons
 
 
+def _collection_block_reasons(inp: SandboxInput) -> list[str]:
+    if inp.debtor_dishonest_enforced:
+        return [
+            "外部司法数据提示债务人为失信被执行人，继续等待赎车路径被系统否决；"
+            "建议优先评估诉讼、保全、收车处置或债权转让。"
+        ]
+    return []
+
+
 def estimate_depreciation(days: int, vehicle_type: str, vehicle_age_years: float) -> float:
     """计算指定天数后的贬值率（累计）
 
@@ -266,6 +275,7 @@ def simulate_path_a(inp: SandboxInput, session: Optional[Session] = None) -> Pat
         session=session, province=inp.province, city=inp.city
     )
     sunk = _sunk_cost_excluded(inp)
+    collection_block_reasons = _collection_block_reasons(inp)
     timepoints = []
 
     for days in [15, 30, 60, 90]:
@@ -292,6 +302,8 @@ def simulate_path_a(inp: SandboxInput, session: Optional[Session] = None) -> Pat
             vehicle_recovered=inp.vehicle_recovered,
             vehicle_in_inventory=inp.vehicle_in_inventory,
         )
+        if collection_block_reasons:
+            success_probability = 0
 
         timepoints.append(TimePoint(
             days=days,
@@ -308,12 +320,16 @@ def simulate_path_a(inp: SandboxInput, session: Optional[Session] = None) -> Pat
         ))
 
     best = max(timepoints, key=lambda tp: tp.future_marginal_net_benefit)
-    return PathAResult(
+    result = PathAResult(
         timepoints=timepoints,
         success_probability=best.success_probability,
         future_marginal_net_benefit=best.future_marginal_net_benefit,
         sunk_cost_excluded=round(sunk, 2),
     )
+    if collection_block_reasons:
+        result.available = False
+        result.unavailable_reason = " ".join(collection_block_reasons)
+    return result
 
 
 # ============================================================
@@ -724,10 +740,11 @@ def run_simulation(inp: SandboxInput, session: Optional[Session] = None) -> Sand
 
     # 构建候选路径集合；不满足硬前提的路径不能进入推荐候选。
     candidate_paths: dict[str, float] = {
-        "A": a_best,
         "B": b_value,
         "E": e_value,
     }
+    if path_a.available:
+        candidate_paths["A"] = a_best
     if path_c.available:
         candidate_paths["C"] = c_value
     if path_d.available:
@@ -748,6 +765,8 @@ def run_simulation(inp: SandboxInput, session: Optional[Session] = None) -> Sand
     }
 
     unavailable_notes = []
+    if not path_a.available:
+        unavailable_notes.append(f"路径 A 不可选：{path_a.unavailable_reason}")
     if not path_c.available:
         unavailable_notes.append(f"路径 C 不可选：{path_c.unavailable_reason}")
     if not path_d.available:
