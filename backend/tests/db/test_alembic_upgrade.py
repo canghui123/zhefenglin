@@ -28,6 +28,7 @@ REQUIRED_TABLES = sorted([
     "job_runs",
     "brand_retention_profiles",
     "region_disposal_coefficients",
+    "work_orders",
 ])
 
 

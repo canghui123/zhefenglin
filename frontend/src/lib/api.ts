@@ -175,6 +175,63 @@ export async function getActionCenter() {
   return request<ActionCenterData>("/api/portfolio/action-center");
 }
 
+// ============ 执行工单 API ============
+
+export interface WorkOrderCreate {
+  order_type: "towing" | "legal_document" | "auction_push";
+  title: string;
+  target_description?: string | null;
+  priority?: "low" | "normal" | "high" | "urgent";
+  source_type?: string | null;
+  source_id?: string | null;
+  payload?: Record<string, unknown>;
+}
+
+export interface WorkOrderInfo {
+  id: number;
+  tenant_id: number;
+  created_by: number | null;
+  order_type: string;
+  status: string;
+  priority: string;
+  title: string;
+  target_description: string | null;
+  source_type: string | null;
+  source_id: string | null;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listWorkOrders(params?: { status?: string; order_type?: string }) {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.order_type) query.set("order_type", params.order_type);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<WorkOrderInfo[]>(`/api/work-orders${suffix}`);
+}
+
+export async function createWorkOrder(input: WorkOrderCreate) {
+  return request<WorkOrderInfo>("/api/work-orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function updateWorkOrderStatus(
+  workOrderId: number,
+  status: string,
+  result: Record<string, unknown> = {},
+) {
+  return request<WorkOrderInfo>(`/api/work-orders/${workOrderId}/status`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status, result }),
+  });
+}
+
 // ============ 外部数据生态 API ============
 
 export interface ExternalProviderCapability {

@@ -22,3 +22,4 @@ from db.models.decision_model_config import (  # noqa: F401
     BrandRetentionProfile,
     RegionDisposalCoefficient,
 )
+from db.models.work_order import WorkOrder  # noqa: F401
