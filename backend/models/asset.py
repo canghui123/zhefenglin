@@ -13,6 +13,9 @@ class Asset(BaseModel):
     ownership_transferred: Optional[bool] = Field(None, description="是否被过户")
     loan_principal: Optional[float] = Field(None, description="债权本金(元)")
     buyout_price: Optional[float] = Field(None, description="买断价(元)")
+    province: Optional[str] = Field(None, description="资产所在地省份")
+    city: Optional[str] = Field(None, description="资产所在地城市")
+    region_code: Optional[str] = Field(None, description="区域配置编码")
 
 
 class AssetParseError(BaseModel):
@@ -50,6 +53,9 @@ class AssetPricingResult(BaseModel):
     expected_revenue: float = 0
     net_profit: float = 0
     profit_margin: float = 0
+    province: Optional[str] = None
+    city: Optional[str] = None
+    region_code: Optional[str] = None
     risk_flags: list[str] = []
 
 

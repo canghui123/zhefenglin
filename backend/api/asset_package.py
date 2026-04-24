@@ -181,7 +181,13 @@ async def calculate(
             })
         depreciation_rates = await predict_depreciation(session, dep_items)
 
-        result = calculate_package(assets, _parameters, valuations, depreciation_rates)
+        result = calculate_package(
+            assets,
+            _parameters,
+            valuations,
+            depreciation_rates,
+            session=session,
+        )
         result.package_id = _package_id
 
         asset_package_repo.save_package_result(

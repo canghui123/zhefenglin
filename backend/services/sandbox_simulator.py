@@ -8,6 +8,10 @@
 """
 
 import math
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
 from models.simulation import (
     SandboxInput, SandboxResult,
     PathAResult, TimePoint,
@@ -15,6 +19,14 @@ from models.simulation import (
     PathCResult,
     PathDResult,
     PathEResult,
+)
+from services.decision_model import (
+    adjusted_duration_days,
+    adjusted_towing_cost,
+    dynamic_success_probability,
+    estimate_depreciation_rate,
+    resolve_brand_profile,
+    resolve_region_coefficient,
 )
 
 
@@ -87,6 +99,10 @@ def _detect_vehicle_type(description: str) -> str:
     return "domestic"
 
 
+def _sunk_cost_excluded(inp: SandboxInput) -> float:
+    return max(inp.sunk_collection_cost, 0) + max(inp.sunk_legal_cost, 0)
+
+
 def _get_age_bucket(age_years: float) -> str:
     if age_years < 3:
         return "0-3"
@@ -136,14 +152,12 @@ def estimate_depreciation(days: int, vehicle_type: str, vehicle_age_years: float
 
     Returns: 累计贬值率(0~1)，例如0.05表示贬值5%
     """
-    profile = DEPRECIATION_PROFILES.get(vehicle_type, DEPRECIATION_PROFILES["domestic"])
-    bucket = _get_age_bucket(vehicle_age_years)
-    monthly_rate = profile.get(bucket, 0.015)
-
-    months = days / 30.0
-    # 复利贬值
-    cumulative = 1 - (1 - monthly_rate) ** months
-    return min(cumulative, 0.80)  # 最高贬值80%（残值底线）
+    profile = resolve_brand_profile(vehicle_type=vehicle_type)
+    return estimate_depreciation_rate(
+        days=days,
+        vehicle_age_years=vehicle_age_years,
+        profile=profile,
+    )
 
 
 # ============================================================
@@ -241,19 +255,43 @@ def build_legal_cost(
 # 3. 路径A：继续等待赎车（15/30/60/90天）
 # ============================================================
 
-def simulate_path_a(inp: SandboxInput) -> PathAResult:
+def simulate_path_a(inp: SandboxInput, session: Optional[Session] = None) -> PathAResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    profile = resolve_brand_profile(
+        session=session,
+        vehicle_type=vtype,
+        car_description=inp.car_description,
+    )
+    region = resolve_region_coefficient(
+        session=session, province=inp.province, city=inp.city
+    )
+    sunk = _sunk_cost_excluded(inp)
     timepoints = []
 
     for days in [15, 30, 60, 90]:
         parking = inp.daily_parking * days
         interest = inp.overdue_amount * (inp.annual_interest_rate / 100) * (days / 365)
-        dep_rate = estimate_depreciation(days, vtype, inp.vehicle_age_years)
+        dep_rate = estimate_depreciation_rate(
+            days=days,
+            vehicle_age_years=inp.vehicle_age_years,
+            profile=profile,
+        )
         depreciated = inp.che300_value * (1 - dep_rate)
         dep_amount = inp.che300_value - depreciated
         holding_cost = parking + interest + inp.recovery_cost
         shrinkage = holding_cost + dep_amount
         net_pos = depreciated - inp.overdue_amount - holding_cost
+        success_probability = dynamic_success_probability(
+            base_probability=0.25,
+            vehicle_age_years=inp.vehicle_age_years,
+            overdue_amount=inp.overdue_amount,
+            vehicle_value=inp.che300_value,
+            profile=profile,
+            region=region,
+            path_type="collection",
+            vehicle_recovered=inp.vehicle_recovered,
+            vehicle_in_inventory=inp.vehicle_in_inventory,
+        )
 
         timepoints.append(TimePoint(
             days=days,
@@ -264,17 +302,35 @@ def simulate_path_a(inp: SandboxInput) -> PathAResult:
             total_holding_cost=round(holding_cost, 2),
             total_shrinkage=round(shrinkage, 2),
             net_position=round(net_pos, 2),
+            success_probability=success_probability,
+            future_marginal_net_benefit=round(net_pos, 2),
+            sunk_cost_excluded=round(sunk, 2),
         ))
 
-    return PathAResult(timepoints=timepoints)
+    best = max(timepoints, key=lambda tp: tp.future_marginal_net_benefit)
+    return PathAResult(
+        timepoints=timepoints,
+        success_probability=best.success_probability,
+        future_marginal_net_benefit=best.future_marginal_net_benefit,
+        sunk_cost_excluded=round(sunk, 2),
+    )
 
 
 # ============================================================
 # 4. 路径B：常规诉讼（一拍80%/二拍56%）
 # ============================================================
 
-def simulate_path_b(inp: SandboxInput) -> PathBResult:
+def simulate_path_b(inp: SandboxInput, session: Optional[Session] = None) -> PathBResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    profile = resolve_brand_profile(
+        session=session,
+        vehicle_type=vtype,
+        car_description=inp.car_description,
+    )
+    region = resolve_region_coefficient(
+        session=session, province=inp.province, city=inp.city
+    )
+    sunk = _sunk_cost_excluded(inp)
 
     # 常规诉讼时间线：立案→审理→判决→执行→拍卖
     # 最优6个月，预期9个月，最差14个月
@@ -297,15 +353,35 @@ def simulate_path_b(inp: SandboxInput) -> PathBResult:
         is_special_procedure=False,
     )
 
-    for label, months, auction_discount, success_prob in scenario_configs:
-        days = months * 30
+    for label, months, auction_discount, base_success_prob in scenario_configs:
+        days = adjusted_duration_days(
+            months * 30,
+            region=region,
+            path_type="litigation",
+        )
+        duration_months = max(1, math.ceil(days / 30))
         parking = inp.daily_parking * days
         interest = inp.overdue_amount * (inp.annual_interest_rate / 100) * (days / 365)
-        dep_rate = estimate_depreciation(days, vtype, inp.vehicle_age_years)
+        dep_rate = estimate_depreciation_rate(
+            days=days,
+            vehicle_age_years=inp.vehicle_age_years,
+            profile=profile,
+        )
         depreciated = inp.che300_value * (1 - dep_rate)
+        success_prob = dynamic_success_probability(
+            base_probability=base_success_prob,
+            vehicle_age_years=inp.vehicle_age_years,
+            overdue_amount=inp.overdue_amount,
+            vehicle_value=inp.che300_value,
+            profile=profile,
+            region=region,
+            path_type="litigation",
+            vehicle_recovered=inp.vehicle_recovered,
+            vehicle_in_inventory=inp.vehicle_in_inventory,
+        )
 
-        # 拍卖价 = 贬值后估值 × 拍卖折扣
-        auction_price = depreciated * auction_discount
+        # 期望拍卖回收 = 贬值后估值 × 拍卖折扣 × 动态成功概率
+        auction_price = depreciated * auction_discount * success_prob
 
         # 回款比例律师费
         recovery_lawyer_fee = auction_price * inp.litigation_recovery_fee_rate if inp.litigation_has_recovery_fee else 0
@@ -329,61 +405,105 @@ def simulate_path_b(inp: SandboxInput) -> PathBResult:
             rounds.append(AuctionRound(
                 round_name="一拍", discount_rate=0.80,
                 auction_price=round(depreciated * 0.80, 2),
-                success_probability=0.70,
+                success_probability=success_prob,
             ))
-        if auction_discount <= 0.56 or months >= 9:
+        if auction_discount <= 0.56 or duration_months >= 9:
             rounds.append(AuctionRound(
                 round_name="一拍", discount_rate=0.80,
                 auction_price=round(depreciated * 0.80, 2),
-                success_probability=0.70,
+                success_probability=min(0.98, round(success_prob * 0.85, 4)),
             ))
             rounds.append(AuctionRound(
                 round_name="二拍", discount_rate=0.56,
                 auction_price=round(depreciated * 0.56, 2),
-                success_probability=0.85,
+                success_probability=success_prob,
             ))
 
-        total_cost = legal_cost.total_legal_cost + parking + interest + inp.recovery_cost
+        recovery_cost = adjusted_towing_cost(inp.recovery_cost, region)
+        total_cost = legal_cost.total_legal_cost + parking + interest + recovery_cost
         net = auction_price - total_cost
 
         scenarios.append(LitigationScenario(
             label=label,
-            duration_months=months,
+            duration_months=duration_months,
             duration_days=days,
             legal_cost=legal_cost,
             parking_cost=round(parking, 2),
             interest_cost=round(interest, 2),
-            recovery_cost=round(inp.recovery_cost, 2),
+            recovery_cost=round(recovery_cost, 2),
             auction_rounds=rounds,
             expected_auction_price=round(auction_price, 2),
             total_cost=round(total_cost, 2),
             net_recovery=round(net, 2),
+            success_probability=success_prob,
+            future_marginal_net_benefit=round(net, 2),
+            sunk_cost_excluded=round(sunk, 2),
         ))
 
-    return PathBResult(legal_cost=base_legal, scenarios=scenarios)
+    expected = scenarios[1] if len(scenarios) > 1 else scenarios[0]
+    return PathBResult(
+        legal_cost=base_legal,
+        scenarios=scenarios,
+        success_probability=expected.success_probability,
+        future_marginal_net_benefit=expected.future_marginal_net_benefit,
+        sunk_cost_excluded=round(sunk, 2),
+    )
 
 
 # ============================================================
 # 5. 路径C：立即上架竞拍
 # ============================================================
 
-def simulate_path_c(inp: SandboxInput) -> PathCResult:
+def simulate_path_c(inp: SandboxInput, session: Optional[Session] = None) -> PathCResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    profile = resolve_brand_profile(
+        session=session,
+        vehicle_type=vtype,
+        car_description=inp.car_description,
+    )
+    region = resolve_region_coefficient(
+        session=session, province=inp.province, city=inp.city
+    )
+    sunk = _sunk_cost_excluded(inp)
 
-    sale_days = inp.expected_sale_days
-    dep_rate = estimate_depreciation(sale_days, vtype, inp.vehicle_age_years)
+    sale_days = adjusted_duration_days(
+        inp.expected_sale_days,
+        region=region,
+        path_type="retail_auction",
+    )
+    dep_rate = estimate_depreciation_rate(
+        days=sale_days,
+        vehicle_age_years=inp.vehicle_age_years,
+        profile=profile,
+    )
     sale_price = inp.che300_value * (1 - dep_rate) * 0.90  # 竞拍成交约市价90%
-    commission = sale_price * inp.commission_rate
+    success_probability = dynamic_success_probability(
+        base_probability=0.80,
+        vehicle_age_years=inp.vehicle_age_years,
+        overdue_amount=inp.overdue_amount,
+        vehicle_value=inp.che300_value,
+        profile=profile,
+        region=region,
+        path_type="retail_auction",
+        vehicle_recovered=inp.vehicle_recovered,
+        vehicle_in_inventory=inp.vehicle_in_inventory,
+    )
+    expected_sale_recovery = sale_price * success_probability
+    commission = expected_sale_recovery * inp.commission_rate
     parking = inp.daily_parking * sale_days
-    net = sale_price - commission - parking - inp.recovery_cost
+    recovery_cost = adjusted_towing_cost(inp.recovery_cost, region)
+    net = expected_sale_recovery - commission - parking - recovery_cost
 
     result = PathCResult(
         expected_sale_days=sale_days,
         sale_price=round(sale_price, 2),
         commission=round(commission, 2),
         parking_during_sale=round(parking, 2),
-        recovery_cost=round(inp.recovery_cost, 2),
+        recovery_cost=round(recovery_cost, 2),
         net_recovery=round(net, 2),
+        success_probability=success_probability,
+        future_marginal_net_benefit=round(net, 2),
+        sunk_cost_excluded=round(sunk, 2),
     )
 
     if not inp.vehicle_recovered:
@@ -397,25 +517,69 @@ def simulate_path_c(inp: SandboxInput) -> PathCResult:
 # 6. 路径D：实现担保物权特别程序
 # ============================================================
 
-def simulate_path_d(inp: SandboxInput) -> PathDResult:
+def simulate_path_d(inp: SandboxInput, session: Optional[Session] = None) -> PathDResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    profile = resolve_brand_profile(
+        session=session,
+        vehicle_type=vtype,
+        car_description=inp.car_description,
+    )
+    region = resolve_region_coefficient(
+        session=session, province=inp.province, city=inp.city
+    )
+    sunk = _sunk_cost_excluded(inp)
+    d_block_reasons = _special_procedure_block_reasons(inp)
 
     # 特别程序：通常2-3个月完成，此处取3个月
-    duration_months = 3
-    days = duration_months * 30
+    days = adjusted_duration_days(90, region=region, path_type="special_procedure")
+    duration_months = max(1, math.ceil(days / 30))
     parking = inp.daily_parking * days
     interest = inp.overdue_amount * (inp.annual_interest_rate / 100) * (days / 365)
-    dep_rate = estimate_depreciation(days, vtype, inp.vehicle_age_years)
+    dep_rate = estimate_depreciation_rate(
+        days=days,
+        vehicle_age_years=inp.vehicle_age_years,
+        profile=profile,
+    )
     depreciated = inp.che300_value * (1 - dep_rate)
 
     # 拍卖：同样一拍80%/二拍56%
     # 特别程序效率更高，多数一拍成交
     round1_price = depreciated * 0.80
     round2_price = depreciated * 0.56
-    # 加权期望价格：一拍成交率70%，二拍成交率85%
-    expected_price = round1_price * 0.70 + round2_price * (1 - 0.70) * 0.85 + 0 * (1 - 0.70) * (1 - 0.85)
+    round1_success = dynamic_success_probability(
+        base_probability=0.70,
+        vehicle_age_years=inp.vehicle_age_years,
+        overdue_amount=inp.overdue_amount,
+        vehicle_value=inp.che300_value,
+        profile=profile,
+        region=region,
+        path_type="special_procedure",
+        vehicle_recovered=inp.vehicle_recovered,
+        vehicle_in_inventory=inp.vehicle_in_inventory,
+    )
+    round2_success = dynamic_success_probability(
+        base_probability=0.85,
+        vehicle_age_years=inp.vehicle_age_years,
+        overdue_amount=inp.overdue_amount,
+        vehicle_value=inp.che300_value,
+        profile=profile,
+        region=region,
+        path_type="special_procedure",
+        vehicle_recovered=inp.vehicle_recovered,
+        vehicle_in_inventory=inp.vehicle_in_inventory,
+    )
+    if d_block_reasons:
+        round1_success = 0
+        round2_success = 0
 
-    recovery_lawyer_fee = expected_price * inp.special_recovery_fee_rate if inp.special_has_recovery_fee else 0
+    expected_price = (
+        round1_price * round1_success
+        + round2_price * (1 - round1_success) * round2_success
+    )
+    combined_success = round(
+        round1_success + (1 - round1_success) * round2_success,
+        4,
+    )
 
     legal_cost = build_legal_cost(
         amount=inp.overdue_amount,
@@ -430,16 +594,17 @@ def simulate_path_d(inp: SandboxInput) -> PathDResult:
         AuctionRound(
             round_name="一拍", discount_rate=0.80,
             auction_price=round(round1_price, 2),
-            success_probability=0.70,
+            success_probability=round1_success,
         ),
         AuctionRound(
             round_name="二拍", discount_rate=0.56,
             auction_price=round(round2_price, 2),
-            success_probability=0.85,
+            success_probability=round2_success,
         ),
     ]
 
-    total_cost = legal_cost.total_legal_cost + parking + interest + inp.recovery_cost
+    recovery_cost = adjusted_towing_cost(inp.recovery_cost, region)
+    total_cost = legal_cost.total_legal_cost + parking + interest + recovery_cost
     net = expected_price - total_cost
 
     result = PathDResult(
@@ -448,17 +613,20 @@ def simulate_path_d(inp: SandboxInput) -> PathDResult:
         legal_cost=legal_cost,
         parking_cost=round(parking, 2),
         interest_cost=round(interest, 2),
-        recovery_cost=round(inp.recovery_cost, 2),
+        recovery_cost=round(recovery_cost, 2),
         auction_rounds=rounds,
         expected_auction_price=round(expected_price, 2),
         total_cost=round(total_cost, 2),
         net_recovery=round(net, 2),
+        success_probability=combined_success,
+        future_marginal_net_benefit=round(net, 2),
+        sunk_cost_excluded=round(sunk, 2),
     )
 
-    d_block_reasons = _special_procedure_block_reasons(inp)
     if d_block_reasons:
         result.available = False
         result.unavailable_reason = " ".join(d_block_reasons)
+        result.success_probability = 0
 
     return result
 
@@ -467,10 +635,20 @@ def simulate_path_d(inp: SandboxInput) -> PathDResult:
 # 7. 路径E：分期重组/和解
 # ============================================================
 
-def simulate_path_e(inp: SandboxInput) -> PathEResult:
+def simulate_path_e(inp: SandboxInput, session: Optional[Session] = None) -> PathEResult:
     monthly = inp.restructure_monthly_payment
     months = inp.restructure_months
     redefault = inp.restructure_redefault_rate
+    vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    profile = resolve_brand_profile(
+        session=session,
+        vehicle_type=vtype,
+        car_description=inp.car_description,
+    )
+    region = resolve_region_coefficient(
+        session=session, province=inp.province, city=inp.city
+    )
+    sunk = _sunk_cost_excluded(inp)
 
     if monthly <= 0:
         # 如果用户没填重组方案，默认按逾期金额/12测算
@@ -484,6 +662,17 @@ def simulate_path_e(inp: SandboxInput) -> PathEResult:
     management_cost = months * 200  # 月均管理成本200元
     holding_cost = management_cost
     net = risk_adjusted - holding_cost
+    success_probability = dynamic_success_probability(
+        base_probability=max(0, 1 - redefault),
+        vehicle_age_years=inp.vehicle_age_years,
+        overdue_amount=inp.overdue_amount,
+        vehicle_value=inp.che300_value,
+        profile=profile,
+        region=region,
+        path_type="restructure",
+        vehicle_recovered=inp.vehicle_recovered,
+        vehicle_in_inventory=inp.vehicle_in_inventory,
+    )
 
     return PathEResult(
         monthly_payment=round(monthly, 2),
@@ -493,6 +682,9 @@ def simulate_path_e(inp: SandboxInput) -> PathEResult:
         risk_adjusted_recovery=round(risk_adjusted, 2),
         holding_cost=round(holding_cost, 2),
         net_recovery=round(net, 2),
+        success_probability=success_probability,
+        future_marginal_net_benefit=round(net, 2),
+        sunk_cost_excluded=round(sunk, 2),
     )
 
 
@@ -500,35 +692,35 @@ def simulate_path_e(inp: SandboxInput) -> PathEResult:
 # 8. 综合决策
 # ============================================================
 
-def run_simulation(inp: SandboxInput) -> SandboxResult:
+def run_simulation(inp: SandboxInput, session: Optional[Session] = None) -> SandboxResult:
     """运行完整五路径模拟"""
     # 自动检测车辆类型
     if inp.vehicle_type == "auto":
         inp.vehicle_type = _detect_vehicle_type(inp.car_description)
 
-    path_a = simulate_path_a(inp)
-    path_b = simulate_path_b(inp)
-    path_c = simulate_path_c(inp)
-    path_d = simulate_path_d(inp)
-    path_e = simulate_path_e(inp)
+    path_a = simulate_path_a(inp, session=session)
+    path_b = simulate_path_b(inp, session=session)
+    path_c = simulate_path_c(inp, session=session)
+    path_d = simulate_path_d(inp, session=session)
+    path_e = simulate_path_e(inp, session=session)
 
     # ---- 决策对比 ----
     # A: 取15/30/60/90天中最优的净头寸
-    a_values = {tp.days: tp.net_position for tp in path_a.timepoints}
+    a_values = {tp.days: tp.future_marginal_net_benefit for tp in path_a.timepoints}
     a_best_days = max(a_values, key=a_values.get)
     a_best = a_values[a_best_days]
 
     # B: 取预期情况（二拍成交）
-    b_value = path_b.scenarios[1].net_recovery if len(path_b.scenarios) > 1 else 0
+    b_value = path_b.future_marginal_net_benefit
 
     # C: 直接竞拍
-    c_value = path_c.net_recovery
+    c_value = path_c.future_marginal_net_benefit
 
     # D: 特别程序
-    d_value = path_d.net_recovery
+    d_value = path_d.future_marginal_net_benefit
 
     # E: 重组
-    e_value = path_e.net_recovery
+    e_value = path_e.future_marginal_net_benefit
 
     # 构建候选路径集合；不满足硬前提的路径不能进入推荐候选。
     candidate_paths: dict[str, float] = {
@@ -563,37 +755,49 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
     header = ""
     if unavailable_notes:
         header = "（" + "；".join(unavailable_notes) + " 已从决策候选中自动排除。）\n"
-    lines = [header + f"综合对比可用路径，推荐【{path_names[best_path]}】（预计净回收¥{best_value:,.0f}）。\n"]
+    lines = [
+        header
+        + f"综合对比可用路径，推荐【{path_names[best_path]}】"
+        + f"（未来边际净收益¥{best_value:,.0f}）。\n"
+    ]
 
     if best_path == "C":
         lines.append(
             f"立即竞拍可在{path_c.expected_sale_days}天内回款，"
-            f"成交价¥{path_c.sale_price:,.0f}，扣除佣金和停车费后净回收¥{c_value:,.0f}。"
+            f"成交价¥{path_c.sale_price:,.0f}，扣除佣金和停车费后"
+            f"未来边际净收益¥{c_value:,.0f}。"
         )
         if path_d.available and d_value > b_value:
-            lines.append(f"若竞拍不可行，次优选择为担保物权特别程序（净回收¥{d_value:,.0f}，约3个月）。")
+            lines.append(
+                f"若竞拍不可行，次优选择为担保物权特别程序"
+                f"（未来边际净收益¥{d_value:,.0f}，约{path_d.duration_months}个月）。"
+            )
     elif best_path == "D":
         lines.append(
             f"特别程序约3个月完成，预计拍卖回收¥{path_d.expected_auction_price:,.0f}，"
-            f"扣除法律费用¥{path_d.legal_cost.total_legal_cost:,.0f}等成本后净回收¥{d_value:,.0f}。"
+            f"扣除法律费用¥{path_d.legal_cost.total_legal_cost:,.0f}等成本后"
+            f"未来边际净收益¥{d_value:,.0f}。"
         )
-        lines.append(f"相比常规诉讼（净回收¥{b_value:,.0f}）缩短周期6个月以上。")
+        lines.append(f"相比常规诉讼（未来边际净收益¥{b_value:,.0f}）缩短周期6个月以上。")
     elif best_path == "B":
         lines.append(
-            f"常规诉讼预期情况下净回收¥{b_value:,.0f}，"
+            f"常规诉讼预期情况下未来边际净收益¥{b_value:,.0f}，"
             f"但周期约9个月且不确定性较大。"
         )
         if path_d.available and d_value > 0:
-            lines.append(f"建议评估是否可走担保物权特别程序（净回收¥{d_value:,.0f}，仅需3个月）。")
+            lines.append(
+                f"建议评估是否可走担保物权特别程序"
+                f"（未来边际净收益¥{d_value:,.0f}，约{path_d.duration_months}个月）。"
+            )
     elif best_path == "A":
         lines.append(
-            f"在{a_best_days}天等待窗口内净头寸最优（¥{a_best:,.0f}），"
+            f"在{a_best_days}天等待窗口内未来边际净收益最优（¥{a_best:,.0f}），"
             f"但需密切关注贬值，超过{a_best_days}天建议转为处置。"
         )
     elif best_path == "E":
         lines.append(
             f"重组方案月还¥{path_e.monthly_payment:,.0f}×{path_e.total_months}期，"
-            f"考虑{path_e.redefault_rate:.0%}再违约率后预计净回收¥{e_value:,.0f}。"
+            f"考虑{path_e.redefault_rate:.0%}再违约率后未来边际净收益¥{e_value:,.0f}。"
         )
         lines.append("需评估借款人还款意愿和能力，再违约风险不可忽视。")
 

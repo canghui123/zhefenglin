@@ -14,10 +14,14 @@ interface FormState {
   overdue_bucket: string;
   overdue_amount: number;
   che300_value: number;
+  province: string;
+  city: string;
   vehicle_type: string;
   vehicle_age_years: number;
   daily_parking: number;
   recovery_cost: number;
+  sunk_collection_cost: number;
+  sunk_legal_cost: number;
   annual_interest_rate: number;
   vehicle_recovered: boolean;
   vehicle_in_inventory: boolean;
@@ -46,10 +50,14 @@ export default function InventorySandboxPage() {
     overdue_bucket: "M3(61-90天)",
     overdue_amount: 0,
     che300_value: 0,
+    province: "",
+    city: "",
     vehicle_type: "auto",
     vehicle_age_years: 3,
     daily_parking: 30,
     recovery_cost: 0,
+    sunk_collection_cost: 0,
+    sunk_legal_cost: 0,
     annual_interest_rate: 24,
     vehicle_recovered: true,
     vehicle_in_inventory: true,
@@ -167,6 +175,12 @@ export default function InventorySandboxPage() {
           <Field label="当前车300估值 (元)">
             <input className="inp" type="number" value={form.che300_value || ""} onChange={(e) => upd("che300_value", +e.target.value)} />
           </Field>
+          <Field label="省份">
+            <input className="inp" value={form.province} onChange={(e) => upd("province", e.target.value)} placeholder="如：江苏省" />
+          </Field>
+          <Field label="城市">
+            <input className="inp" value={form.city} onChange={(e) => upd("city", e.target.value)} placeholder="如：南京市" />
+          </Field>
           <Field label="车辆类型">
             <select className="inp" value={form.vehicle_type} onChange={(e) => upd("vehicle_type", e.target.value)}>
               <option value="auto">自动识别</option>
@@ -182,6 +196,12 @@ export default function InventorySandboxPage() {
           </Field>
           <Field label="收车成本 (元)">
             <input className="inp" type="number" value={form.recovery_cost || ""} onChange={(e) => upd("recovery_cost", +e.target.value)} placeholder="含拖车/GPS/人工" />
+          </Field>
+          <Field label="已发生催收成本 (元)">
+            <input className="inp" type="number" value={form.sunk_collection_cost || ""} onChange={(e) => upd("sunk_collection_cost", +e.target.value)} placeholder="沉没成本，仅展示" />
+          </Field>
+          <Field label="已发生法务成本 (元)">
+            <input className="inp" type="number" value={form.sunk_legal_cost || ""} onChange={(e) => upd("sunk_legal_cost", +e.target.value)} placeholder="沉没成本，仅展示" />
           </Field>
           <Field label="日停车费 (元)">
             <input className="inp" type="number" value={form.daily_parking} onChange={(e) => upd("daily_parking", +e.target.value)} />
@@ -322,7 +342,8 @@ export default function InventorySandboxPage() {
                     <th className="text-left py-1">天数</th>
                     <th className="text-right py-1">贬值</th>
                     <th className="text-right py-1">持有成本</th>
-                    <th className="text-right py-1">净头寸</th>
+                    <th className="text-right py-1">成功率</th>
+                    <th className="text-right py-1">边际收益</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -331,8 +352,9 @@ export default function InventorySandboxPage() {
                       <td className="py-1.5">{tp.days}天</td>
                       <td className="text-right text-red-500">-{fmt(tp.depreciation_amount)}</td>
                       <td className="text-right text-red-500">-{fmt(tp.total_holding_cost)}</td>
-                      <td className={`text-right font-medium ${tp.net_position >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                        {fmt(tp.net_position)}
+                      <td className="text-right">{(tp.success_probability * 100).toFixed(0)}%</td>
+                      <td className={`text-right font-medium ${tp.future_marginal_net_benefit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                        {fmt(tp.future_marginal_net_benefit)}
                       </td>
                     </tr>
                   ))}
@@ -352,7 +374,8 @@ export default function InventorySandboxPage() {
                     <th className="text-left py-1">情景</th>
                     <th className="text-right py-1">拍卖价</th>
                     <th className="text-right py-1">总成本</th>
-                    <th className="text-right py-1">净回收</th>
+                    <th className="text-right py-1">成功率</th>
+                    <th className="text-right py-1">边际收益</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -361,8 +384,9 @@ export default function InventorySandboxPage() {
                       <td className="py-1.5 text-xs">{s.label}</td>
                       <td className="text-right">{fmt(s.expected_auction_price)}</td>
                       <td className="text-right text-red-500">-{fmt(s.total_cost)}</td>
-                      <td className={`text-right font-medium ${s.net_recovery >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                        {fmt(s.net_recovery)}
+                      <td className="text-right">{(s.success_probability * 100).toFixed(0)}%</td>
+                      <td className={`text-right font-medium ${s.future_marginal_net_benefit >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                        {fmt(s.future_marginal_net_benefit)}
                       </td>
                     </tr>
                   ))}
@@ -385,8 +409,12 @@ export default function InventorySandboxPage() {
                 {result.path_c.recovery_cost > 0 && (
                   <Row label="收车成本" value={`-¥${fmt(result.path_c.recovery_cost)}`} red />
                 )}
+                <Row label="动态成功率" value={`${(result.path_c.success_probability * 100).toFixed(0)}%`} />
+                {result.path_c.sunk_cost_excluded > 0 && (
+                  <Row label="已剔除沉没成本" value={`¥${fmt(result.path_c.sunk_cost_excluded)}`} />
+                )}
                 <div className="border-t pt-2">
-                  <Row label="净回款" value={`¥${fmt(result.path_c.net_recovery)}`} bold green />
+                  <Row label="未来边际净收益" value={`¥${fmt(result.path_c.future_marginal_net_benefit)}`} bold green />
                 </div>
               </div>
             </PathCard>
@@ -410,8 +438,12 @@ export default function InventorySandboxPage() {
                 <Row label="期望拍卖价" value={`¥${fmt(result.path_d.expected_auction_price)}`} />
                 <Row label="法律费用合计" value={`-¥${fmt(result.path_d.legal_cost.total_legal_cost)}`} red />
                 <Row label="停车+利息" value={`-¥${fmt(result.path_d.parking_cost + result.path_d.interest_cost)}`} red />
+                <Row label="动态成功率" value={`${(result.path_d.success_probability * 100).toFixed(0)}%`} />
+                {result.path_d.sunk_cost_excluded > 0 && (
+                  <Row label="已剔除沉没成本" value={`¥${fmt(result.path_d.sunk_cost_excluded)}`} />
+                )}
                 <div className="border-t pt-2">
-                  <Row label="净回收" value={`¥${fmt(result.path_d.net_recovery)}`} bold green />
+                  <Row label="未来边际净收益" value={`¥${fmt(result.path_d.future_marginal_net_benefit)}`} bold green />
                 </div>
               </div>
             </PathCard>
@@ -425,8 +457,9 @@ export default function InventorySandboxPage() {
                 <Row label="再违约率" value={`${(result.path_e.redefault_rate * 100).toFixed(0)}%`} />
                 <Row label="风险调整后回收" value={`¥${fmt(result.path_e.risk_adjusted_recovery)}`} />
                 <Row label="管理成本" value={`-¥${fmt(result.path_e.holding_cost)}`} red />
+                <Row label="动态成功率" value={`${(result.path_e.success_probability * 100).toFixed(0)}%`} />
                 <div className="border-t pt-2">
-                  <Row label="净回收" value={`¥${fmt(result.path_e.net_recovery)}`} bold green />
+                  <Row label="未来边际净收益" value={`¥${fmt(result.path_e.future_marginal_net_benefit)}`} bold green />
                 </div>
               </div>
             </PathCard>

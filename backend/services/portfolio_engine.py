@@ -278,6 +278,16 @@ def compute_cashflow_projection(segments: list, strategies_by_segment: Optional[
     if strategies_by_segment is None:
         strategies_by_segment = {}
 
+    def scenario_band(cash_in: float, cash_out: float) -> dict:
+        neutral = cash_in - cash_out
+        pessimistic = cash_in * 0.82 - cash_out * 1.08
+        optimistic = cash_in * 1.10 - cash_out * 0.95
+        return {
+            "pessimistic_net_cash_flow": round(pessimistic, 2),
+            "neutral_net_cash_flow": round(neutral, 2),
+            "optimistic_net_cash_flow": round(optimistic, 2),
+        }
+
     bucket_days = [7, 30, 60, 90, 180, 360]
     by_strategy = {}
     by_segment_cf = []
@@ -301,6 +311,7 @@ def compute_cashflow_projection(segments: list, strategies_by_segment: Optional[
                 "gross_cash_in": round(cum_in, 2),
                 "gross_cash_out": round(cum_out, 2),
                 "net_cash_flow": round(cum_in - cum_out, 2),
+                **scenario_band(cum_in, cum_out),
             })
 
         by_segment_cf.append({
@@ -313,20 +324,41 @@ def compute_cashflow_projection(segments: list, strategies_by_segment: Optional[
             by_strategy[stype] = {
                 "strategy_type": stype,
                 "strategy_name": STRATEGY_TYPES.get(stype, stype),
-                "buckets": [{"bucket_day": bd, "gross_cash_in": 0, "gross_cash_out": 0, "net_cash_flow": 0} for bd in bucket_days],
+                "buckets": [
+                    {
+                        "bucket_day": bd,
+                        "gross_cash_in": 0,
+                        "gross_cash_out": 0,
+                        "net_cash_flow": 0,
+                        "pessimistic_net_cash_flow": 0,
+                        "neutral_net_cash_flow": 0,
+                        "optimistic_net_cash_flow": 0,
+                    }
+                    for bd in bucket_days
+                ],
                 "total_net_cash": 0,
             }
         for i in range(len(bucket_days)):
             by_strategy[stype]["buckets"][i]["gross_cash_in"] += buckets[i]["gross_cash_in"]
             by_strategy[stype]["buckets"][i]["gross_cash_out"] += buckets[i]["gross_cash_out"]
             by_strategy[stype]["buckets"][i]["net_cash_flow"] += buckets[i]["net_cash_flow"]
+            by_strategy[stype]["buckets"][i]["pessimistic_net_cash_flow"] += buckets[i]["pessimistic_net_cash_flow"]
+            by_strategy[stype]["buckets"][i]["neutral_net_cash_flow"] += buckets[i]["neutral_net_cash_flow"]
+            by_strategy[stype]["buckets"][i]["optimistic_net_cash_flow"] += buckets[i]["optimistic_net_cash_flow"]
         by_strategy[stype]["total_net_cash"] += total_rec - ead * p["cost_rate"]
 
     # round strategy values
     for st in by_strategy.values():
         st["total_net_cash"] = round(st["total_net_cash"], 2)
         for b in st["buckets"]:
-            for k in ("gross_cash_in", "gross_cash_out", "net_cash_flow"):
+            for k in (
+                "gross_cash_in",
+                "gross_cash_out",
+                "net_cash_flow",
+                "pessimistic_net_cash_flow",
+                "neutral_net_cash_flow",
+                "optimistic_net_cash_flow",
+            ):
                 b[k] = round(b[k], 2)
 
     # total buckets
@@ -339,6 +371,7 @@ def compute_cashflow_projection(segments: list, strategies_by_segment: Optional[
             "gross_cash_in": round(ti, 2),
             "gross_cash_out": round(to, 2),
             "net_cash_flow": round(ti - to, 2),
+            **scenario_band(ti, to),
         })
 
     total_ead = sum(s["total_ead"] for s in segments)

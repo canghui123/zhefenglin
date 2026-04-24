@@ -18,6 +18,8 @@ COLUMN_KEYWORDS = {
     "ownership_transferred": ["过户", "转移"],
     "loan_principal": ["本金", "债权", "贷款金额", "剩余本金", "贷款余额"],
     "buyout_price": ["买断", "折扣价", "收购价", "转让价", "处置价"],
+    "province": ["资产所在地", "所在地", "省份", "省", "地区"],
+    "city": ["所在城市", "城市", "市"],
 }
 
 
@@ -81,11 +83,48 @@ def _parse_bool(val) -> Optional[bool]:
 def _parse_float(val) -> Optional[float]:
     if pd.isna(val):
         return None
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        return float(val)
     try:
-        cleaned = re.sub(r"[,，元¥\s]", "", str(val))
-        return float(cleaned)
+        cleaned = str(val).strip().lower()
+        cleaned = re.sub(r"[,，¥￥元\s]", "", cleaned)
+        multiplier = 1.0
+        if cleaned.endswith("万元"):
+            cleaned = cleaned[:-2]
+            multiplier = 10000.0
+        elif cleaned.endswith("万"):
+            cleaned = cleaned[:-1]
+            multiplier = 10000.0
+        elif cleaned.endswith("w"):
+            cleaned = cleaned[:-1]
+            multiplier = 10000.0
+        return float(cleaned) * multiplier
     except (ValueError, TypeError):
         return None
+
+
+def _parse_text(val) -> Optional[str]:
+    if pd.isna(val):
+        return None
+    text = str(val).strip()
+    if not text or text.lower() == "nan":
+        return None
+    return text
+
+
+def _derive_region_from_location(location: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    if not location:
+        return None, None
+    cleaned = re.sub(r"[\s,，/|-]+", " ", location).strip()
+    parts = [p for p in cleaned.split(" ") if p]
+    if len(parts) >= 2:
+        return parts[0], parts[1]
+
+    province_match = re.search(r"(.+?(?:省|自治区|市))", cleaned)
+    city_match = re.search(r"(?:省|自治区|市)(.+?市)", cleaned)
+    province = province_match.group(1) if province_match else cleaned
+    city = city_match.group(1) if city_match else None
+    return province, city
 
 
 def parse_excel(
@@ -143,6 +182,12 @@ def parse_excel(
 
         principal = _parse_float(row.get(field_to_col.get("loan_principal", ""), None)) if "loan_principal" in field_to_col else None
         buyout = _parse_float(row.get(field_to_col.get("buyout_price", ""), None)) if "buyout_price" in field_to_col else None
+        province = _parse_text(row.get(field_to_col.get("province", ""), None)) if "province" in field_to_col else None
+        city = _parse_text(row.get(field_to_col.get("city", ""), None)) if "city" in field_to_col else None
+        if province and not city:
+            derived_province, derived_city = _derive_region_from_location(province)
+            province = derived_province
+            city = derived_city
 
         assets.append(Asset(
             row_number=row_num,
@@ -154,6 +199,8 @@ def parse_excel(
             ownership_transferred=transferred,
             loan_principal=principal,
             buyout_price=buyout,
+            province=province,
+            city=city,
         ))
 
     return AssetParseResult(

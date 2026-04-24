@@ -8,6 +8,8 @@ class SandboxInput(BaseModel):
     overdue_bucket: str = Field(default="M3(61-90天)", description="逾期阶段: M1/M2/M3/M4/M5/M6+")
     overdue_amount: float = Field(..., description="逾期金额(元)")
     che300_value: float = Field(..., description="当前车300估值(元)")
+    province: Optional[str] = Field(default=None, description="资产所在地省份")
+    city: Optional[str] = Field(default=None, description="资产所在地城市")
 
     # 车辆信息（用于差异化贬值）
     vehicle_type: str = Field(default="domestic", description="车辆类型: luxury/japanese/german/domestic/new_energy")
@@ -16,6 +18,8 @@ class SandboxInput(BaseModel):
     # 成本参数
     daily_parking: float = Field(default=30, description="日停车费(元)")
     recovery_cost: float = Field(default=0, description="收车成本(元)，含拖车/GPS/人工等")
+    sunk_collection_cost: float = Field(default=0, description="已发生催收沉没成本(元)，不进入决策对比")
+    sunk_legal_cost: float = Field(default=0, description="已发生法务沉没成本(元)，不进入决策对比")
     annual_interest_rate: float = Field(default=24, description="逾期年利率(%)")
 
     # 车辆占有状态 — 影响路径 C/D 是否可选
@@ -67,12 +71,18 @@ class TimePoint(BaseModel):
     total_holding_cost: float = 0
     total_shrinkage: float
     net_position: float
+    success_probability: float = 0
+    future_marginal_net_benefit: float = 0
+    sunk_cost_excluded: float = 0
 
 
 class PathAResult(BaseModel):
     name: str = "继续等待赎车"
     timepoints: list[TimePoint]
     summary: str = ""
+    success_probability: float = 0
+    future_marginal_net_benefit: float = 0
+    sunk_cost_excluded: float = 0
 
 
 # ============ 路径B：常规诉讼 ============
@@ -107,6 +117,9 @@ class LitigationScenario(BaseModel):
     expected_auction_price: float = 0
     total_cost: float
     net_recovery: float
+    success_probability: float = 0
+    future_marginal_net_benefit: float = 0
+    sunk_cost_excluded: float = 0
 
 
 class PathBResult(BaseModel):
@@ -114,6 +127,9 @@ class PathBResult(BaseModel):
     legal_cost: LegalCostDetail
     scenarios: list[LitigationScenario]
     summary: str = ""
+    success_probability: float = 0
+    future_marginal_net_benefit: float = 0
+    sunk_cost_excluded: float = 0
 
 
 # ============ 路径C：立即上架竞拍 ============
@@ -127,6 +143,9 @@ class PathCResult(BaseModel):
     recovery_cost: float = 0
     net_recovery: float
     summary: str = ""
+    success_probability: float = 0
+    future_marginal_net_benefit: float = 0
+    sunk_cost_excluded: float = 0
     # 路径可用性 — 车辆未回收时为 False
     available: bool = True
     unavailable_reason: str = ""
@@ -147,6 +166,9 @@ class PathDResult(BaseModel):
     total_cost: float = 0
     net_recovery: float = 0
     summary: str = ""
+    success_probability: float = 0
+    future_marginal_net_benefit: float = 0
+    sunk_cost_excluded: float = 0
     # 路径可用性 — 需债权人已占有担保物、车辆已入库，且至少 M3 以上
     available: bool = True
     unavailable_reason: str = ""
@@ -164,6 +186,9 @@ class PathEResult(BaseModel):
     holding_cost: float = 0
     net_recovery: float = 0
     summary: str = ""
+    success_probability: float = 0
+    future_marginal_net_benefit: float = 0
+    sunk_cost_excluded: float = 0
 
 
 # ============ 汇总结果 ============

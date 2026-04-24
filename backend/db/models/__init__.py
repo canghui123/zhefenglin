@@ -18,3 +18,7 @@ from db.models.user_session import UserSession  # noqa: F401
 from db.models.membership import Membership  # noqa: F401
 from db.models.audit_log import AuditLog  # noqa: F401
 from db.models.job_run import JobRun  # noqa: F401
+from db.models.decision_model_config import (  # noqa: F401
+    BrandRetentionProfile,
+    RegionDisposalCoefficient,
+)

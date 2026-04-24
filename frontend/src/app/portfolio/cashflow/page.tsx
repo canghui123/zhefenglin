@@ -25,6 +25,7 @@ export default function CashflowPage() {
   if (!data) return <div className="text-center py-20 text-red-500">加载失败</div>;
 
   const maxCash = Math.max(...data.total_buckets.map((b) => b.net_cash_flow), 1);
+  const bucket90 = data.total_buckets.find((b) => b.bucket_day === 90);
 
   return (
     <div className="space-y-6">
@@ -52,7 +53,10 @@ export default function CashflowPage() {
         <div className="bg-white rounded-xl border p-4">
           <div className="text-xs text-gray-500">90天净回流</div>
           <div className="text-lg font-bold text-emerald-600">
-            ¥{fmt(data.total_buckets.find(b => b.bucket_day === 90)?.net_cash_flow || 0)}
+            ¥{fmt(bucket90?.net_cash_flow || 0)}
+          </div>
+          <div className="text-[11px] text-gray-500 mt-1">
+            区间 ¥{fmt(bucket90?.pessimistic_net_cash_flow || 0)} - ¥{fmt(bucket90?.optimistic_net_cash_flow || 0)}
           </div>
         </div>
       </div>
@@ -66,6 +70,9 @@ export default function CashflowPage() {
             return (
               <div key={b.bucket_day} className="flex-1 flex flex-col items-center">
                 <div className="text-xs text-gray-600 font-medium mb-1">¥{fmt(b.net_cash_flow)}</div>
+                <div className="text-[10px] text-gray-400 mb-1">
+                  {fmt(b.pessimistic_net_cash_flow)}~{fmt(b.optimistic_net_cash_flow)}
+                </div>
                 <div className="w-full bg-gray-100 rounded-t relative" style={{ height: "120px" }}>
                   <div
                     className="absolute bottom-0 w-full bg-emerald-400 rounded-t transition-all"
@@ -85,7 +92,9 @@ export default function CashflowPage() {
               <th className="text-left py-2">时间窗口</th>
               <th className="text-right py-2">流入</th>
               <th className="text-right py-2">流出</th>
-              <th className="text-right py-2">净现金流</th>
+              <th className="text-right py-2">悲观</th>
+              <th className="text-right py-2">中性</th>
+              <th className="text-right py-2">乐观</th>
             </tr>
           </thead>
           <tbody>
@@ -94,7 +103,9 @@ export default function CashflowPage() {
                 <td className="py-2 font-medium">{b.bucket_day}天</td>
                 <td className="text-right text-emerald-600">¥{fmt(b.gross_cash_in)}</td>
                 <td className="text-right text-red-500">¥{fmt(b.gross_cash_out)}</td>
-                <td className="text-right font-semibold">¥{fmt(b.net_cash_flow)}</td>
+                <td className="text-right text-gray-500">¥{fmt(b.pessimistic_net_cash_flow)}</td>
+                <td className="text-right font-semibold">¥{fmt(b.neutral_net_cash_flow)}</td>
+                <td className="text-right text-emerald-600">¥{fmt(b.optimistic_net_cash_flow)}</td>
               </tr>
             ))}
           </tbody>

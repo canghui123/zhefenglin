@@ -271,6 +271,7 @@ export default function AssetPricingPage() {
                   <TableRow>
                     <TableHead>行号</TableHead>
                     <TableHead>车型</TableHead>
+                    <TableHead>区域</TableHead>
                     <TableHead className="text-right">买断价</TableHead>
                     <TableHead className="text-right">车300估值</TableHead>
                     <TableHead className="text-right">总成本</TableHead>
@@ -289,6 +290,12 @@ export default function AssetPricingPage() {
                       <TableCell>{asset.row_number}</TableCell>
                       <TableCell className="max-w-[200px] truncate">
                         {asset.car_description}
+                      </TableCell>
+                      <TableCell className="text-xs text-gray-600">
+                        {[asset.province, asset.city].filter(Boolean).join(" / ") || "默认区域"}
+                        {asset.region_code && (
+                          <div className="text-[11px] text-gray-400">{asset.region_code}</div>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         {formatMoney(asset.buyout_price)}

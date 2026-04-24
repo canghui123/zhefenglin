@@ -26,6 +26,8 @@ REQUIRED_TABLES = sorted([
     "memberships",
     "audit_logs",
     "job_runs",
+    "brand_retention_profiles",
+    "region_disposal_coefficients",
 ])
 
 

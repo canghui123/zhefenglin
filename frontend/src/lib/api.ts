@@ -58,6 +58,9 @@ export async function uploadExcel(file: File) {
         ownership_transferred: boolean | null;
         loan_principal: number | null;
         buyout_price: number | null;
+        province: string | null;
+        city: string | null;
+        region_code: string | null;
       }>;
       errors: Array<{ row_number: number; field: string; message: string }>;
       total_rows: number;
@@ -226,6 +229,9 @@ export interface AssetPricingResult {
   expected_revenue: number;
   net_profit: number;
   profit_margin: number;
+  province: string | null;
+  city: string | null;
+  region_code: string | null;
   risk_flags: string[];
 }
 
@@ -252,10 +258,14 @@ export interface SandboxInput {
   overdue_bucket?: string;
   overdue_amount: number;
   che300_value: number;
+  province?: string | null;
+  city?: string | null;
   vehicle_type?: string;
   vehicle_age_years?: number;
   daily_parking?: number;
   recovery_cost?: number;
+  sunk_collection_cost?: number;
+  sunk_legal_cost?: number;
   annual_interest_rate?: number;
   vehicle_recovered?: boolean;
   vehicle_in_inventory?: boolean;
@@ -297,6 +307,9 @@ export interface TimePoint {
   total_holding_cost: number;
   total_shrinkage: number;
   net_position: number;
+  success_probability: number;
+  future_marginal_net_benefit: number;
+  sunk_cost_excluded: number;
 }
 
 export interface LitigationScenario {
@@ -311,6 +324,9 @@ export interface LitigationScenario {
   expected_auction_price: number;
   total_cost: number;
   net_recovery: number;
+  success_probability: number;
+  future_marginal_net_benefit: number;
+  sunk_cost_excluded: number;
 }
 
 export interface SandboxResult {
@@ -320,12 +336,18 @@ export interface SandboxResult {
     name: string;
     timepoints: TimePoint[];
     summary: string;
+    success_probability: number;
+    future_marginal_net_benefit: number;
+    sunk_cost_excluded: number;
   };
   path_b: {
     name: string;
     legal_cost: LegalCostDetail;
     scenarios: LitigationScenario[];
     summary: string;
+    success_probability: number;
+    future_marginal_net_benefit: number;
+    sunk_cost_excluded: number;
   };
   path_c: {
     name: string;
@@ -336,6 +358,9 @@ export interface SandboxResult {
     recovery_cost: number;
     net_recovery: number;
     summary: string;
+    success_probability: number;
+    future_marginal_net_benefit: number;
+    sunk_cost_excluded: number;
     available?: boolean;
     unavailable_reason?: string;
   };
@@ -352,6 +377,9 @@ export interface SandboxResult {
     total_cost: number;
     net_recovery: number;
     summary: string;
+    success_probability: number;
+    future_marginal_net_benefit: number;
+    sunk_cost_excluded: number;
     available?: boolean;
     unavailable_reason?: string;
   };
@@ -365,6 +393,9 @@ export interface SandboxResult {
     holding_cost: number;
     net_recovery: number;
     summary: string;
+    success_probability: number;
+    future_marginal_net_benefit: number;
+    sunk_cost_excluded: number;
   };
   recommendation: string;
   best_path: string;
@@ -447,6 +478,9 @@ export interface CashflowBucketItem {
   gross_cash_in: number;
   gross_cash_out: number;
   net_cash_flow: number;
+  pessimistic_net_cash_flow: number;
+  neutral_net_cash_flow: number;
+  optimistic_net_cash_flow: number;
 }
 
 export interface CashflowData {

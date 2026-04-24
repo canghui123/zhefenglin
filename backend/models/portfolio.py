@@ -91,6 +91,9 @@ class CashflowBucket(BaseModel):
     gross_cash_out: float = 0
     net_cash_flow: float = 0
     discounted_net_cash_flow: float = 0
+    pessimistic_net_cash_flow: float = 0
+    neutral_net_cash_flow: float = 0
+    optimistic_net_cash_flow: float = 0
 
 
 class CashflowByStrategy(BaseModel):

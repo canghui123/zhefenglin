@@ -1,11 +1,34 @@
 """资产包买断定价引擎 — 多维成本测算 + 风险标签"""
 
+from datetime import date
 from typing import Optional
+
+from sqlalchemy.orm import Session
 
 from models.asset import (
     Asset, PricingParameters, AssetPricingResult, PackageSummary, PackageCalculationResult,
 )
 from models.valuation import ValuationResult
+from services.decision_model import (
+    adjusted_duration_days,
+    adjusted_towing_cost,
+    estimate_depreciation_rate,
+    resolve_brand_profile,
+    resolve_region_coefficient,
+)
+
+
+def _infer_vehicle_age_years(asset: Asset) -> float:
+    if asset.first_registration is None:
+        return 3.0
+    today = date.today()
+    days = max((today - asset.first_registration).days, 0)
+    return max(days / 365.25, 0)
+
+
+def _region_revenue_factor(liquidity_speed_factor: float) -> float:
+    """流通更快的区域略提高成交折扣，慢流通区域保守折价。"""
+    return max(0.90, min(1.08, 1 + (liquidity_speed_factor - 1) * 0.20))
 
 
 def calculate_single_asset(
@@ -13,28 +36,51 @@ def calculate_single_asset(
     params: PricingParameters,
     valuation: Optional[ValuationResult],
     depreciation_rate: Optional[float],
+    session: Optional[Session] = None,
 ) -> AssetPricingResult:
     """计算单台车的成本、收入、利润和风险"""
     buyout = asset.buyout_price or 0
     risk_flags = []
+    profile = resolve_brand_profile(
+        session=session,
+        vehicle_type=None,
+        car_description=asset.car_description,
+    )
+    region = resolve_region_coefficient(
+        session=session,
+        province=asset.province,
+        city=asset.city,
+    )
+    region_factor = _region_revenue_factor(region.liquidity_speed_factor)
+    effective_disposal_period = adjusted_duration_days(
+        params.disposal_period,
+        region=region,
+        path_type="retail_auction",
+    )
 
     # --- 成本计算 ---
-    towing = params.towing_cost
-    parking = params.daily_parking * params.disposal_period
-    capital = buyout * (params.capital_rate / 100) * (params.disposal_period / 365)
+    towing = adjusted_towing_cost(params.towing_cost, region)
+    parking = params.daily_parking * effective_disposal_period
+    capital = buyout * (params.capital_rate / 100) * (effective_disposal_period / 365)
     total_cost = buyout + towing + parking + capital
 
     # --- 收入预估 ---
     che300_val = None
     expected_revenue = 0
+    applied_depreciation_rate = depreciation_rate
 
     if valuation and valuation.medium_price:
         che300_val = valuation.medium_price
-        dep_rate = depreciation_rate if depreciation_rate is not None else 0.02
-        expected_revenue = che300_val * (1 - dep_rate)
+        if applied_depreciation_rate is None:
+            applied_depreciation_rate = estimate_depreciation_rate(
+                days=effective_disposal_period,
+                vehicle_age_years=_infer_vehicle_age_years(asset),
+                profile=profile,
+            )
+        expected_revenue = che300_val * (1 - applied_depreciation_rate) * region_factor
     elif buyout > 0:
         # 无估值时，保守估计收入=买断价*1.1
-        expected_revenue = buyout * 1.1
+        expected_revenue = buyout * 1.1 * region_factor
 
     net_profit = expected_revenue - total_cost
     profit_margin = (net_profit / total_cost * 100) if total_cost > 0 else 0
@@ -49,7 +95,7 @@ def calculate_single_asset(
     if asset.gps_online is False:
         risk_flags.append("GPS离线-拖回困难")
         # 调整拖车费（离线更贵/成功率更低）
-        towing = params.towing_cost * 1.5
+        towing = adjusted_towing_cost(params.towing_cost * 1.5, region)
 
     if che300_val and buyout > 0:
         buyout_ratio = buyout / che300_val
@@ -62,6 +108,12 @@ def calculate_single_asset(
     if profit_margin < 0:
         risk_flags.append("预计亏损")
 
+    if profile.is_new_energy:
+        risk_flags.append("新能源残值波动-已叠加技术迭代折价")
+
+    if region.region_code != "CN_DEFAULT":
+        risk_flags.append(f"区域修正-{region.province or region.region_code}")
+
     # 重新算（GPS离线调整后）
     total_cost = buyout + towing + parking + capital
     net_profit = expected_revenue - total_cost
@@ -72,7 +124,7 @@ def calculate_single_asset(
         car_description=asset.car_description,
         buyout_price=buyout,
         che300_valuation=che300_val,
-        depreciation_rate=depreciation_rate,
+        depreciation_rate=applied_depreciation_rate,
         towing_cost=towing,
         parking_cost=parking,
         capital_cost=round(capital, 2),
@@ -80,6 +132,9 @@ def calculate_single_asset(
         expected_revenue=round(expected_revenue, 2),
         net_profit=round(net_profit, 2),
         profit_margin=round(profit_margin, 2),
+        province=asset.province,
+        city=asset.city,
+        region_code=region.region_code,
         risk_flags=risk_flags,
     )
 
@@ -89,13 +144,14 @@ def calculate_package(
     params: PricingParameters,
     valuations: dict[int, ValuationResult],
     depreciation_rates: dict[int, float],
+    session: Optional[Session] = None,
 ) -> PackageCalculationResult:
     """计算整个资产包"""
     results = []
     for asset in assets:
         val = valuations.get(asset.row_number)
         dep = depreciation_rates.get(asset.row_number)
-        result = calculate_single_asset(asset, params, val, dep)
+        result = calculate_single_asset(asset, params, val, dep, session=session)
         results.append(result)
 
     # 汇总
