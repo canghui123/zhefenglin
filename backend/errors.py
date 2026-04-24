@@ -83,3 +83,8 @@ class WorkOrderNotFound(BusinessError):
 class InvalidWorkOrderTransition(BusinessError):
     def __init__(self, detail: str = "工单状态流转不合法"):
         super().__init__("INVALID_WORK_ORDER_TRANSITION", detail, 400)
+
+
+class InvalidLegalDocumentRequest(BusinessError):
+    def __init__(self, detail: str = "法务材料生成请求不合法"):
+        super().__init__("INVALID_LEGAL_DOCUMENT_REQUEST", detail, 400)

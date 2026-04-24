@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: "Noto Serif CJK SC", "Songti SC", serif; color: #111827; line-height: 1.9; padding: 36px; }
+    h1 { text-align: center; font-size: 26px; letter-spacing: 2px; }
+    .notice { border: 1px solid #f59e0b; background: #fffbeb; color: #92400e; padding: 12px; border-radius: 8px; }
+    .section { margin-top: 20px; }
+    .section-title { font-weight: 700; margin-bottom: 8px; }
+    li { margin: 6px 0; }
+    .footer { margin-top: 44px; color: #6b7280; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <div class="notice">特别程序提交前，应确认车辆已收回、已入库，且业务逾期阶段符合内部准入规则。</div>
+
+  <p><strong>申请人：</strong>{{ req.creditor_name }}</p>
+  <p><strong>被申请人：</strong>{{ req.debtor_name }}</p>
+  <p><strong>合同编号：</strong>{{ req.contract_number or "待补充" }}</p>
+  <p><strong>担保车辆：</strong>{{ req.car_description }}</p>
+  <p><strong>参考车辆价值：</strong>人民币 {{ vehicle_value_text }} 元</p>
+
+  <div class="section">
+    <div class="section-title">申请事项</div>
+    <ol>
+      {% for claim in claims %}
+      <li>{{ claim }}</li>
+      {% endfor %}
+    </ol>
+  </div>
+
+  <div class="section">
+    <div class="section-title">事实与理由</div>
+    <p>{{ facts }}</p>
+  </div>
+
+  <div class="footer">
+    <p>生成时间：{{ generated_at.strftime("%Y-%m-%d %H:%M") }}</p>
+    <p>提示：本材料为系统自动生成初稿，仅供业务流转和法务复核使用，不构成最终法律意见。</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: "Noto Serif CJK SC", "Songti SC", serif; color: #111827; line-height: 1.9; padding: 36px; }
+    h1 { text-align: center; font-size: 28px; letter-spacing: 4px; }
+    .section { margin-top: 20px; }
+    .section-title { font-weight: 700; margin-bottom: 8px; }
+    li { margin: 6px 0; }
+    .footer { margin-top: 44px; color: #6b7280; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <p><strong>申请人：</strong>{{ req.creditor_name }}</p>
+  <p><strong>被申请人：</strong>{{ req.debtor_name }}</p>
+  <p><strong>涉案车辆：</strong>{{ req.car_description }}</p>
+  <p><strong>保全金额：</strong>人民币 {{ overdue_amount_text }} 元</p>
+
+  <div class="section">
+    <div class="section-title">申请事项</div>
+    <ol>
+      {% for claim in claims %}
+      <li>{{ claim }}</li>
+      {% endfor %}
+    </ol>
+  </div>
+
+  <div class="section">
+    <div class="section-title">事实与理由</div>
+    <p>{{ facts }}</p>
+  </div>
+
+  <div class="footer">
+    <p>生成时间：{{ generated_at.strftime("%Y-%m-%d %H:%M") }}</p>
+    <p>提示：本材料为系统自动生成初稿，仅供业务流转和法务复核使用，不构成最终法律意见。</p>
+  </div>
+</body>
+</html>

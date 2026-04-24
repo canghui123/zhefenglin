@@ -3,10 +3,13 @@
 import { useEffect, useState } from "react";
 import {
   createWorkOrder,
+  generateLegalDocument,
   getActionCenter,
   listWorkOrders,
   updateWorkOrderStatus,
   type ActionCenterData,
+  type LegalDocumentGenerateRequest,
+  type LegalDocumentResult,
   type WorkOrderInfo,
 } from "@/lib/api";
 
@@ -20,6 +23,17 @@ export default function ActionCenterPage() {
   const [loading, setLoading] = useState(true);
   const [submittingKey, setSubmittingKey] = useState("");
   const [message, setMessage] = useState("");
+  const [legalPreview, setLegalPreview] = useState<LegalDocumentResult | null>(null);
+  const [legalForm, setLegalForm] = useState<LegalDocumentGenerateRequest>({
+    document_type: "civil_complaint",
+    debtor_name: "",
+    creditor_name: "某汽车金融公司",
+    car_description: "",
+    contract_number: "",
+    overdue_amount: 0,
+    vehicle_value: 0,
+    facts: "",
+  });
 
   useEffect(() => {
     Promise.all([getActionCenter(), listWorkOrders()])
@@ -100,6 +114,42 @@ export default function ActionCenterPage() {
       setMessage("工单状态已更新");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "更新状态失败");
+    } finally {
+      setSubmittingKey("");
+    }
+  }
+
+  async function handleGenerateLegalDocument() {
+    setSubmittingKey("legal-document");
+    setMessage("");
+    setLegalPreview(null);
+    try {
+      const created = await createWorkOrder({
+        order_type: "legal_document",
+        title: `法务材料：${documentTypeName(legalForm.document_type)} - ${legalForm.debtor_name || "待补充债务人"}`,
+        target_description: `${legalForm.car_description || "待补充车辆"}，逾期金额 ¥${fmt(legalForm.overdue_amount || 0)}`,
+        priority: legalForm.document_type === "special_procedure_application" ? "high" : "normal",
+        source_type: "manual_legal_document",
+        source_id: legalForm.contract_number || legalForm.debtor_name || undefined,
+        payload: {
+          ...legalForm,
+          contract_number: legalForm.contract_number || null,
+          vehicle_value: legalForm.vehicle_value || null,
+          facts: legalForm.facts || null,
+        },
+      });
+      const result = await generateLegalDocument({
+        ...legalForm,
+        contract_number: legalForm.contract_number || null,
+        vehicle_value: legalForm.vehicle_value || null,
+        facts: legalForm.facts || null,
+        work_order_id: created.id,
+      });
+      setLegalPreview(result);
+      await refreshWorkOrders();
+      setMessage("已生成法务材料，并完成法务工单");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "生成法务材料失败");
     } finally {
       setSubmittingKey("");
     }
@@ -229,6 +279,111 @@ export default function ActionCenterPage() {
         )}
       </div>
 
+      {/* 法务材料生成器 */}
+      <div className="bg-white rounded-xl border p-5">
+        <div className="flex flex-col gap-1 mb-4">
+          <h3 className="text-sm font-semibold text-amber-700">法务材料生成器</h3>
+          <p className="text-xs text-gray-500">
+            根据债务人、车辆和逾期信息生成起诉、保全或实现担保物权特别程序材料初稿，并自动沉淀为法务工单。
+          </p>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
+          <div className="space-y-3">
+            <label className="block text-xs font-medium text-gray-600">
+              材料类型
+              <select
+                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                value={legalForm.document_type}
+                onChange={(event) =>
+                  setLegalForm((prev) => ({
+                    ...prev,
+                    document_type: event.target.value as LegalDocumentGenerateRequest["document_type"],
+                  }))
+                }
+              >
+                <option value="civil_complaint">民事起诉状</option>
+                <option value="preservation_application">财产保全申请书</option>
+                <option value="special_procedure_application">实现担保物权特别程序申请书</option>
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <TextField
+                label="债务人"
+                value={legalForm.debtor_name}
+                onChange={(value) => setLegalForm((prev) => ({ ...prev, debtor_name: value }))}
+              />
+              <TextField
+                label="债权人"
+                value={legalForm.creditor_name}
+                onChange={(value) => setLegalForm((prev) => ({ ...prev, creditor_name: value }))}
+              />
+            </div>
+            <TextField
+              label="涉案车辆"
+              value={legalForm.car_description}
+              placeholder="例：宝马3系 2021款，已收回入库"
+              onChange={(value) => setLegalForm((prev) => ({ ...prev, car_description: value }))}
+            />
+            <div className="grid grid-cols-2 gap-3">
+              <TextField
+                label="合同编号"
+                value={legalForm.contract_number || ""}
+                onChange={(value) => setLegalForm((prev) => ({ ...prev, contract_number: value }))}
+              />
+              <NumberField
+                label="逾期金额"
+                value={legalForm.overdue_amount}
+                onChange={(value) => setLegalForm((prev) => ({ ...prev, overdue_amount: value }))}
+              />
+            </div>
+            <NumberField
+              label="车辆参考价值"
+              value={legalForm.vehicle_value || 0}
+              onChange={(value) => setLegalForm((prev) => ({ ...prev, vehicle_value: value }))}
+            />
+            <label className="block text-xs font-medium text-gray-600">
+              事实与理由补充
+              <textarea
+                className="mt-1 min-h-24 w-full rounded-lg border px-3 py-2 text-sm"
+                value={legalForm.facts || ""}
+                placeholder="可选。不填写时系统会按合同、逾期金额和车辆信息生成默认事实段。"
+                onChange={(event) => setLegalForm((prev) => ({ ...prev, facts: event.target.value }))}
+              />
+            </label>
+            <button
+              className="w-full rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+              disabled={
+                submittingKey === "legal-document" ||
+                !legalForm.debtor_name ||
+                !legalForm.creditor_name ||
+                !legalForm.car_description
+              }
+              onClick={handleGenerateLegalDocument}
+            >
+              {submittingKey === "legal-document" ? "生成中..." : "生成法务材料"}
+            </button>
+            {legalForm.document_type === "special_procedure_application" && (
+              <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+                特别程序材料仅生成初稿。提交前仍需确认车辆已收回、已入库，且逾期阶段达到内部准入条件。
+              </p>
+            )}
+          </div>
+          <div className="min-h-[420px] overflow-hidden rounded-xl border bg-gray-50">
+            {legalPreview ? (
+              <iframe
+                title="法务材料预览"
+                className="h-[520px] w-full bg-white"
+                srcDoc={legalPreview.html}
+              />
+            ) : (
+              <div className="flex h-full min-h-[420px] items-center justify-center px-8 text-center text-sm text-gray-400">
+                生成后将在这里预览材料初稿。正式提交前，请由法务人员复核主体、合同、金额、管辖和证据链。
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* 执行工单 */}
       <div className="bg-white rounded-xl border p-5">
         <h3 className="text-sm font-semibold text-gray-700 mb-3">执行工单</h3>
@@ -319,4 +474,60 @@ function statusName(status: string) {
     cancelled: "已取消",
   };
   return names[status] || status;
+}
+
+function documentTypeName(type: string) {
+  const names: Record<string, string> = {
+    civil_complaint: "民事起诉状",
+    preservation_application: "财产保全申请书",
+    special_procedure_application: "实现担保物权特别程序申请书",
+  };
+  return names[type] || type;
+}
+
+function TextField({
+  label,
+  value,
+  onChange,
+  placeholder = "",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block text-xs font-medium text-gray-600">
+      {label}
+      <input
+        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="block text-xs font-medium text-gray-600">
+      {label}
+      <input
+        className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+        min={0}
+        type="number"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value || 0))}
+      />
+    </label>
+  );
 }

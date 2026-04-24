@@ -232,6 +232,43 @@ export async function updateWorkOrderStatus(
   });
 }
 
+// ============ 法务材料 API ============
+
+export type LegalDocumentType =
+  | "civil_complaint"
+  | "preservation_application"
+  | "special_procedure_application";
+
+export interface LegalDocumentGenerateRequest {
+  document_type: LegalDocumentType;
+  debtor_name: string;
+  creditor_name: string;
+  car_description: string;
+  contract_number?: string | null;
+  overdue_amount: number;
+  vehicle_value?: number | null;
+  facts?: string | null;
+  claims?: string[];
+  work_order_id?: number | null;
+}
+
+export interface LegalDocumentResult {
+  document_type: LegalDocumentType;
+  title: string;
+  html: string;
+  plain_text: string;
+  generated_at: string;
+  work_order_id: number | null;
+}
+
+export async function generateLegalDocument(input: LegalDocumentGenerateRequest) {
+  return request<LegalDocumentResult>("/api/legal-documents/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 // ============ 外部数据生态 API ============
 
 export interface ExternalProviderCapability {

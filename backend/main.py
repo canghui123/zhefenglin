@@ -22,6 +22,7 @@ from api.metrics import router as metrics_router
 from api.admin import router as admin_router
 from api.external_data import router as external_data_router
 from api.work_orders import router as work_orders_router
+from api.legal_documents import router as legal_documents_router
 from middleware.request_context import RequestContextMiddleware
 from middleware.metrics import MetricsMiddleware
 
@@ -124,6 +125,7 @@ app.include_router(metrics_router)
 app.include_router(admin_router)
 app.include_router(external_data_router)
 app.include_router(work_orders_router)
+app.include_router(legal_documents_router)
 
 
 @app.get("/api/health")

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body { font-family: "Noto Serif CJK SC", "Songti SC", serif; color: #111827; line-height: 1.9; padding: 36px; }
+    h1 { text-align: center; font-size: 28px; letter-spacing: 6px; }
+    .meta { margin: 24px 0; }
+    .section { margin-top: 20px; }
+    .section-title { font-weight: 700; margin-bottom: 8px; }
+    li { margin: 6px 0; }
+    .footer { margin-top: 44px; color: #6b7280; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  <div class="meta">
+    <p><strong>原告：</strong>{{ req.creditor_name }}</p>
+    <p><strong>被告：</strong>{{ req.debtor_name }}</p>
+    <p><strong>合同编号：</strong>{{ req.contract_number or "待补充" }}</p>
+    <p><strong>涉案车辆：</strong>{{ req.car_description }}</p>
+  </div>
+
+  <div class="section">
+    <div class="section-title">诉讼请求</div>
+    <ol>
+      {% for claim in claims %}
+      <li>{{ claim }}</li>
+      {% endfor %}
+    </ol>
+  </div>
+
+  <div class="section">
+    <div class="section-title">事实与理由</div>
+    <p>{{ facts }}</p>
+  </div>
+
+  <div class="section">
+    <p>此致</p>
+    <p>有管辖权的人民法院</p>
+  </div>
+
+  <div class="footer">
+    <p>生成时间：{{ generated_at.strftime("%Y-%m-%d %H:%M") }}</p>
+    <p>提示：本材料为系统自动生成初稿，仅供业务流转和法务复核使用，不构成最终法律意见。</p>
+  </div>
+</body>
+</html>
