@@ -29,6 +29,8 @@ REQUIRED_TABLES = sorted([
     "brand_retention_profiles",
     "region_disposal_coefficients",
     "work_orders",
+    "disposal_outcomes",
+    "model_learning_runs",
 ])
 
 

@@ -269,6 +269,88 @@ export async function generateLegalDocument(input: LegalDocumentGenerateRequest)
   });
 }
 
+// ============ 模型复盘 API ============
+
+export interface DisposalOutcomeCreate {
+  asset_identifier: string;
+  strategy_path: string;
+  source_type?: string | null;
+  source_id?: string | null;
+  province?: string | null;
+  city?: string | null;
+  predicted_recovery_amount: number;
+  actual_recovery_amount: number;
+  predicted_cycle_days: number;
+  actual_cycle_days: number;
+  predicted_success_probability: number;
+  outcome_status: "success" | "partial" | "failed";
+  notes?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DisposalOutcomeInfo extends DisposalOutcomeCreate {
+  id: number;
+  tenant_id: number;
+  created_by: number | null;
+  created_at: string;
+}
+
+export interface RegionAdjustmentSuggestion {
+  province: string | null;
+  city: string | null;
+  sample_count: number;
+  recovery_bias_ratio: number;
+  cycle_bias_ratio: number;
+  liquidity_speed_multiplier: number;
+  legal_efficiency_multiplier: number;
+}
+
+export interface ModelFeedbackSummary {
+  sample_count: number;
+  recovery_bias_ratio: number;
+  cycle_bias_ratio: number;
+  actual_success_rate: number;
+  avg_predicted_success_probability: number;
+  suggested_success_adjustment: number;
+  region_adjustments: RegionAdjustmentSuggestion[];
+}
+
+export interface ModelLearningRunInfo extends ModelFeedbackSummary {
+  id: number;
+  tenant_id: number;
+  created_by: number | null;
+  applied: boolean;
+  created_at: string;
+}
+
+export async function listDisposalOutcomes() {
+  return request<DisposalOutcomeInfo[]>("/api/model-feedback/outcomes");
+}
+
+export async function createDisposalOutcome(input: DisposalOutcomeCreate) {
+  return request<DisposalOutcomeInfo>("/api/model-feedback/outcomes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getModelFeedbackSummary() {
+  return request<ModelFeedbackSummary>("/api/model-feedback/summary");
+}
+
+export async function listModelLearningRuns() {
+  return request<ModelLearningRunInfo[]>("/api/model-feedback/learning-runs");
+}
+
+export async function createModelLearningRun(input: { apply_region_adjustments: boolean }) {
+  return request<ModelLearningRunInfo>("/api/model-feedback/learning-runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 // ============ 外部数据生态 API ============
 
 export interface ExternalProviderCapability {

@@ -40,6 +40,7 @@ const navSections = [
       { href: "/portfolio/manager", label: "经理作战手册" },
       { href: "/portfolio/supervisor", label: "主管控制台" },
       { href: "/portfolio/actions", label: "动作中心" },
+      { href: "/portfolio/learning", label: "复盘学习" },
     ],
   },
   {
