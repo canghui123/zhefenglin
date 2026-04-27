@@ -83,13 +83,29 @@ export default function PortfolioLearningPage() {
     }
   }
 
-  async function handleLearningRun(apply: boolean) {
-    setSubmitting(apply ? "apply-run" : "dry-run");
+  async function handleLearningRun(options: {
+    applyRegion?: boolean;
+    applySuccess?: boolean;
+  } = {}) {
+    const applyRegion = Boolean(options.applyRegion);
+    const applySuccess = Boolean(options.applySuccess);
+    setSubmitting(applySuccess ? "success-run" : applyRegion ? "apply-run" : "dry-run");
     setMessage("");
     try {
-      await createModelLearningRun({ apply_region_adjustments: apply });
+      await createModelLearningRun({
+        apply_region_adjustments: applyRegion,
+        apply_success_adjustment: applySuccess,
+      });
       await refresh();
-      setMessage(apply ? "已生成学习记录并应用区域系数调整" : "已生成学习记录，暂未改动生产系数");
+      if (applySuccess && applyRegion) {
+        setMessage("已生成学习记录，并应用成功率与区域系数修正");
+      } else if (applySuccess) {
+        setMessage("已生成学习记录，并应用成功率修正到后续沙盘模型");
+      } else if (applyRegion) {
+        setMessage("已生成学习记录并应用区域系数调整");
+      } else {
+        setMessage("已生成学习记录，暂未改动生产系数");
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "学习运行失败");
     } finally {
@@ -229,20 +245,29 @@ export default function PortfolioLearningPage() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-gray-700">模型学习建议</h3>
-                <p className="mt-1 text-xs text-gray-500">先生成记录观察偏差，需要经理权限才可应用区域系数调整。</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  先生成记录观察偏差；经理可将成功率修正写入后续沙盘，也可应用区域系数。
+                </p>
               </div>
               <div className="flex gap-2">
                 <button
                   className="rounded-lg border px-3 py-2 text-xs font-medium hover:bg-gray-50 disabled:opacity-50"
                   disabled={submitting === "dry-run"}
-                  onClick={() => handleLearningRun(false)}
+                  onClick={() => handleLearningRun()}
                 >
                   生成学习记录
                 </button>
                 <button
+                  className="rounded-lg border border-blue-200 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                  disabled={submitting === "success-run"}
+                  onClick={() => handleLearningRun({ applySuccess: true })}
+                >
+                  应用成功率修正
+                </button>
+                <button
                   className="rounded-lg border border-emerald-200 px-3 py-2 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
                   disabled={submitting === "apply-run"}
-                  onClick={() => handleLearningRun(true)}
+                  onClick={() => handleLearningRun({ applyRegion: true })}
                 >
                   应用区域修正
                 </button>
@@ -321,11 +346,18 @@ export default function PortfolioLearningPage() {
             {runs.length > 0 ? (
               <div className="space-y-2">
                 {runs.slice(0, 5).map((run) => (
-                  <div key={run.id} className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm">
+                  <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
                     <span>#{run.id} 样本 {run.sample_count}，成功率修正 {pct(run.suggested_success_adjustment)}</span>
-                    <span className={run.applied ? "text-emerald-600" : "text-gray-500"}>
-                      {run.applied ? "已应用" : "仅记录"}
-                    </span>
+                    <div className="flex gap-2 text-xs">
+                      {run.success_adjustment_applied && (
+                        <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                          成功率已应用
+                        </span>
+                      )}
+                      <span className={run.applied ? "rounded-full bg-emerald-50 px-2 py-1 text-emerald-700" : "rounded-full bg-gray-50 px-2 py-1 text-gray-500"}>
+                        {run.applied ? "已应用" : "仅记录"}
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -219,6 +219,7 @@ def dynamic_success_probability(
     path_type: str,
     vehicle_recovered: bool = True,
     vehicle_in_inventory: bool = True,
+    learning_adjustment: float = 0.0,
 ) -> float:
     age_penalty = min(0.35, max(vehicle_age_years - 2, 0) * 0.025)
     overdue_ratio = overdue_amount / vehicle_value if vehicle_value > 0 else 1.0
@@ -243,5 +244,6 @@ def dynamic_success_probability(
         - status_penalty
         + retention_adjustment
         + region_adjustment
+        + learning_adjustment
     )
     return round(min(0.98, max(0.0, probability)), 4)

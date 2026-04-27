@@ -92,6 +92,7 @@ def create_learning_run(
     suggested_success_adjustment: float,
     region_adjustments_json: str,
     applied: bool,
+    success_adjustment_applied: bool = False,
 ) -> ModelLearningRun:
     row = ModelLearningRun(
         tenant_id=tenant_id,
@@ -104,6 +105,7 @@ def create_learning_run(
         suggested_success_adjustment=suggested_success_adjustment,
         region_adjustments_json=region_adjustments_json,
         applied=applied,
+        success_adjustment_applied=success_adjustment_applied,
     )
     session.add(row)
     session.flush()
@@ -123,3 +125,18 @@ def list_learning_runs(
         .limit(limit)
     )
     return list(session.scalars(stmt).all())
+
+
+def get_latest_applied_success_adjustment(
+    session: Session,
+    *,
+    tenant_id: int,
+) -> float:
+    row = session.scalars(
+        select(ModelLearningRun)
+        .where(ModelLearningRun.tenant_id == tenant_id)
+        .where(ModelLearningRun.success_adjustment_applied.is_(True))
+        .order_by(ModelLearningRun.created_at.desc(), ModelLearningRun.id.desc())
+        .limit(1)
+    ).first()
+    return row.suggested_success_adjustment if row is not None else 0.0

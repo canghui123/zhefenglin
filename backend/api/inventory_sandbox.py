@@ -40,7 +40,7 @@ async def simulate(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """运行五路径模拟"""
-    result = run_simulation(inp, session=session)
+    result = run_simulation(inp, session=session, tenant_id=tenant_id)
 
     row = sandbox_repo.create_sandbox_result(
         session,
@@ -146,8 +146,16 @@ async def generate_report(
         path_a=PathAResult.model_validate_json(row.path_a_json),
         path_b=PathBResult.model_validate_json(row.path_b_json),
         path_c=PathCResult.model_validate_json(row.path_c_json),
-        path_d=PathDResult.model_validate_json(row.path_d_json) if row.path_d_json else run_simulation(inp, session=session).path_d,
-        path_e=PathEResult.model_validate_json(row.path_e_json) if row.path_e_json else run_simulation(inp, session=session).path_e,
+        path_d=(
+            PathDResult.model_validate_json(row.path_d_json)
+            if row.path_d_json
+            else run_simulation(inp, session=session, tenant_id=tenant_id).path_d
+        ),
+        path_e=(
+            PathEResult.model_validate_json(row.path_e_json)
+            if row.path_e_json
+            else run_simulation(inp, session=session, tenant_id=tenant_id).path_e
+        ),
         recommendation=row.recommendation,
         best_path=row.best_path or "C",
     )

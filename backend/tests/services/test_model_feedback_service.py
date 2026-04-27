@@ -4,10 +4,13 @@ from models.model_feedback import DisposalOutcomeCreate
 from repositories import tenant_repo, user_repo
 from services.model_feedback_service import (
     compute_feedback_summary,
+    get_applied_success_adjustment,
     record_disposal_outcome,
     run_learning_cycle,
 )
 from services.password_service import hash_password
+from models.simulation import SandboxInput
+from services.sandbox_simulator import run_simulation
 
 
 def _session_with_tenant_user():
@@ -117,6 +120,59 @@ def test_learning_run_can_apply_region_adjustment():
         region = session.query(RegionDisposalCoefficient).filter_by(region_code="JS_NJ").one()
         assert region.liquidity_speed_factor > 1.0
         assert region.legal_efficiency_factor > 1.0
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_applied_success_adjustment_calibrates_sandbox_probability():
+    gen, session, tenant_id, user_id = _session_with_tenant_user()
+    try:
+        sandbox_input = SandboxInput(
+            car_description="丰田 凯美瑞 2021款",
+            entry_date="2026-04-27",
+            overdue_amount=80_000,
+            che300_value=130_000,
+            vehicle_type="japanese",
+            vehicle_age_years=3,
+            vehicle_recovered=True,
+            vehicle_in_inventory=True,
+        )
+        baseline = run_simulation(
+            sandbox_input.model_copy(deep=True),
+            session=session,
+            tenant_id=tenant_id,
+        ).path_c.success_probability
+
+        _record(
+            session,
+            tenant_id,
+            user_id,
+            predicted_success_probability=0.5,
+            outcome_status="success",
+        )
+        session.commit()
+
+        run = run_learning_cycle(
+            session,
+            tenant_id=tenant_id,
+            created_by=user_id,
+            apply_success_adjustment=True,
+        )
+        session.commit()
+
+        adjusted = run_simulation(
+            sandbox_input.model_copy(deep=True),
+            session=session,
+            tenant_id=tenant_id,
+        ).path_c.success_probability
+
+        assert run.applied is True
+        assert run.success_adjustment_applied is True
+        assert get_applied_success_adjustment(session, tenant_id=tenant_id) == 0.15
+        assert adjusted > baseline
     finally:
         try:
             next(gen)

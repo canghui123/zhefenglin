@@ -28,6 +28,7 @@ from services.decision_model import (
     resolve_brand_profile,
     resolve_region_coefficient,
 )
+from services.model_feedback_service import get_applied_success_adjustment
 
 
 # ============================================================
@@ -264,7 +265,11 @@ def build_legal_cost(
 # 3. 路径A：继续等待赎车（15/30/60/90天）
 # ============================================================
 
-def simulate_path_a(inp: SandboxInput, session: Optional[Session] = None) -> PathAResult:
+def simulate_path_a(
+    inp: SandboxInput,
+    session: Optional[Session] = None,
+    learning_adjustment: float = 0.0,
+) -> PathAResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
     profile = resolve_brand_profile(
         session=session,
@@ -301,6 +306,7 @@ def simulate_path_a(inp: SandboxInput, session: Optional[Session] = None) -> Pat
             path_type="collection",
             vehicle_recovered=inp.vehicle_recovered,
             vehicle_in_inventory=inp.vehicle_in_inventory,
+            learning_adjustment=learning_adjustment,
         )
         if collection_block_reasons:
             success_probability = 0
@@ -336,7 +342,11 @@ def simulate_path_a(inp: SandboxInput, session: Optional[Session] = None) -> Pat
 # 4. 路径B：常规诉讼（一拍80%/二拍56%）
 # ============================================================
 
-def simulate_path_b(inp: SandboxInput, session: Optional[Session] = None) -> PathBResult:
+def simulate_path_b(
+    inp: SandboxInput,
+    session: Optional[Session] = None,
+    learning_adjustment: float = 0.0,
+) -> PathBResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
     profile = resolve_brand_profile(
         session=session,
@@ -394,6 +404,7 @@ def simulate_path_b(inp: SandboxInput, session: Optional[Session] = None) -> Pat
             path_type="litigation",
             vehicle_recovered=inp.vehicle_recovered,
             vehicle_in_inventory=inp.vehicle_in_inventory,
+            learning_adjustment=learning_adjustment,
         )
 
         # 期望拍卖回收 = 贬值后估值 × 拍卖折扣 × 动态成功概率
@@ -470,7 +481,11 @@ def simulate_path_b(inp: SandboxInput, session: Optional[Session] = None) -> Pat
 # 5. 路径C：立即上架竞拍
 # ============================================================
 
-def simulate_path_c(inp: SandboxInput, session: Optional[Session] = None) -> PathCResult:
+def simulate_path_c(
+    inp: SandboxInput,
+    session: Optional[Session] = None,
+    learning_adjustment: float = 0.0,
+) -> PathCResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
     profile = resolve_brand_profile(
         session=session,
@@ -503,6 +518,7 @@ def simulate_path_c(inp: SandboxInput, session: Optional[Session] = None) -> Pat
         path_type="retail_auction",
         vehicle_recovered=inp.vehicle_recovered,
         vehicle_in_inventory=inp.vehicle_in_inventory,
+        learning_adjustment=learning_adjustment,
     )
     expected_sale_recovery = sale_price * success_probability
     commission = expected_sale_recovery * inp.commission_rate
@@ -533,7 +549,11 @@ def simulate_path_c(inp: SandboxInput, session: Optional[Session] = None) -> Pat
 # 6. 路径D：实现担保物权特别程序
 # ============================================================
 
-def simulate_path_d(inp: SandboxInput, session: Optional[Session] = None) -> PathDResult:
+def simulate_path_d(
+    inp: SandboxInput,
+    session: Optional[Session] = None,
+    learning_adjustment: float = 0.0,
+) -> PathDResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
     profile = resolve_brand_profile(
         session=session,
@@ -572,6 +592,7 @@ def simulate_path_d(inp: SandboxInput, session: Optional[Session] = None) -> Pat
         path_type="special_procedure",
         vehicle_recovered=inp.vehicle_recovered,
         vehicle_in_inventory=inp.vehicle_in_inventory,
+        learning_adjustment=learning_adjustment,
     )
     round2_success = dynamic_success_probability(
         base_probability=0.85,
@@ -583,6 +604,7 @@ def simulate_path_d(inp: SandboxInput, session: Optional[Session] = None) -> Pat
         path_type="special_procedure",
         vehicle_recovered=inp.vehicle_recovered,
         vehicle_in_inventory=inp.vehicle_in_inventory,
+        learning_adjustment=learning_adjustment,
     )
     if d_block_reasons:
         round1_success = 0
@@ -651,7 +673,11 @@ def simulate_path_d(inp: SandboxInput, session: Optional[Session] = None) -> Pat
 # 7. 路径E：分期重组/和解
 # ============================================================
 
-def simulate_path_e(inp: SandboxInput, session: Optional[Session] = None) -> PathEResult:
+def simulate_path_e(
+    inp: SandboxInput,
+    session: Optional[Session] = None,
+    learning_adjustment: float = 0.0,
+) -> PathEResult:
     monthly = inp.restructure_monthly_payment
     months = inp.restructure_months
     redefault = inp.restructure_redefault_rate
@@ -688,6 +714,7 @@ def simulate_path_e(inp: SandboxInput, session: Optional[Session] = None) -> Pat
         path_type="restructure",
         vehicle_recovered=inp.vehicle_recovered,
         vehicle_in_inventory=inp.vehicle_in_inventory,
+        learning_adjustment=learning_adjustment,
     )
 
     return PathEResult(
@@ -708,17 +735,26 @@ def simulate_path_e(inp: SandboxInput, session: Optional[Session] = None) -> Pat
 # 8. 综合决策
 # ============================================================
 
-def run_simulation(inp: SandboxInput, session: Optional[Session] = None) -> SandboxResult:
+def run_simulation(
+    inp: SandboxInput,
+    session: Optional[Session] = None,
+    tenant_id: Optional[int] = None,
+) -> SandboxResult:
     """运行完整五路径模拟"""
     # 自动检测车辆类型
     if inp.vehicle_type == "auto":
         inp.vehicle_type = _detect_vehicle_type(inp.car_description)
 
-    path_a = simulate_path_a(inp, session=session)
-    path_b = simulate_path_b(inp, session=session)
-    path_c = simulate_path_c(inp, session=session)
-    path_d = simulate_path_d(inp, session=session)
-    path_e = simulate_path_e(inp, session=session)
+    learning_adjustment = get_applied_success_adjustment(
+        session,
+        tenant_id=tenant_id,
+    )
+
+    path_a = simulate_path_a(inp, session=session, learning_adjustment=learning_adjustment)
+    path_b = simulate_path_b(inp, session=session, learning_adjustment=learning_adjustment)
+    path_c = simulate_path_c(inp, session=session, learning_adjustment=learning_adjustment)
+    path_d = simulate_path_d(inp, session=session, learning_adjustment=learning_adjustment)
+    path_e = simulate_path_e(inp, session=session, learning_adjustment=learning_adjustment)
 
     # ---- 决策对比 ----
     # A: 取15/30/60/90天中最优的净头寸

@@ -320,6 +320,7 @@ export interface ModelLearningRunInfo extends ModelFeedbackSummary {
   tenant_id: number;
   created_by: number | null;
   applied: boolean;
+  success_adjustment_applied: boolean;
   created_at: string;
 }
 
@@ -343,7 +344,10 @@ export async function listModelLearningRuns() {
   return request<ModelLearningRunInfo[]>("/api/model-feedback/learning-runs");
 }
 
-export async function createModelLearningRun(input: { apply_region_adjustments: boolean }) {
+export async function createModelLearningRun(input: {
+  apply_region_adjustments: boolean;
+  apply_success_adjustment?: boolean;
+}) {
   return request<ModelLearningRunInfo>("/api/model-feedback/learning-runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

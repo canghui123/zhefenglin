@@ -71,6 +71,7 @@ class ModelLearningRun(Base):
     suggested_success_adjustment: Mapped[float] = mapped_column(Float, nullable=False)
     region_adjustments_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    success_adjustment_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),

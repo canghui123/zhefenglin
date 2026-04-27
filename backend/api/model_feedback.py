@@ -129,6 +129,7 @@ async def create_learning_run(
         tenant_id=tenant_id,
         created_by=user.id,
         apply_region_adjustments=req.apply_region_adjustments,
+        apply_success_adjustment=req.apply_success_adjustment,
     )
     out = serialize_learning_run(row)
     audit_service.record(

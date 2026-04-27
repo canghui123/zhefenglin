@@ -77,6 +77,7 @@ def serialize_learning_run(row: ModelLearningRun) -> ModelLearningRunOut:
             for item in _json_loads(row.region_adjustments_json).get("regions", [])
         ],
         applied=row.applied,
+        success_adjustment_applied=row.success_adjustment_applied,
         created_at=row.created_at.isoformat() if row.created_at else "",
     )
 
@@ -247,6 +248,7 @@ def run_learning_cycle(
     tenant_id: int,
     created_by: Optional[int],
     apply_region_adjustments: bool = False,
+    apply_success_adjustment: bool = False,
 ) -> ModelLearningRun:
     summary = compute_feedback_summary(session, tenant_id=tenant_id)
     if apply_region_adjustments and summary.region_adjustments:
@@ -265,5 +267,23 @@ def run_learning_cycle(
         region_adjustments_json=_json_dumps(
             {"regions": [item.model_dump() for item in summary.region_adjustments]}
         ),
-        applied=apply_region_adjustments,
+        applied=apply_region_adjustments or apply_success_adjustment,
+        success_adjustment_applied=apply_success_adjustment,
+    )
+
+
+def get_applied_success_adjustment(
+    session: Optional[Session],
+    *,
+    tenant_id: Optional[int],
+) -> float:
+    if session is None or tenant_id is None:
+        return 0.0
+    return _clamp(
+        model_feedback_repo.get_latest_applied_success_adjustment(
+            session,
+            tenant_id=tenant_id,
+        ),
+        -0.15,
+        0.15,
     )

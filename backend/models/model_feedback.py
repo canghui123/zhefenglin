@@ -75,6 +75,7 @@ class ModelFeedbackSummary(BaseModel):
 
 class ModelLearningRunCreate(BaseModel):
     apply_region_adjustments: bool = False
+    apply_success_adjustment: bool = False
 
 
 class ModelLearningRunOut(BaseModel):
@@ -89,4 +90,5 @@ class ModelLearningRunOut(BaseModel):
     suggested_success_adjustment: float
     region_adjustments: list[RegionAdjustmentSuggestion]
     applied: bool
+    success_adjustment_applied: bool
     created_at: str
