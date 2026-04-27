@@ -49,9 +49,8 @@ source .env
 
 info "配置检查通过 — 域名: $DOMAIN"
 
-# ── Step 2: 替换 Nginx 域名占位符 ──
-sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" nginx/conf.d/app.conf
-info "Nginx 配置已更新: $DOMAIN"
+# ── Step 2: Nginx 配置模板说明 ──
+info "Nginx 将通过模板读取 DOMAIN: $DOMAIN / www.$DOMAIN"
 
 # ── Step 3: 先启动不需要 SSL 的服务 ──
 info "启动 PostgreSQL + MinIO + 后端 + 前端 ..."
@@ -71,29 +70,24 @@ docker compose exec minio mc mb local/"${S3_BUCKET:-auto-finance}" 2>/dev/null |
 info "存储桶就绪"
 
 # ── Step 6: 申请 SSL 证书 ──
-info "启动 Nginx (HTTP only) 用于证书验证 ..."
+info "申请 Let's Encrypt SSL 证书（覆盖 $DOMAIN 和 www.$DOMAIN）..."
 
-# 先用临时自签名证书让 nginx 能启动
-mkdir -p nginx/tmp-cert
-openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-    -keyout nginx/tmp-cert/privkey.pem \
-    -out nginx/tmp-cert/fullchain.pem \
-    -subj "/CN=$DOMAIN" 2>/dev/null
-
-# 临时挂载自签名证书启动 nginx
-docker compose up -d nginx
-
-info "申请 Let's Encrypt SSL 证书 ..."
-docker compose run --rm certbot certonly \
-    --webroot \
-    --webroot-path=/var/www/certbot \
+# 首次签发时 nginx 尚无证书无法启动，因此用 certbot standalone 临时占用 80 端口。
+# 续期由 compose 中的 certbot 服务走 webroot 模式完成。
+docker compose stop nginx >/dev/null 2>&1 || true
+docker run --rm \
+    -p 80:80 \
+    -v /etc/letsencrypt:/etc/letsencrypt \
+    certbot/certbot certonly \
+    --standalone \
+    --cert-name "$DOMAIN" \
     --email "admin@$DOMAIN" \
     --agree-tos \
     --no-eff-email \
-    -d "$DOMAIN"
-
-# 删除临时证书
-rm -rf nginx/tmp-cert
+    --keep-until-expiring \
+    --expand \
+    -d "$DOMAIN" \
+    -d "www.$DOMAIN"
 info "SSL 证书申请成功"
 
 # ── Step 7: 全部启动 ──

@@ -88,13 +88,15 @@ services:
     image: nginx:alpine
     container_name: af_nginx
     restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - certbot_data:/etc/letsencrypt:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
       - certbot_www:/var/www/certbot:ro
     depends_on:
       - backend
@@ -105,12 +107,11 @@ services:
     image: certbot/certbot
     container_name: af_certbot
     volumes:
-      - certbot_data:/etc/letsencrypt
+      - /etc/letsencrypt:/etc/letsencrypt
       - certbot_www:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew --quiet; done'"
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew --quiet --webroot -w /var/www/certbot; done'"
 
 volumes:
   postgres_data:
   minio_data:
-  certbot_data:
   certbot_www:

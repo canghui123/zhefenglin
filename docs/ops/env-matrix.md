@@ -32,6 +32,7 @@
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
+| `DOMAIN` | 是 | — | 生产主域名，不带协议，建议填写裸域名；Nginx 会同时服务 `DOMAIN` 和 `www.DOMAIN`，并把 `www` 301 到裸域名 |
 | `BACKEND_PIP_INDEX_URL` | 否 | `https://pypi.org/simple` | 后端 Docker 构建安装 Python 依赖时使用的 PyPI 源 |
 | `BACKEND_PIP_TRUSTED_HOST` | 否 | — | 私有源或区域镜像需要 `--trusted-host` 时填写；官方 PyPI 留空 |
 

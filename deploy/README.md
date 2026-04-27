@@ -62,10 +62,11 @@ nano .env
 
 ### 第四步：确认域名解析
 
-确保域名已解析到服务器 IP：
+确保裸域名和 `www` 子域名都已解析到服务器 IP：
 
 ```bash
 ping your-domain.com
+ping www.your-domain.com
 # 应该返回你服务器的 IP 地址
 ```
 
@@ -81,7 +82,7 @@ bash setup.sh
 3. 构建后端/前端镜像
 4. 运行数据库迁移（alembic upgrade head）
 5. 创建 MinIO 存储桶
-6. 申请 Let's Encrypt SSL 证书
+6. 申请 Let's Encrypt SSL 证书（覆盖裸域名和 `www` 子域名）
 7. 启动 Nginx 反向代理
 8. 创建默认管理员账号
 
@@ -155,10 +156,13 @@ docker compose exec -T postgres psql -U app auto_finance < backup_20260413.sql
 
 ### SSL 证书
 
-证书由 certbot 容器自动续期（每 12 小时检查一次）。手动续期：
+生产部署使用主机 `/etc/letsencrypt` 作为证书目录，并挂载到 Nginx / certbot 容器。
+证书覆盖裸域名和 `www` 子域名，Nginx 会把 `www` 统一 301 到裸域名。
+
+证书由 certbot 容器通过 webroot 自动续期（每 12 小时检查一次）。手动续期：
 
 ```bash
-docker compose run --rm certbot renew
+docker compose run --rm certbot renew --webroot -w /var/www/certbot
 docker compose restart nginx
 ```
 
@@ -213,10 +217,15 @@ docker compose logs backend
 
 ### Q: SSL 证书申请失败
 1. 确认域名已解析到服务器 IP
-2. 确认 80 端口已开放（`ufw allow 80`）
-3. 手动重试：
+2. 确认 `www` 子域名也已解析到服务器 IP
+3. 确认 80 端口已开放（`ufw allow 80`）
+4. 手动重试：
 ```bash
-docker compose run --rm certbot certonly --webroot --webroot-path=/var/www/certbot -d your-domain.com
+docker run --rm -p 80:80 -v /etc/letsencrypt:/etc/letsencrypt \
+  certbot/certbot certonly --standalone \
+  --cert-name your-domain.com \
+  -d your-domain.com \
+  -d www.your-domain.com
 ```
 
 ### Q: 数据库连接失败
