@@ -305,6 +305,15 @@ export interface RegionAdjustmentSuggestion {
   legal_efficiency_multiplier: number;
 }
 
+export interface StrategyAdjustmentSuggestion {
+  strategy_path: string;
+  strategy_name: string;
+  sample_count: number;
+  actual_success_rate: number;
+  avg_predicted_success_probability: number;
+  suggested_success_adjustment: number;
+}
+
 export interface ModelFeedbackSummary {
   sample_count: number;
   recovery_bias_ratio: number;
@@ -315,6 +324,8 @@ export interface ModelFeedbackSummary {
   active_success_adjustment?: number;
   active_success_adjustment_run_id?: number | null;
   region_adjustments: RegionAdjustmentSuggestion[];
+  strategy_adjustments: StrategyAdjustmentSuggestion[];
+  active_strategy_adjustments?: StrategyAdjustmentSuggestion[];
 }
 
 export interface ModelLearningRunInfo extends ModelFeedbackSummary {

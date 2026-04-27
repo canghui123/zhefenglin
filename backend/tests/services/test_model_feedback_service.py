@@ -146,7 +146,7 @@ def test_applied_success_adjustment_calibrates_sandbox_probability():
             sandbox_input.model_copy(deep=True),
             session=session,
             tenant_id=tenant_id,
-        ).path_c.success_probability
+        )
 
         _record(
             session,
@@ -169,16 +169,36 @@ def test_applied_success_adjustment_calibrates_sandbox_probability():
             sandbox_input.model_copy(deep=True),
             session=session,
             tenant_id=tenant_id,
-        ).path_c.success_probability
+        )
 
         assert run.applied is True
         assert run.success_adjustment_applied is True
         assert get_applied_success_adjustment(session, tenant_id=tenant_id) == 0.15
-        assert adjusted > baseline
+        assert (
+            get_applied_success_adjustment(
+                session,
+                tenant_id=tenant_id,
+                strategy_path="retail_auction",
+            )
+            == 0.15
+        )
+        assert (
+            get_applied_success_adjustment(
+                session,
+                tenant_id=tenant_id,
+                strategy_path="litigation",
+            )
+            == 0.0
+        )
+        assert adjusted.path_c.success_probability > baseline.path_c.success_probability
+        assert adjusted.path_b.success_probability == baseline.path_b.success_probability
+        assert adjusted.path_e.success_probability == baseline.path_e.success_probability
 
         summary = compute_feedback_summary(session, tenant_id=tenant_id)
         assert summary.active_success_adjustment == 0.15
         assert summary.active_success_adjustment_run_id == run.id
+        assert summary.strategy_adjustments[0].strategy_path == "retail_auction"
+        assert summary.active_strategy_adjustments[0].strategy_path == "retail_auction"
     finally:
         try:
             next(gen)

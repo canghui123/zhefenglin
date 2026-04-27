@@ -143,7 +143,7 @@ export default function PortfolioLearningPage() {
           <div>
             <div className="text-xs font-medium text-blue-700">当前生效模型校准</div>
             <div className="mt-1 text-sm text-gray-600">
-              后续库存沙盘会按这里的成功率修正值校准动态概率，硬性不可用路径仍保持 0%。
+              后续库存沙盘会优先按路径级成功率修正校准动态概率，硬性不可用路径仍保持 0%。
             </div>
           </div>
           <div className="text-right">
@@ -157,6 +157,24 @@ export default function PortfolioLearningPage() {
             </div>
           </div>
         </div>
+        {summary?.active_strategy_adjustments && summary.active_strategy_adjustments.length > 0 && (
+          <div className="mt-4 grid gap-2 md:grid-cols-3">
+            {summary.active_strategy_adjustments.map((item) => (
+              <div
+                key={item.strategy_path}
+                className="rounded-lg border border-blue-100 bg-white/80 px-3 py-2"
+              >
+                <div className="text-xs text-gray-500">{item.strategy_name}</div>
+                <div className="mt-1 text-sm font-semibold text-blue-700">
+                  路径修正 {pct(item.suggested_success_adjustment)}
+                </div>
+                <div className="mt-1 text-[11px] text-gray-500">
+                  样本 {item.sample_count}，实际 {pct(item.actual_success_rate)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
@@ -267,7 +285,7 @@ export default function PortfolioLearningPage() {
               <div>
                 <h3 className="text-sm font-semibold text-gray-700">模型学习建议</h3>
                 <p className="mt-1 text-xs text-gray-500">
-                  先生成记录观察偏差；经理可将成功率修正写入后续沙盘，也可应用区域系数。
+                  先生成记录观察偏差；经理可将路径级成功率修正写入后续沙盘，也可应用区域系数。
                 </p>
               </div>
               <div className="flex gap-2">
@@ -294,8 +312,38 @@ export default function PortfolioLearningPage() {
                 </button>
               </div>
             </div>
-            {summary && summary.region_adjustments.length > 0 ? (
+            {summary && summary.strategy_adjustments.length > 0 && (
+              <div className="mb-5 overflow-x-auto">
+                <div className="mb-2 text-xs font-semibold text-gray-500">路径级成功率修正建议</div>
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left">路径</th>
+                      <th className="px-3 py-2 text-right">样本</th>
+                      <th className="px-3 py-2 text-right">实际成功率</th>
+                      <th className="px-3 py-2 text-right">预测成功率</th>
+                      <th className="px-3 py-2 text-right">建议修正</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.strategy_adjustments.map((item) => (
+                      <tr key={item.strategy_path} className="border-t">
+                        <td className="px-3 py-2">{item.strategy_name}</td>
+                        <td className="px-3 py-2 text-right">{item.sample_count}</td>
+                        <td className="px-3 py-2 text-right">{pct(item.actual_success_rate)}</td>
+                        <td className="px-3 py-2 text-right">{pct(item.avg_predicted_success_probability)}</td>
+                        <td className="px-3 py-2 text-right font-medium text-blue-700">
+                          {pct(item.suggested_success_adjustment)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {summary && summary.region_adjustments.length > 0 && (
               <div className="overflow-x-auto">
+                <div className="mb-2 text-xs font-semibold text-gray-500">区域系数修正建议</div>
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50">
                     <tr>
@@ -321,7 +369,10 @@ export default function PortfolioLearningPage() {
                   </tbody>
                 </table>
               </div>
-            ) : (
+            )}
+            {summary &&
+              summary.strategy_adjustments.length === 0 &&
+              summary.region_adjustments.length === 0 && (
               <p className="text-sm text-gray-400">暂无足够样本。先录入真实处置结果。</p>
             )}
           </div>
@@ -451,7 +502,9 @@ function NumberField({
 function strategyName(value: string) {
   const names: Record<string, string> = {
     auction: "拍卖处置",
+    retail_auction: "立即上架竞拍",
     towing: "收车处置",
+    collection: "继续等待赎车/收车",
     litigation: "常规诉讼",
     special_procedure: "特别程序",
     restructure: "重组还款",

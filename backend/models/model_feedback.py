@@ -63,6 +63,15 @@ class RegionAdjustmentSuggestion(BaseModel):
     legal_efficiency_multiplier: float
 
 
+class StrategyAdjustmentSuggestion(BaseModel):
+    strategy_path: str
+    strategy_name: str
+    sample_count: int
+    actual_success_rate: float
+    avg_predicted_success_probability: float
+    suggested_success_adjustment: float
+
+
 class ModelFeedbackSummary(BaseModel):
     sample_count: int
     recovery_bias_ratio: float
@@ -73,6 +82,8 @@ class ModelFeedbackSummary(BaseModel):
     active_success_adjustment: float = 0.0
     active_success_adjustment_run_id: Optional[int] = None
     region_adjustments: list[RegionAdjustmentSuggestion]
+    strategy_adjustments: list[StrategyAdjustmentSuggestion]
+    active_strategy_adjustments: list[StrategyAdjustmentSuggestion] = Field(default_factory=list)
 
 
 class ModelLearningRunCreate(BaseModel):
@@ -91,6 +102,7 @@ class ModelLearningRunOut(BaseModel):
     avg_predicted_success_probability: float
     suggested_success_adjustment: float
     region_adjustments: list[RegionAdjustmentSuggestion]
+    strategy_adjustments: list[StrategyAdjustmentSuggestion] = Field(default_factory=list)
     applied: bool
     success_adjustment_applied: bool
     created_at: str

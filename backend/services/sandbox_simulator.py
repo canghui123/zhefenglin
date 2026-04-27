@@ -745,16 +745,38 @@ def run_simulation(
     if inp.vehicle_type == "auto":
         inp.vehicle_type = _detect_vehicle_type(inp.car_description)
 
-    learning_adjustment = get_applied_success_adjustment(
-        session,
-        tenant_id=tenant_id,
-    )
+    def learning_adjustment_for(path_type: str) -> float:
+        return get_applied_success_adjustment(
+            session,
+            tenant_id=tenant_id,
+            strategy_path=path_type,
+        )
 
-    path_a = simulate_path_a(inp, session=session, learning_adjustment=learning_adjustment)
-    path_b = simulate_path_b(inp, session=session, learning_adjustment=learning_adjustment)
-    path_c = simulate_path_c(inp, session=session, learning_adjustment=learning_adjustment)
-    path_d = simulate_path_d(inp, session=session, learning_adjustment=learning_adjustment)
-    path_e = simulate_path_e(inp, session=session, learning_adjustment=learning_adjustment)
+    path_a = simulate_path_a(
+        inp,
+        session=session,
+        learning_adjustment=learning_adjustment_for("collection"),
+    )
+    path_b = simulate_path_b(
+        inp,
+        session=session,
+        learning_adjustment=learning_adjustment_for("litigation"),
+    )
+    path_c = simulate_path_c(
+        inp,
+        session=session,
+        learning_adjustment=learning_adjustment_for("retail_auction"),
+    )
+    path_d = simulate_path_d(
+        inp,
+        session=session,
+        learning_adjustment=learning_adjustment_for("special_procedure"),
+    )
+    path_e = simulate_path_e(
+        inp,
+        session=session,
+        learning_adjustment=learning_adjustment_for("restructure"),
+    )
 
     # ---- 决策对比 ----
     # A: 取15/30/60/90天中最优的净头寸

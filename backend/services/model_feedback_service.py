@@ -17,8 +17,34 @@ from models.model_feedback import (
     ModelFeedbackSummary,
     ModelLearningRunOut,
     RegionAdjustmentSuggestion,
+    StrategyAdjustmentSuggestion,
 )
 from repositories import model_feedback_repo
+
+
+STRATEGY_PATH_ALIASES = {
+    "auction": "retail_auction",
+    "retail_auction": "retail_auction",
+    "vehicle_transfer": "retail_auction",
+    "bulk_clearance": "retail_auction",
+    "towing": "collection",
+    "collection": "collection",
+    "redeem_wait": "collection",
+    "litigation": "litigation",
+    "lawsuit": "litigation",
+    "special_procedure": "special_procedure",
+    "secured_property": "special_procedure",
+    "restructure": "restructure",
+    "settlement": "restructure",
+}
+
+STRATEGY_NAMES = {
+    "collection": "继续等待赎车/收车",
+    "litigation": "常规诉讼",
+    "retail_auction": "立即上架竞拍",
+    "special_procedure": "实现担保物权特别程序",
+    "restructure": "分期重组/和解",
+}
 
 
 def _clamp(value: float, min_value: float, max_value: float) -> float:
@@ -36,6 +62,33 @@ def _json_loads(value: Optional[str]) -> dict:
 
 def _json_dumps(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _normalize_strategy_path(value: Optional[str]) -> str:
+    normalized = (value or "").strip().lower()
+    return STRATEGY_PATH_ALIASES.get(normalized, normalized or "unknown")
+
+
+def _strategy_name(value: str) -> str:
+    return STRATEGY_NAMES.get(value, value)
+
+
+def _success_score(status: str) -> float:
+    if status == "success":
+        return 1.0
+    if status == "partial":
+        return 0.5
+    return 0.0
+
+
+def _strategy_adjustments_from_payload(payload: dict) -> list[StrategyAdjustmentSuggestion]:
+    suggestions: list[StrategyAdjustmentSuggestion] = []
+    for item in payload.get("strategies", []):
+        try:
+            suggestions.append(StrategyAdjustmentSuggestion(**item))
+        except (TypeError, ValueError):
+            continue
+    return suggestions
 
 
 def serialize_disposal_outcome(row: DisposalOutcome) -> DisposalOutcomeOut:
@@ -62,6 +115,7 @@ def serialize_disposal_outcome(row: DisposalOutcome) -> DisposalOutcomeOut:
 
 
 def serialize_learning_run(row: ModelLearningRun) -> ModelLearningRunOut:
+    payload = _json_loads(row.region_adjustments_json)
     return ModelLearningRunOut(
         id=row.id,
         tenant_id=row.tenant_id,
@@ -74,8 +128,9 @@ def serialize_learning_run(row: ModelLearningRun) -> ModelLearningRunOut:
         suggested_success_adjustment=row.suggested_success_adjustment,
         region_adjustments=[
             RegionAdjustmentSuggestion(**item)
-            for item in _json_loads(row.region_adjustments_json).get("regions", [])
+            for item in payload.get("regions", [])
         ],
+        strategy_adjustments=_strategy_adjustments_from_payload(payload),
         applied=row.applied,
         success_adjustment_applied=row.success_adjustment_applied,
         created_at=row.created_at.isoformat() if row.created_at else "",
@@ -148,6 +203,36 @@ def _compute_region_adjustments(outcomes: list[DisposalOutcome]) -> list[RegionA
     return sorted(suggestions, key=lambda item: item.sample_count, reverse=True)
 
 
+def _compute_strategy_adjustments(outcomes: list[DisposalOutcome]) -> list[StrategyAdjustmentSuggestion]:
+    grouped: dict[str, list[DisposalOutcome]] = defaultdict(list)
+    for row in outcomes:
+        grouped[_normalize_strategy_path(row.strategy_path)].append(row)
+
+    suggestions: list[StrategyAdjustmentSuggestion] = []
+    for strategy_path, rows in grouped.items():
+        if not rows:
+            continue
+        actual_success_rate = sum(_success_score(row.outcome_status) for row in rows) / len(rows)
+        avg_predicted_success = sum(row.predicted_success_probability for row in rows) / len(rows)
+        suggested_adjustment = _clamp(
+            actual_success_rate - avg_predicted_success,
+            -0.15,
+            0.15,
+        )
+        suggestions.append(
+            StrategyAdjustmentSuggestion(
+                strategy_path=strategy_path,
+                strategy_name=_strategy_name(strategy_path),
+                sample_count=len(rows),
+                actual_success_rate=round(actual_success_rate, 4),
+                avg_predicted_success_probability=round(avg_predicted_success, 4),
+                suggested_success_adjustment=round(suggested_adjustment, 4),
+            )
+        )
+
+    return sorted(suggestions, key=lambda item: item.sample_count, reverse=True)
+
+
 def compute_feedback_summary(
     session: Session,
     *,
@@ -161,6 +246,11 @@ def compute_feedback_summary(
         _clamp(active_success_run.suggested_success_adjustment, -0.15, 0.15)
         if active_success_run is not None
         else 0.0
+    )
+    active_strategy_adjustments = (
+        _strategy_adjustments_from_payload(_json_loads(active_success_run.region_adjustments_json))
+        if active_success_run is not None
+        else []
     )
     outcomes = model_feedback_repo.list_all_outcomes_for_learning(
         session,
@@ -178,6 +268,8 @@ def compute_feedback_summary(
             active_success_adjustment=active_success_adjustment,
             active_success_adjustment_run_id=active_success_run.id if active_success_run else None,
             region_adjustments=[],
+            strategy_adjustments=[],
+            active_strategy_adjustments=active_strategy_adjustments,
         )
 
     predicted_recovery = sum(row.predicted_recovery_amount for row in outcomes)
@@ -200,6 +292,8 @@ def compute_feedback_summary(
         active_success_adjustment=round(active_success_adjustment, 4),
         active_success_adjustment_run_id=active_success_run.id if active_success_run else None,
         region_adjustments=_compute_region_adjustments(outcomes),
+        strategy_adjustments=_compute_strategy_adjustments(outcomes),
+        active_strategy_adjustments=active_strategy_adjustments,
     )
 
 
@@ -278,7 +372,10 @@ def run_learning_cycle(
         avg_predicted_success_probability=summary.avg_predicted_success_probability,
         suggested_success_adjustment=summary.suggested_success_adjustment,
         region_adjustments_json=_json_dumps(
-            {"regions": [item.model_dump() for item in summary.region_adjustments]}
+            {
+                "regions": [item.model_dump() for item in summary.region_adjustments],
+                "strategies": [item.model_dump() for item in summary.strategy_adjustments],
+            }
         ),
         applied=apply_region_adjustments or apply_success_adjustment,
         success_adjustment_applied=apply_success_adjustment,
@@ -289,14 +386,25 @@ def get_applied_success_adjustment(
     session: Optional[Session],
     *,
     tenant_id: Optional[int],
+    strategy_path: Optional[str] = None,
 ) -> float:
     if session is None or tenant_id is None:
         return 0.0
-    return _clamp(
-        model_feedback_repo.get_latest_applied_success_adjustment(
-            session,
-            tenant_id=tenant_id,
-        ),
-        -0.15,
-        0.15,
+    run = model_feedback_repo.get_latest_applied_success_adjustment_run(
+        session,
+        tenant_id=tenant_id,
     )
+    if run is None:
+        return 0.0
+
+    if strategy_path:
+        payload = _json_loads(run.region_adjustments_json)
+        strategies = _strategy_adjustments_from_payload(payload)
+        if strategies:
+            normalized_path = _normalize_strategy_path(strategy_path)
+            for item in strategies:
+                if _normalize_strategy_path(item.strategy_path) == normalized_path:
+                    return _clamp(item.suggested_success_adjustment, -0.15, 0.15)
+            return 0.0
+
+    return _clamp(run.suggested_success_adjustment, -0.15, 0.15)
