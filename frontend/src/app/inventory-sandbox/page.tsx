@@ -8,6 +8,11 @@ function fmt(n: number) {
   return n.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 
+function signedPct(n: number) {
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${(n * 100).toFixed(1)}pct`;
+}
+
 interface FormState {
   car_description: string;
   entry_date: string;
@@ -374,6 +379,8 @@ export default function InventorySandboxPage() {
               best={result.best_path === "A"}
               unavailable={result.path_a.available === false}
               unavailableReason={result.path_a.unavailable_reason || ""}
+              learningAdjustment={result.path_a.learning_success_adjustment}
+              learningAdjustmentApplied={result.path_a.learning_adjustment_applied}
             >
               <table className="w-full text-sm">
                 <thead>
@@ -402,7 +409,12 @@ export default function InventorySandboxPage() {
             </PathCard>
 
             {/* B: 常规诉讼 */}
-            <PathCard title="路径B：常规诉讼" best={result.best_path === "B"}>
+            <PathCard
+              title="路径B：常规诉讼"
+              best={result.best_path === "B"}
+              learningAdjustment={result.path_b.learning_success_adjustment}
+              learningAdjustmentApplied={result.path_b.learning_adjustment_applied}
+            >
               <div className="text-xs text-gray-500 mb-2 space-y-0.5">
                 <div>诉讼费: ¥{fmt(result.path_b.legal_cost.court_fee)} | 执行费: ¥{fmt(result.path_b.legal_cost.execution_fee)}</div>
                 <div>保全费: ¥{fmt(result.path_b.legal_cost.preservation_fee)} | 律师费: ¥{fmt(result.path_b.legal_cost.lawyer_fee_fixed)}</div>
@@ -439,6 +451,8 @@ export default function InventorySandboxPage() {
               best={result.best_path === "C"}
               unavailable={result.path_c.available === false}
               unavailableReason={result.path_c.unavailable_reason || ""}
+              learningAdjustment={result.path_c.learning_success_adjustment}
+              learningAdjustmentApplied={result.path_c.learning_adjustment_applied}
             >
               <div className="space-y-2 text-sm">
                 <Row label="预计成交天数" value={`${result.path_c.expected_sale_days}天`} />
@@ -464,6 +478,8 @@ export default function InventorySandboxPage() {
               best={result.best_path === "D"}
               unavailable={result.path_d.available === false}
               unavailableReason={result.path_d.unavailable_reason || ""}
+              learningAdjustment={result.path_d.learning_success_adjustment}
+              learningAdjustmentApplied={result.path_d.learning_adjustment_applied}
             >
               <div className="text-xs text-gray-500 mb-2 space-y-0.5">
                 <div>申请费: ¥{fmt(result.path_d.legal_cost.court_fee)} | 执行费: ¥{fmt(result.path_d.legal_cost.execution_fee)}</div>
@@ -488,7 +504,12 @@ export default function InventorySandboxPage() {
             </PathCard>
 
             {/* E: 分期重组 */}
-            <PathCard title="路径E：分期重组/和解" best={result.best_path === "E"}>
+            <PathCard
+              title="路径E：分期重组/和解"
+              best={result.best_path === "E"}
+              learningAdjustment={result.path_e.learning_success_adjustment}
+              learningAdjustmentApplied={result.path_e.learning_adjustment_applied}
+            >
               <div className="space-y-2 text-sm">
                 <Row label="月还款额" value={`¥${fmt(result.path_e.monthly_payment)}`} />
                 <Row label="还款期数" value={`${result.path_e.total_months}个月`} />
@@ -542,12 +563,16 @@ function PathCard({
   best,
   unavailable,
   unavailableReason,
+  learningAdjustment,
+  learningAdjustmentApplied,
   children,
 }: {
   title: string;
   best: boolean;
   unavailable?: boolean;
   unavailableReason?: string;
+  learningAdjustment?: number;
+  learningAdjustmentApplied?: boolean;
   children: React.ReactNode;
 }) {
   const base = "bg-white border rounded-xl p-4 relative";
@@ -571,6 +596,11 @@ function PathCard({
       {unavailable && unavailableReason && (
         <div className="mb-3 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
           {unavailableReason}
+        </div>
+      )}
+      {learningAdjustmentApplied && typeof learningAdjustment === "number" && (
+        <div className="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-2 text-xs text-blue-700">
+          已计入复盘学习校准：成功率 {signedPct(learningAdjustment)}
         </div>
       )}
       {children}

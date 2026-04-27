@@ -329,6 +329,8 @@ def simulate_path_a(
     result = PathAResult(
         timepoints=timepoints,
         success_probability=best.success_probability,
+        learning_success_adjustment=round(learning_adjustment, 4),
+        learning_adjustment_applied=not collection_block_reasons and abs(learning_adjustment) > 0,
         future_marginal_net_benefit=best.future_marginal_net_benefit,
         sunk_cost_excluded=round(sunk, 2),
     )
@@ -472,6 +474,8 @@ def simulate_path_b(
         legal_cost=base_legal,
         scenarios=scenarios,
         success_probability=expected.success_probability,
+        learning_success_adjustment=round(learning_adjustment, 4),
+        learning_adjustment_applied=abs(learning_adjustment) > 0,
         future_marginal_net_benefit=expected.future_marginal_net_benefit,
         sunk_cost_excluded=round(sunk, 2),
     )
@@ -534,6 +538,8 @@ def simulate_path_c(
         recovery_cost=round(recovery_cost, 2),
         net_recovery=round(net, 2),
         success_probability=success_probability,
+        learning_success_adjustment=round(learning_adjustment, 4),
+        learning_adjustment_applied=inp.vehicle_recovered and abs(learning_adjustment) > 0,
         future_marginal_net_benefit=round(net, 2),
         sunk_cost_excluded=round(sunk, 2),
     )
@@ -657,6 +663,8 @@ def simulate_path_d(
         total_cost=round(total_cost, 2),
         net_recovery=round(net, 2),
         success_probability=combined_success,
+        learning_success_adjustment=round(learning_adjustment, 4),
+        learning_adjustment_applied=not d_block_reasons and abs(learning_adjustment) > 0,
         future_marginal_net_benefit=round(net, 2),
         sunk_cost_excluded=round(sunk, 2),
     )
@@ -726,6 +734,8 @@ def simulate_path_e(
         holding_cost=round(holding_cost, 2),
         net_recovery=round(net, 2),
         success_probability=success_probability,
+        learning_success_adjustment=round(learning_adjustment, 4),
+        learning_adjustment_applied=abs(learning_adjustment) > 0,
         future_marginal_net_benefit=round(net, 2),
         sunk_cost_excluded=round(sunk, 2),
     )

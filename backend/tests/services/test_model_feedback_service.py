@@ -193,6 +193,12 @@ def test_applied_success_adjustment_calibrates_sandbox_probability():
         assert adjusted.path_c.success_probability > baseline.path_c.success_probability
         assert adjusted.path_b.success_probability == baseline.path_b.success_probability
         assert adjusted.path_e.success_probability == baseline.path_e.success_probability
+        assert adjusted.path_c.learning_success_adjustment == 0.15
+        assert adjusted.path_c.learning_adjustment_applied is True
+        assert adjusted.path_b.learning_success_adjustment == 0.0
+        assert adjusted.path_b.learning_adjustment_applied is False
+        assert adjusted.path_e.learning_success_adjustment == 0.0
+        assert adjusted.path_e.learning_adjustment_applied is False
 
         summary = compute_feedback_summary(session, tenant_id=tenant_id)
         assert summary.active_success_adjustment == 0.15

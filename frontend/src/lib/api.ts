@@ -588,10 +588,15 @@ export interface LitigationScenario {
   sunk_cost_excluded: number;
 }
 
+export interface PathLearningCalibration {
+  learning_success_adjustment?: number;
+  learning_adjustment_applied?: boolean;
+}
+
 export interface SandboxResult {
   id: number;
   input: SandboxInput;
-  path_a: {
+  path_a: PathLearningCalibration & {
     name: string;
     timepoints: TimePoint[];
     summary: string;
@@ -601,7 +606,7 @@ export interface SandboxResult {
     available?: boolean;
     unavailable_reason?: string;
   };
-  path_b: {
+  path_b: PathLearningCalibration & {
     name: string;
     legal_cost: LegalCostDetail;
     scenarios: LitigationScenario[];
@@ -610,7 +615,7 @@ export interface SandboxResult {
     future_marginal_net_benefit: number;
     sunk_cost_excluded: number;
   };
-  path_c: {
+  path_c: PathLearningCalibration & {
     name: string;
     expected_sale_days: number;
     sale_price: number;
@@ -625,7 +630,7 @@ export interface SandboxResult {
     available?: boolean;
     unavailable_reason?: string;
   };
-  path_d: {
+  path_d: PathLearningCalibration & {
     name: string;
     duration_months: number;
     duration_days: number;
@@ -644,7 +649,7 @@ export interface SandboxResult {
     available?: boolean;
     unavailable_reason?: string;
   };
-  path_e: {
+  path_e: PathLearningCalibration & {
     name: string;
     monthly_payment: number;
     total_months: number;

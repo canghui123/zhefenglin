@@ -89,6 +89,8 @@ class PathAResult(BaseModel):
     timepoints: list[TimePoint]
     summary: str = ""
     success_probability: float = 0
+    learning_success_adjustment: float = 0
+    learning_adjustment_applied: bool = False
     future_marginal_net_benefit: float = 0
     sunk_cost_excluded: float = 0
     available: bool = True
@@ -138,6 +140,8 @@ class PathBResult(BaseModel):
     scenarios: list[LitigationScenario]
     summary: str = ""
     success_probability: float = 0
+    learning_success_adjustment: float = 0
+    learning_adjustment_applied: bool = False
     future_marginal_net_benefit: float = 0
     sunk_cost_excluded: float = 0
 
@@ -154,6 +158,8 @@ class PathCResult(BaseModel):
     net_recovery: float
     summary: str = ""
     success_probability: float = 0
+    learning_success_adjustment: float = 0
+    learning_adjustment_applied: bool = False
     future_marginal_net_benefit: float = 0
     sunk_cost_excluded: float = 0
     # 路径可用性 — 车辆未回收时为 False
@@ -177,6 +183,8 @@ class PathDResult(BaseModel):
     net_recovery: float = 0
     summary: str = ""
     success_probability: float = 0
+    learning_success_adjustment: float = 0
+    learning_adjustment_applied: bool = False
     future_marginal_net_benefit: float = 0
     sunk_cost_excluded: float = 0
     # 路径可用性 — 需债权人已占有担保物、车辆已入库，且至少 M3 以上
@@ -197,6 +205,8 @@ class PathEResult(BaseModel):
     net_recovery: float = 0
     summary: str = ""
     success_probability: float = 0
+    learning_success_adjustment: float = 0
+    learning_adjustment_applied: bool = False
     future_marginal_net_benefit: float = 0
     sunk_cost_excluded: float = 0
 
