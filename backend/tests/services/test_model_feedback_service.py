@@ -82,6 +82,8 @@ def test_feedback_summary_computes_bias_and_success_gap():
         assert summary.cycle_bias_ratio == 0.25
         assert summary.actual_success_rate == 0.5
         assert summary.suggested_success_adjustment == -0.15
+        assert summary.active_success_adjustment == 0.0
+        assert summary.active_success_adjustment_run_id is None
         assert summary.region_adjustments[0].province == "江苏省"
     finally:
         try:
@@ -173,6 +175,10 @@ def test_applied_success_adjustment_calibrates_sandbox_probability():
         assert run.success_adjustment_applied is True
         assert get_applied_success_adjustment(session, tenant_id=tenant_id) == 0.15
         assert adjusted > baseline
+
+        summary = compute_feedback_summary(session, tenant_id=tenant_id)
+        assert summary.active_success_adjustment == 0.15
+        assert summary.active_success_adjustment_run_id == run.id
     finally:
         try:
             next(gen)

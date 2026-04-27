@@ -70,6 +70,8 @@ class ModelFeedbackSummary(BaseModel):
     actual_success_rate: float
     avg_predicted_success_probability: float
     suggested_success_adjustment: float
+    active_success_adjustment: float = 0.0
+    active_success_adjustment_run_id: Optional[int] = None
     region_adjustments: list[RegionAdjustmentSuggestion]
 
 

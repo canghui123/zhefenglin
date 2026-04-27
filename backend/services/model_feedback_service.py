@@ -153,6 +153,15 @@ def compute_feedback_summary(
     *,
     tenant_id: int,
 ) -> ModelFeedbackSummary:
+    active_success_run = model_feedback_repo.get_latest_applied_success_adjustment_run(
+        session,
+        tenant_id=tenant_id,
+    )
+    active_success_adjustment = (
+        _clamp(active_success_run.suggested_success_adjustment, -0.15, 0.15)
+        if active_success_run is not None
+        else 0.0
+    )
     outcomes = model_feedback_repo.list_all_outcomes_for_learning(
         session,
         tenant_id=tenant_id,
@@ -166,6 +175,8 @@ def compute_feedback_summary(
             actual_success_rate=0.0,
             avg_predicted_success_probability=0.0,
             suggested_success_adjustment=0.0,
+            active_success_adjustment=active_success_adjustment,
+            active_success_adjustment_run_id=active_success_run.id if active_success_run else None,
             region_adjustments=[],
         )
 
@@ -186,6 +197,8 @@ def compute_feedback_summary(
         actual_success_rate=round(actual_success_rate, 4),
         avg_predicted_success_probability=round(avg_predicted_success, 4),
         suggested_success_adjustment=round(suggested_success_adjustment, 4),
+        active_success_adjustment=round(active_success_adjustment, 4),
+        active_success_adjustment_run_id=active_success_run.id if active_success_run else None,
         region_adjustments=_compute_region_adjustments(outcomes),
     )
 

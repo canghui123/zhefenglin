@@ -312,6 +312,8 @@ export interface ModelFeedbackSummary {
   actual_success_rate: number;
   avg_predicted_success_probability: number;
   suggested_success_adjustment: number;
+  active_success_adjustment?: number;
+  active_success_adjustment_run_id?: number | null;
   region_adjustments: RegionAdjustmentSuggestion[];
 }
 

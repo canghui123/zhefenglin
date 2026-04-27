@@ -132,6 +132,18 @@ def get_latest_applied_success_adjustment(
     *,
     tenant_id: int,
 ) -> float:
+    row = get_latest_applied_success_adjustment_run(
+        session,
+        tenant_id=tenant_id,
+    )
+    return row.suggested_success_adjustment if row is not None else 0.0
+
+
+def get_latest_applied_success_adjustment_run(
+    session: Session,
+    *,
+    tenant_id: int,
+) -> Optional[ModelLearningRun]:
     row = session.scalars(
         select(ModelLearningRun)
         .where(ModelLearningRun.tenant_id == tenant_id)
@@ -139,4 +151,4 @@ def get_latest_applied_success_adjustment(
         .order_by(ModelLearningRun.created_at.desc(), ModelLearningRun.id.desc())
         .limit(1)
     ).first()
-    return row.suggested_success_adjustment if row is not None else 0.0
+    return row

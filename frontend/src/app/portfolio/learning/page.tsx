@@ -138,6 +138,27 @@ export default function PortfolioLearningPage() {
         <MetricCard title="成功率建议修正" value={pct(summary?.suggested_success_adjustment || 0)} />
       </div>
 
+      <div className="rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-emerald-50 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium text-blue-700">当前生效模型校准</div>
+            <div className="mt-1 text-sm text-gray-600">
+              后续库存沙盘会按这里的成功率修正值校准动态概率，硬性不可用路径仍保持 0%。
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-2xl font-bold text-blue-700">
+              {pct(summary?.active_success_adjustment || 0)}
+            </div>
+            <div className="text-xs text-gray-500">
+              {summary?.active_success_adjustment_run_id
+                ? `来源学习运行 #${summary.active_success_adjustment_run_id}`
+                : "暂无已应用成功率修正"}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
         <div className="rounded-xl border bg-white p-5">
           <h3 className="mb-4 text-sm font-semibold text-gray-700">录入真实处置结果</h3>
