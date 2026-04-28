@@ -40,6 +40,11 @@ class SandboxResultNotFound(BusinessError):
         super().__init__("SANDBOX_RESULT_NOT_FOUND", "模拟结果不存在", 404)
 
 
+class SandboxInputIncomplete(BusinessError):
+    def __init__(self, detail: str = "库存沙盘输入不完整"):
+        super().__init__("SANDBOX_INPUT_INCOMPLETE", detail, 400)
+
+
 class JobNotFound(BusinessError):
     def __init__(self):
         super().__init__("JOB_NOT_FOUND", "任务不存在", 404)

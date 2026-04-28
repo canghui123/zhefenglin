@@ -17,7 +17,7 @@
 
 ## 决策联动
 
-- 库存沙盘新增 `debtor_dishonest_enforced` 与 `external_find_car_score` 输入。
+- 库存沙盘保留 `debtor_dishonest_enforced` 强阻断输入；寻车线索评分不再作为沙盘表单选项，后续只在外部数据网关和派单优先级中使用。
 - 当 `debtor_dishonest_enforced=true` 时，路径 A“继续等待赎车”成功率强制为 `0`，并从推荐候选中排除。
 - 组合策略对比也支持 `debtor_dishonest_enforced` 信号，命中时 `collection` 路径成功率为 `0` 并显示约束原因。
 

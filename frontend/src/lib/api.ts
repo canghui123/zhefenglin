@@ -110,6 +110,31 @@ export async function simulateSandbox(input: SandboxInput) {
   });
 }
 
+export async function getSandboxSuggestions(input: SandboxSuggestionRequest) {
+  return request<SandboxSuggestionResult>("/api/sandbox/suggestions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function previewSandboxBatchImport(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return request<SandboxBatchImportPreview>("/api/sandbox/import-preview", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export async function batchSimulateSandbox(rows: SandboxBatchImportRow[]) {
+  return request<SandboxBatchSimulationResult>("/api/sandbox/batch-simulate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rows }),
+  });
+}
+
 // 生成报告 (returns 202 with job reference)
 export async function generateReport(
   resultId: number
@@ -640,10 +665,14 @@ export interface PackageCalculationResult {
 
 export interface SandboxInput {
   car_description: string;
+  vin?: string | null;
+  license_plate?: string | null;
+  first_registration?: string | null;
+  mileage_km?: number | null;
   entry_date: string;
   overdue_bucket?: string;
   overdue_amount: number;
-  che300_value: number;
+  che300_value?: number | null;
   province?: string | null;
   city?: string | null;
   vehicle_type?: string;
@@ -656,9 +685,9 @@ export interface SandboxInput {
   vehicle_recovered?: boolean;
   vehicle_in_inventory?: boolean;
   debtor_dishonest_enforced?: boolean;
-  external_find_car_score?: number | null;
   expected_sale_days?: number;
-  commission_rate?: number;
+  auction_discount_rate?: number | null;
+  auction_discount_auto?: boolean;
   litigation_lawyer_fee?: number;
   litigation_has_recovery_fee?: boolean;
   litigation_recovery_fee_rate?: number;
@@ -667,7 +696,64 @@ export interface SandboxInput {
   special_recovery_fee_rate?: number;
   restructure_monthly_payment?: number;
   restructure_months?: number;
-  restructure_redefault_rate?: number;
+  restructure_redefault_rate?: number | null;
+  collection_history_text?: string | null;
+  redefault_rate_auto?: boolean;
+}
+
+export interface SandboxSuggestionRequest {
+  car_description?: string;
+  vehicle_type?: string;
+  vehicle_age_years?: number;
+  overdue_bucket?: string;
+  overdue_amount?: number;
+  che300_value?: number | null;
+  vehicle_recovered?: boolean;
+  vehicle_in_inventory?: boolean;
+  collection_history_text?: string | null;
+}
+
+export interface SandboxSuggestionResult {
+  auction_discount_rate: number;
+  auction_discount_note: string;
+  redefault_rate: number | null;
+  redefault_rate_note: string | null;
+}
+
+export interface SandboxBatchImportRow {
+  row_id: string;
+  row_number: number;
+  selected: boolean;
+  input: SandboxInput;
+  missing_fields: string[];
+  errors: string[];
+  raw: Record<string, unknown>;
+  che300_auto_filled: boolean;
+  che300_source: string;
+  suggested_auction_discount_rate: number | null;
+  suggested_redefault_rate: number | null;
+}
+
+export interface SandboxBatchImportPreview {
+  total_rows: number;
+  rows: SandboxBatchImportRow[];
+  detected_columns: Record<string, string>;
+  unmapped_columns: string[];
+}
+
+export interface SandboxBatchSimulationItem {
+  row_id: string;
+  row_number: number;
+  status: string;
+  result: SandboxResult | null;
+  error: string | null;
+}
+
+export interface SandboxBatchSimulationResult {
+  total_rows: number;
+  success_rows: number;
+  error_rows: number;
+  results: SandboxBatchSimulationItem[];
 }
 
 export interface LegalCostDetail {
@@ -742,6 +828,9 @@ export interface SandboxResult {
   path_c: {
     name: string;
     expected_sale_days: number;
+    auction_discount_rate: number;
+    auction_discount_suggested: boolean;
+    auction_discount_note: string;
     sale_price: number;
     commission: number;
     parking_during_sale: number;
@@ -779,6 +868,8 @@ export interface SandboxResult {
     total_months: number;
     total_expected_recovery: number;
     redefault_rate: number;
+    redefault_rate_suggested: boolean;
+    redefault_rate_note: string;
     risk_adjusted_recovery: number;
     holding_cost: number;
     net_recovery: number;

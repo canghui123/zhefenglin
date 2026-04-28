@@ -100,6 +100,72 @@ def _detect_vehicle_type(description: str) -> str:
     return "domestic"
 
 
+def suggest_auction_discount_rate(inp: SandboxInput) -> tuple[float, str]:
+    """Suggest a retail-auction discount when the user leaves it blank."""
+    vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    stage = _overdue_stage_rank(inp.overdue_bucket)
+    age = max(inp.vehicle_age_years, 0)
+    value = max(inp.che300_value or 0, 1)
+    exposure_ratio = max(inp.overdue_amount, 0) / value
+
+    discount = 0.92
+    reasons = ["默认按车况可快速成交的九二折起算"]
+    if stage >= 4:
+        discount -= 0.03
+        reasons.append("逾期已达M4以上，下调3个百分点换取成交速度")
+    if age >= 6:
+        discount -= 0.03
+        reasons.append("车龄较高，下调3个百分点覆盖流拍风险")
+    if exposure_ratio >= 1:
+        discount -= 0.02
+        reasons.append("债权敞口高于车辆估值，下调2个百分点提升成交概率")
+    if vtype == "new_energy":
+        discount -= 0.04
+        reasons.append("新能源车型技术迭代和电池风险较高，下调4个百分点")
+    elif vtype in {"japanese", "luxury"} and age < 5:
+        discount += 0.02
+        reasons.append("品牌保值率较好且车龄不高，上调2个百分点")
+    if not inp.vehicle_recovered:
+        discount -= 0.05
+        reasons.append("车辆尚未收回，需预留处置不确定性")
+
+    discount = min(0.95, max(0.65, round(discount, 2)))
+    return discount, "；".join(reasons)
+
+
+def suggest_redefault_rate_from_history(history_text: Optional[str]) -> tuple[float, str]:
+    """Rule-based AI-style estimate for restructure re-default risk."""
+    text = (history_text or "").strip()
+    if not text:
+        return 0.30, "未提供历史记录，沿用平台默认再违约率30%"
+
+    score = 0.28
+    reasons = ["基于客户过往催收/逾期记录进行规则分析"]
+    high_risk_keywords = ["失联", "拒接", "跳票", "承诺未履行", "多次逾期", "恶意", "拖欠", "失信"]
+    medium_risk_keywords = ["展期", "延期", "部分还款", "还款不稳定", "偶发逾期"]
+    low_risk_keywords = ["主动联系", "稳定收入", "已补缴", "按承诺", "配合", "有还款意愿"]
+
+    high_hits = sum(1 for keyword in high_risk_keywords if keyword in text)
+    medium_hits = sum(1 for keyword in medium_risk_keywords if keyword in text)
+    low_hits = sum(1 for keyword in low_risk_keywords if keyword in text)
+
+    if high_hits:
+        score += min(0.30, high_hits * 0.08)
+        reasons.append(f"命中{high_hits}个高风险催收信号")
+    if medium_hits:
+        score += min(0.15, medium_hits * 0.04)
+        reasons.append(f"命中{medium_hits}个中风险履约信号")
+    if low_hits:
+        score -= min(0.18, low_hits * 0.06)
+        reasons.append(f"命中{low_hits}个正向还款意愿信号")
+    if len(text) < 20:
+        score += 0.05
+        reasons.append("历史记录较短，保守上调5个百分点")
+
+    score = min(0.85, max(0.08, round(score, 2)))
+    return score, "；".join(reasons)
+
+
 def _sunk_cost_excluded(inp: SandboxInput) -> float:
     return max(inp.sunk_collection_cost, 0) + max(inp.sunk_legal_cost, 0)
 
@@ -507,7 +573,18 @@ def simulate_path_c(
         vehicle_age_years=inp.vehicle_age_years,
         profile=profile,
     )
-    sale_price = inp.che300_value * (1 - dep_rate) * 0.90  # 竞拍成交约市价90%
+    discount_rate = inp.auction_discount_rate
+    discount_note = ""
+    if discount_rate is None or discount_rate <= 0:
+        discount_rate, discount_note = suggest_auction_discount_rate(inp)
+        inp.auction_discount_rate = discount_rate
+        inp.auction_discount_auto = True
+    else:
+        discount_rate = min(1.0, max(0.1, discount_rate))
+        inp.auction_discount_rate = discount_rate
+        inp.auction_discount_auto = False
+
+    sale_price = inp.che300_value * (1 - dep_rate) * discount_rate
     success_probability = dynamic_success_probability(
         base_probability=0.80,
         vehicle_age_years=inp.vehicle_age_years,
@@ -521,13 +598,16 @@ def simulate_path_c(
         learning_adjustment=learning_adjustment,
     )
     expected_sale_recovery = sale_price * success_probability
-    commission = expected_sale_recovery * inp.commission_rate
+    commission = 0
     parking = inp.daily_parking * sale_days
     recovery_cost = adjusted_towing_cost(inp.recovery_cost, region)
     net = expected_sale_recovery - commission - parking - recovery_cost
 
     result = PathCResult(
         expected_sale_days=sale_days,
+        auction_discount_rate=round(discount_rate, 4),
+        auction_discount_suggested=inp.auction_discount_auto,
+        auction_discount_note=discount_note or "使用客户填写的竞拍折扣比例",
         sale_price=round(sale_price, 2),
         commission=round(commission, 2),
         parking_during_sale=round(parking, 2),
@@ -681,6 +761,14 @@ def simulate_path_e(
     monthly = inp.restructure_monthly_payment
     months = inp.restructure_months
     redefault = inp.restructure_redefault_rate
+    redefault_note = ""
+    if redefault is None:
+        redefault, redefault_note = suggest_redefault_rate_from_history(inp.collection_history_text)
+        inp.restructure_redefault_rate = redefault
+        inp.redefault_rate_auto = True
+    else:
+        redefault = min(0.95, max(0, redefault))
+        inp.restructure_redefault_rate = redefault
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
     profile = resolve_brand_profile(
         session=session,
@@ -722,6 +810,8 @@ def simulate_path_e(
         total_months=months,
         total_expected_recovery=round(total_recovery, 2),
         redefault_rate=redefault,
+        redefault_rate_suggested=inp.redefault_rate_auto,
+        redefault_rate_note=redefault_note or "使用客户填写的再违约率",
         risk_adjusted_recovery=round(risk_adjusted, 2),
         holding_cost=round(holding_cost, 2),
         net_recovery=round(net, 2),
@@ -741,6 +831,16 @@ def run_simulation(
     tenant_id: Optional[int] = None,
 ) -> SandboxResult:
     """运行完整五路径模拟"""
+    if inp.che300_value is None:
+        inp.che300_value = 0
+    if inp.auction_discount_rate is None:
+        inp.auction_discount_rate, _ = suggest_auction_discount_rate(inp)
+        inp.auction_discount_auto = True
+    if inp.restructure_redefault_rate is None:
+        inp.restructure_redefault_rate, _ = suggest_redefault_rate_from_history(
+            inp.collection_history_text
+        )
+        inp.redefault_rate_auto = True
     # 自动检测车辆类型
     if inp.vehicle_type == "auto":
         inp.vehicle_type = _detect_vehicle_type(inp.car_description)

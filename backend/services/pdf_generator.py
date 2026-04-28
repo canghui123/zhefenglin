@@ -56,7 +56,7 @@ async def generate_report_html(result: SandboxResult) -> str:
         vehicle_recovered_status="已收回" if result.input.vehicle_recovered else "未收回",
         vehicle_inventory_status="已入库" if result.input.vehicle_in_inventory else "未入库",
         recovery_cost=f"{result.input.recovery_cost:,.0f}",
-        commission_rate=result.input.commission_rate,
+        auction_discount_rate=result.path_c.auction_discount_rate,
         path_a=result.path_a,
         path_a_best_value=path_a_best_value,
         path_b=result.path_b,

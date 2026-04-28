@@ -1,13 +1,17 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional
+from typing import Any, Optional
 
 
 class SandboxInput(BaseModel):
     car_description: str = Field(..., description="车辆描述")
+    vin: Optional[str] = Field(default=None, description="VIN/车架号，用于车300自动估值")
+    license_plate: Optional[str] = Field(default=None, description="车牌号")
+    first_registration: Optional[str] = Field(default=None, description="首次上牌日期 YYYY-MM-DD")
+    mileage_km: Optional[float] = Field(default=None, description="表显里程(公里)")
     entry_date: str = Field(..., description="入库日期 YYYY-MM-DD")
     overdue_bucket: str = Field(default="M3(61-90天)", description="逾期阶段: M1/M2/M3/M4/M5/M6+")
     overdue_amount: float = Field(..., description="逾期金额(元)")
-    che300_value: float = Field(..., description="当前车300估值(元)")
+    che300_value: Optional[float] = Field(default=None, description="当前车300估值(元)，为空时系统自动估值")
     province: Optional[str] = Field(default=None, description="资产所在地省份")
     city: Optional[str] = Field(default=None, description="资产所在地城市")
 
@@ -37,14 +41,10 @@ class SandboxInput(BaseModel):
         default=False,
         description="外部司法数据是否提示债务人为失信被执行人",
     )
-    external_find_car_score: Optional[float] = Field(
-        default=None,
-        description="外部寻车线索评分，0-100；用于后续派单优先级",
-    )
-
     # 竞拍参数
     expected_sale_days: int = Field(default=7, description="预计成交天数")
-    commission_rate: float = Field(default=0.02, description="竞拍佣金比例")
+    auction_discount_rate: Optional[float] = Field(default=None, description="竞拍折扣比例，例如0.90表示按估值九折")
+    auction_discount_auto: bool = Field(default=True, description="竞拍折扣是否由系统建议")
 
     # 常规诉讼律师费
     litigation_lawyer_fee: float = Field(default=5000, description="常规诉讼律师费(固定,元)")
@@ -59,7 +59,9 @@ class SandboxInput(BaseModel):
     # 分期重组参数
     restructure_monthly_payment: float = Field(default=0, description="重组月还款额(元)")
     restructure_months: int = Field(default=12, description="重组期数(月)")
-    restructure_redefault_rate: float = Field(default=0.30, description="重组后再违约率")
+    restructure_redefault_rate: Optional[float] = Field(default=0.30, description="重组后再违约率")
+    collection_history_text: Optional[str] = Field(default=None, description="客户过往催收/逾期记录，用于AI分析再违约率")
+    redefault_rate_auto: bool = Field(default=False, description="再违约率是否由系统根据历史记录建议")
 
     @model_validator(mode="after")
     def normalize_vehicle_inventory_state(self):
@@ -147,6 +149,9 @@ class PathBResult(BaseModel):
 class PathCResult(BaseModel):
     name: str = "立即上架竞拍"
     expected_sale_days: int
+    auction_discount_rate: float = 0
+    auction_discount_suggested: bool = False
+    auction_discount_note: str = ""
     sale_price: float
     commission: float
     parking_during_sale: float
@@ -192,6 +197,8 @@ class PathEResult(BaseModel):
     total_months: int = 0
     total_expected_recovery: float = 0
     redefault_rate: float = 0
+    redefault_rate_suggested: bool = False
+    redefault_rate_note: str = ""
     risk_adjusted_recovery: float = 0
     holding_cost: float = 0
     net_recovery: float = 0
@@ -213,3 +220,62 @@ class SandboxResult(BaseModel):
     path_e: PathEResult
     recommendation: str = ""
     best_path: str = ""
+
+
+class SandboxSuggestionRequest(BaseModel):
+    car_description: str = ""
+    vehicle_type: str = "auto"
+    vehicle_age_years: float = 3
+    overdue_bucket: str = "M3(61-90天)"
+    overdue_amount: float = 0
+    che300_value: Optional[float] = None
+    vehicle_recovered: bool = True
+    vehicle_in_inventory: bool = True
+    collection_history_text: Optional[str] = None
+
+
+class SandboxSuggestionResult(BaseModel):
+    auction_discount_rate: float
+    auction_discount_note: str
+    redefault_rate: Optional[float] = None
+    redefault_rate_note: Optional[str] = None
+
+
+class SandboxBatchImportRow(BaseModel):
+    row_id: str
+    row_number: int
+    selected: bool = True
+    input: SandboxInput
+    missing_fields: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    raw: dict[str, Any] = Field(default_factory=dict)
+    che300_auto_filled: bool = False
+    che300_source: str = ""
+    suggested_auction_discount_rate: Optional[float] = None
+    suggested_redefault_rate: Optional[float] = None
+
+
+class SandboxBatchImportPreview(BaseModel):
+    total_rows: int
+    rows: list[SandboxBatchImportRow]
+    detected_columns: dict[str, str]
+    unmapped_columns: list[str]
+
+
+class SandboxBatchSimulationRequest(BaseModel):
+    rows: list[SandboxBatchImportRow]
+
+
+class SandboxBatchSimulationItem(BaseModel):
+    row_id: str
+    row_number: int
+    status: str
+    result: Optional[SandboxResult] = None
+    error: Optional[str] = None
+
+
+class SandboxBatchSimulationResult(BaseModel):
+    total_rows: int
+    success_rows: int
+    error_rows: int
+    results: list[SandboxBatchSimulationItem]

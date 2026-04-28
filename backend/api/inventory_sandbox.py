@@ -1,20 +1,43 @@
 """模块2：库存决策沙盘API"""
 
-from fastapi import APIRouter, Depends, Request
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session
 
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
-from errors import SandboxResultNotFound, ReportNotGenerated, FileNotFoundError_
+from errors import (
+    FileNotFoundError_,
+    ReportNotGenerated,
+    SandboxInputIncomplete,
+    SandboxResultNotFound,
+)
 from models.simulation import (
-    SandboxInput, SandboxResult,
+    SandboxBatchImportPreview,
+    SandboxBatchSimulationItem,
+    SandboxBatchSimulationRequest,
+    SandboxBatchSimulationResult,
+    SandboxInput,
+    SandboxResult,
+    SandboxSuggestionRequest,
+    SandboxSuggestionResult,
     PathAResult, PathBResult, PathCResult, PathDResult, PathEResult,
 )
 from repositories import sandbox_repo
 from services import audit_service  # noqa: F401
 from services.sandbox_simulator import run_simulation
+from services.sandbox_simulator import (
+    suggest_auction_discount_rate,
+    suggest_redefault_rate_from_history,
+)
+from services.sandbox_input_service import (
+    enrich_sandbox_input,
+    missing_required_fields,
+    parse_sandbox_batch_import,
+)
 from services.pdf_generator import generate_report_html
 from services.job_dispatcher import dispatch_inline_async
 from services.storage.factory import get_storage
@@ -27,19 +50,31 @@ router = APIRouter(
 )
 
 
-@router.post(
-    "/simulate",
-    response_model=SandboxResult,
-    dependencies=[Depends(require_role("operator"))],
-)
-async def simulate(
+async def _run_and_persist_simulation(
+    *,
     inp: SandboxInput,
-    request: Request,
-    session: Session = Depends(get_db_session),
-    user: User = Depends(get_current_user),
-    tenant_id: int = Depends(get_current_tenant_id),
+    request: Optional[Request],
+    session: Session,
+    user: User,
+    tenant_id: int,
 ):
-    """运行五路径模拟"""
+    if inp.restructure_redefault_rate is None and not inp.collection_history_text:
+        raise SandboxInputIncomplete(
+            "再违约率填写为“无”时，请先输入该客户过往催收记录或逾期记录，系统会据此建议再违约率。"
+        )
+
+    await enrich_sandbox_input(session, inp)
+    missing = missing_required_fields(inp)
+    if missing:
+        labels = {
+            "car_description": "车辆描述",
+            "entry_date": "入库/评估日期",
+            "overdue_amount": "逾期金额",
+            "che300_value": "车300估值",
+        }
+        readable = "、".join(labels.get(item, item) for item in missing)
+        raise SandboxInputIncomplete(f"仍缺少必要字段：{readable}，请补充后再模拟。")
+
     result = run_simulation(inp, session=session, tenant_id=tenant_id)
 
     row = sandbox_repo.create_sandbox_result(
@@ -49,7 +84,7 @@ async def simulate(
         car_description=inp.car_description,
         entry_date=inp.entry_date,
         overdue_amount=inp.overdue_amount,
-        che300_value=inp.che300_value,
+        che300_value=inp.che300_value or 0,
         daily_parking=inp.daily_parking,
         input_json=inp.model_dump_json(),
         path_a_json=result.path_a.model_dump_json(),
@@ -70,10 +105,140 @@ async def simulate(
         user_id=user.id,
         resource_type="sandbox_result",
         resource_id=row.id,
-        after={"best_path": row.best_path},
+        after={
+            "best_path": row.best_path,
+            "che300_auto_filled": inp.che300_value is not None,
+            "auction_discount_rate": inp.auction_discount_rate,
+        },
     )
 
     return result
+
+
+@router.post(
+    "/simulate",
+    response_model=SandboxResult,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def simulate(
+    inp: SandboxInput,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """运行五路径模拟"""
+    return await _run_and_persist_simulation(
+        inp=inp,
+        request=request,
+        session=session,
+        user=user,
+        tenant_id=tenant_id,
+    )
+
+
+@router.post(
+    "/suggestions",
+    response_model=SandboxSuggestionResult,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def get_sandbox_suggestions(req: SandboxSuggestionRequest):
+    """Suggest auction discount / re-default risk when the user selects “无”."""
+    inp = SandboxInput(
+        car_description=req.car_description or "待补充车辆",
+        entry_date="2026-01-01",
+        overdue_bucket=req.overdue_bucket,
+        overdue_amount=req.overdue_amount,
+        che300_value=req.che300_value or 0,
+        vehicle_type=req.vehicle_type,
+        vehicle_age_years=req.vehicle_age_years,
+        vehicle_recovered=req.vehicle_recovered,
+        vehicle_in_inventory=req.vehicle_in_inventory,
+        collection_history_text=req.collection_history_text,
+    )
+    discount, discount_note = suggest_auction_discount_rate(inp)
+    redefault = None
+    redefault_note = None
+    if req.collection_history_text:
+        redefault, redefault_note = suggest_redefault_rate_from_history(
+            req.collection_history_text
+        )
+    return SandboxSuggestionResult(
+        auction_discount_rate=discount,
+        auction_discount_note=discount_note,
+        redefault_rate=redefault,
+        redefault_rate_note=redefault_note,
+    )
+
+
+@router.post(
+    "/import-preview",
+    response_model=SandboxBatchImportPreview,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def import_preview(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_db_session),
+):
+    """Parse a customer spreadsheet into editable sandbox rows."""
+    content = await file.read()
+    return await parse_sandbox_batch_import(
+        session,
+        filename=file.filename or "sandbox-import.csv",
+        content=content,
+    )
+
+
+@router.post(
+    "/batch-simulate",
+    response_model=SandboxBatchSimulationResult,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def batch_simulate(
+    req: SandboxBatchSimulationRequest,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """Run sandbox simulation for selected imported rows."""
+    results: list[SandboxBatchSimulationItem] = []
+    for row in req.rows:
+        if not row.selected:
+            continue
+        try:
+            result = await _run_and_persist_simulation(
+                inp=SandboxInput.model_validate(row.input.model_dump()),
+                request=request,
+                session=session,
+                user=user,
+                tenant_id=tenant_id,
+            )
+            results.append(
+                SandboxBatchSimulationItem(
+                    row_id=row.row_id,
+                    row_number=row.row_number,
+                    status="success",
+                    result=result,
+                )
+            )
+        except Exception as exc:
+            results.append(
+                SandboxBatchSimulationItem(
+                    row_id=row.row_id,
+                    row_number=row.row_number,
+                    status="error",
+                    error=getattr(exc, "message", str(exc)),
+                )
+            )
+    success_rows = sum(1 for item in results if item.status == "success")
+    error_rows = len(results) - success_rows
+    return SandboxBatchSimulationResult(
+        total_rows=len(results),
+        success_rows=success_rows,
+        error_rows=error_rows,
+        results=results,
+    )
 
 
 @router.get("/{result_id}")

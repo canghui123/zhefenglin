@@ -151,12 +151,12 @@
 <h3>路径C：立即上架竞拍平台</h3>
 <table class="compare-table">
   <tr>
-    <th>预计成交天数</th><th>预计成交价</th><th>平台佣金({{ "{:.0%}".format(commission_rate) }})</th><th>停车费</th><th>收车成本</th><th>净回款</th>
+    <th>预计成交天数</th><th>竞拍折扣</th><th>预计成交价</th><th>停车费</th><th>收车成本</th><th>净回款</th>
   </tr>
   <tr class="{{ 'best' if best_path == 'C' else '' }}">
     <td>{{ path_c.expected_sale_days }}天</td>
+    <td>{{ "{:.0%}".format(auction_discount_rate) }}</td>
     <td class="amount">¥{{ "{:,.0f}".format(path_c.sale_price) }}</td>
-    <td class="amount">¥{{ "{:,.0f}".format(path_c.commission) }}</td>
     <td class="amount">¥{{ "{:,.0f}".format(path_c.parking_during_sale) }}</td>
     <td class="amount">¥{{ "{:,.0f}".format(path_c.recovery_cost) }}</td>
     <td class="amount {{ 'positive' if path_c.net_recovery >= 0 else 'negative' }}">¥{{ "{:,.0f}".format(path_c.net_recovery) }}</td>
