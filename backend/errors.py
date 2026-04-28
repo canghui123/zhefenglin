@@ -40,6 +40,11 @@ class SandboxResultNotFound(BusinessError):
         super().__init__("SANDBOX_RESULT_NOT_FOUND", "模拟结果不存在", 404)
 
 
+class SandboxBatchNotFound(BusinessError):
+    def __init__(self):
+        super().__init__("SANDBOX_BATCH_NOT_FOUND", "批量模拟批次不存在", 404)
+
+
 class SandboxInputIncomplete(BusinessError):
     def __init__(self, detail: str = "库存沙盘输入不完整"):
         super().__init__("SANDBOX_INPUT_INCOMPLETE", detail, 400)

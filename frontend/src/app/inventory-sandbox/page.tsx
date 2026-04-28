@@ -1,17 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   batchSimulateSandbox,
   downloadReport,
   generateReport,
   getSandboxSuggestions,
+  listSandboxBatches,
   previewSandboxBatchImport,
   simulateSandbox,
   type AuctionRound,
   type LitigationScenario,
   type SandboxBatchImportRow,
   type SandboxBatchSimulationResult,
+  type SandboxBatchSummary,
   type SandboxInput,
   type SandboxResult,
   type TimePoint,
@@ -73,6 +76,11 @@ function rate(n: number | null | undefined) {
   return `${(n * 100).toFixed(0)}%`;
 }
 
+function shortDate(value: string | null | undefined) {
+  if (!value) return "-";
+  return value.replace("T", " ").slice(0, 16);
+}
+
 function numberOrNull(value: NumericInput) {
   return value === "" ? null : value;
 }
@@ -131,6 +139,7 @@ export default function InventorySandboxPage() {
   const [batchRows, setBatchRows] = useState<SandboxBatchImportRow[]>([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchResult, setBatchResult] = useState<SandboxBatchSimulationResult | null>(null);
+  const [batchHistory, setBatchHistory] = useState<SandboxBatchSummary[]>([]);
 
   const [form, setForm] = useState<FormState>({
     car_description: "",
@@ -179,6 +188,14 @@ export default function InventorySandboxPage() {
     }
     setForm((prev) => ({ ...prev, [field]: value }));
   }
+
+  useEffect(() => {
+    listSandboxBatches()
+      .then(setBatchHistory)
+      .catch(() => {
+        // 历史入口只是辅助信息，加载失败不影响单台/批量模拟主流程。
+      });
+  }, []);
 
   async function ensureSuggestions(payload: SandboxInput): Promise<SandboxInput | null> {
     const needsDiscount = payload.auction_discount_rate === null || payload.auction_discount_rate === undefined;
@@ -305,6 +322,7 @@ export default function InventorySandboxPage() {
       const res = await batchSimulateSandbox(selected);
       setBatchResult(res);
       setMessage(`批量模拟完成：成功 ${res.success_rows} 台，失败 ${res.error_rows} 台。`);
+      listSandboxBatches().then(setBatchHistory).catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : "批量模拟失败");
     } finally {
@@ -499,10 +517,44 @@ export default function InventorySandboxPage() {
           </div>
         )}
 
+        {batchHistory.length > 0 && (
+          <div className="rounded-lg border bg-white p-4 text-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="font-semibold text-gray-900">最近批量模拟</div>
+              <span className="text-xs text-gray-500">保留最近 {batchHistory.length} 个批次</span>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+              {batchHistory.slice(0, 6).map((batch) => (
+                <Link
+                  key={batch.id}
+                  href={`/inventory-sandbox/batches/${batch.id}`}
+                  className="rounded-lg border border-slate-200 p-3 hover:border-blue-300 hover:bg-blue-50"
+                >
+                  <div className="font-semibold text-gray-900">批次 #{batch.id}</div>
+                  <div className="mt-1 text-xs text-gray-500">{shortDate(batch.created_at)}</div>
+                  <div className="mt-2 text-xs text-gray-600">
+                    总 {batch.total_rows} 台，成功 {batch.success_rows} 台，失败 {batch.error_rows} 台
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
         {batchResult && (
           <div className="rounded-lg border bg-slate-50 p-4 text-sm">
-            <div className="font-semibold text-gray-900">
-              批量模拟结果：成功 {batchResult.success_rows} 台，失败 {batchResult.error_rows} 台
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="font-semibold text-gray-900">
+                批量模拟结果：成功 {batchResult.success_rows} 台，失败 {batchResult.error_rows} 台
+              </div>
+              {batchResult.batch_id && (
+                <Link
+                  href={`/inventory-sandbox/batches/${batchResult.batch_id}`}
+                  className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+                >
+                  查看批量详情
+                </Link>
+              )}
             </div>
             <div className="mt-2 grid gap-2 md:grid-cols-2">
               {batchResult.results.map((item) => (

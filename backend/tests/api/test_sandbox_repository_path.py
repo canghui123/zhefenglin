@@ -86,3 +86,52 @@ def test_sandbox_batch_import_preview_marks_missing_fields_and_auto_values(authe
     assert first["missing_fields"] == []
     second = body["rows"][1]
     assert "car_description" in second["missing_fields"]
+
+
+def test_sandbox_batch_simulation_persists_batch_detail(authed_client):
+    rows = [
+        {
+            "row_id": "row-ok",
+            "row_number": 2,
+            "selected": True,
+            "input": SAMPLE_INPUT,
+            "missing_fields": [],
+            "errors": [],
+            "raw": {"车辆描述": SAMPLE_INPUT["car_description"]},
+        },
+        {
+            "row_id": "row-error",
+            "row_number": 3,
+            "selected": True,
+            "input": {**SAMPLE_INPUT, "car_description": ""},
+            "missing_fields": ["car_description"],
+            "errors": [],
+            "raw": {"车辆描述": ""},
+        },
+    ]
+
+    response = authed_client.post("/api/sandbox/batch-simulate", json={"rows": rows})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["batch_id"] > 0
+    assert body["success_rows"] == 1
+    assert body["error_rows"] == 1
+    assert body["results"][0]["result"]["id"] > 0
+
+    listed = authed_client.get("/api/sandbox/batches")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["id"] == body["batch_id"]
+
+    detail = authed_client.get(f"/api/sandbox/batches/{body['batch_id']}")
+    assert detail.status_code == 200, detail.text
+    data = detail.json()
+    assert data["batch"]["success_rows"] == 1
+    assert data["batch"]["error_rows"] == 1
+    ok_item = next(item for item in data["items"] if item["row_id"] == "row-ok")
+    assert ok_item["status"] == "success"
+    assert ok_item["sandbox_result_id"] == body["results"][0]["result"]["id"]
+    assert ok_item["result"]["best_path"]
+    error_item = next(item for item in data["items"] if item["row_id"] == "row-error")
+    assert error_item["status"] == "error"
+    assert "车辆描述" in error_item["error"]

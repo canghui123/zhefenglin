@@ -12,14 +12,18 @@ from dependencies.auth import get_current_user, require_role
 from errors import (
     FileNotFoundError_,
     ReportNotGenerated,
+    SandboxBatchNotFound,
     SandboxInputIncomplete,
     SandboxResultNotFound,
 )
 from models.simulation import (
     SandboxBatchImportPreview,
+    SandboxBatchDetail,
+    SandboxBatchDetailItem,
     SandboxBatchSimulationItem,
     SandboxBatchSimulationRequest,
     SandboxBatchSimulationResult,
+    SandboxBatchSummary,
     SandboxInput,
     SandboxResult,
     SandboxSuggestionRequest,
@@ -48,6 +52,53 @@ router = APIRouter(
     tags=["库存决策沙盘"],
     dependencies=[Depends(get_current_user)],
 )
+
+
+def _sandbox_result_from_row(row) -> SandboxResult:
+    return SandboxResult(
+        id=row.id,
+        input=SandboxInput.model_validate_json(row.input_json),
+        path_a=PathAResult.model_validate_json(row.path_a_json),
+        path_b=PathBResult.model_validate_json(row.path_b_json),
+        path_c=PathCResult.model_validate_json(row.path_c_json),
+        path_d=PathDResult.model_validate_json(row.path_d_json),
+        path_e=PathEResult.model_validate_json(row.path_e_json),
+        recommendation=row.recommendation or "",
+        best_path=row.best_path or "",
+    )
+
+
+def _serialize_batch_summary(batch) -> SandboxBatchSummary:
+    if batch.created_at is None:
+        created_at = ""
+    else:
+        created_at = batch.created_at.isoformat()
+    return SandboxBatchSummary(
+        id=batch.id,
+        status=batch.status,
+        total_rows=batch.total_rows,
+        success_rows=batch.success_rows,
+        error_rows=batch.error_rows,
+        created_at=created_at,
+    )
+
+
+def _serialize_batch_item(item) -> SandboxBatchDetailItem:
+    result = _sandbox_result_from_row(item.result) if item.result is not None else None
+    return SandboxBatchDetailItem(
+        id=item.id,
+        row_id=item.row_id,
+        row_number=item.row_number,
+        status=item.row_status,
+        sandbox_result_id=item.sandbox_result_id,
+        car_description=item.car_description,
+        overdue_bucket=item.overdue_bucket,
+        overdue_amount=item.overdue_amount,
+        che300_value=item.che300_value,
+        best_path=item.best_path,
+        error=item.error_message,
+        result=result,
+    )
 
 
 async def _run_and_persist_simulation(
@@ -202,10 +253,16 @@ async def batch_simulate(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """Run sandbox simulation for selected imported rows."""
+    selected_rows = [row for row in req.rows if row.selected]
+    batch = sandbox_repo.create_sandbox_batch(
+        session,
+        tenant_id=tenant_id,
+        created_by=user.id,
+        total_rows=len(selected_rows),
+        status="running",
+    )
     results: list[SandboxBatchSimulationItem] = []
-    for row in req.rows:
-        if not row.selected:
-            continue
+    for row in selected_rows:
         try:
             result = await _run_and_persist_simulation(
                 inp=SandboxInput.model_validate(row.input.model_dump()),
@@ -222,22 +279,107 @@ async def batch_simulate(
                     result=result,
                 )
             )
+            sandbox_repo.create_sandbox_batch_item(
+                session,
+                batch_id=batch.id,
+                row_id=row.row_id,
+                row_number=row.row_number,
+                row_status="success",
+                sandbox_result_id=result.id,
+                car_description=result.input.car_description,
+                overdue_bucket=result.input.overdue_bucket,
+                overdue_amount=result.input.overdue_amount,
+                che300_value=result.input.che300_value,
+                best_path=result.best_path,
+                input_json=result.input.model_dump_json(),
+            )
         except Exception as exc:
+            error_message = getattr(exc, "message", str(exc))
             results.append(
                 SandboxBatchSimulationItem(
                     row_id=row.row_id,
                     row_number=row.row_number,
                     status="error",
-                    error=getattr(exc, "message", str(exc)),
+                    error=error_message,
                 )
+            )
+            sandbox_repo.create_sandbox_batch_item(
+                session,
+                batch_id=batch.id,
+                row_id=row.row_id,
+                row_number=row.row_number,
+                row_status="error",
+                car_description=row.input.car_description,
+                overdue_bucket=row.input.overdue_bucket,
+                overdue_amount=row.input.overdue_amount,
+                che300_value=row.input.che300_value,
+                error_message=error_message,
+                input_json=row.input.model_dump_json(),
             )
     success_rows = sum(1 for item in results if item.status == "success")
     error_rows = len(results) - success_rows
+    sandbox_repo.update_sandbox_batch_counts(
+        session,
+        batch.id,
+        tenant_id=tenant_id,
+        success_rows=success_rows,
+        error_rows=error_rows,
+        status="completed",
+    )
+    if batch.created_at is None:
+        session.refresh(batch)
+    audit_service.record(
+        session,
+        request,
+        action="batch_simulate",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="sandbox_simulation_batch",
+        resource_id=batch.id,
+        after={
+            "total_rows": len(results),
+            "success_rows": success_rows,
+            "error_rows": error_rows,
+        },
+    )
     return SandboxBatchSimulationResult(
+        batch_id=batch.id,
+        created_at=batch.created_at.isoformat() if batch.created_at else None,
         total_rows=len(results),
         success_rows=success_rows,
         error_rows=error_rows,
         results=results,
+    )
+
+
+@router.get("/batches", response_model=list[SandboxBatchSummary])
+async def list_batches(
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """List persisted batch simulation runs for the current tenant."""
+    rows = sandbox_repo.list_sandbox_batches(session, tenant_id=tenant_id)
+    return [_serialize_batch_summary(row) for row in rows]
+
+
+@router.get("/batches/{batch_id}", response_model=SandboxBatchDetail)
+async def get_batch_detail(
+    batch_id: int,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """Get every row and persisted result in one batch simulation."""
+    batch = sandbox_repo.get_sandbox_batch_by_id(
+        session,
+        batch_id,
+        tenant_id=tenant_id,
+    )
+    if batch is None:
+        raise SandboxBatchNotFound()
+    items = sandbox_repo.list_sandbox_batch_items(session, batch_id=batch.id)
+    return SandboxBatchDetail(
+        batch=_serialize_batch_summary(batch),
+        items=[_serialize_batch_item(item) for item in items],
     )
 
 

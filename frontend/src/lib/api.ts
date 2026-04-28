@@ -135,6 +135,14 @@ export async function batchSimulateSandbox(rows: SandboxBatchImportRow[]) {
   });
 }
 
+export async function listSandboxBatches() {
+  return request<SandboxBatchSummary[]>("/api/sandbox/batches");
+}
+
+export async function getSandboxBatch(batchId: number) {
+  return request<SandboxBatchDetail>(`/api/sandbox/batches/${batchId}`);
+}
+
 // 生成报告 (returns 202 with job reference)
 export async function generateReport(
   resultId: number
@@ -750,10 +758,41 @@ export interface SandboxBatchSimulationItem {
 }
 
 export interface SandboxBatchSimulationResult {
+  batch_id: number | null;
+  created_at: string | null;
   total_rows: number;
   success_rows: number;
   error_rows: number;
   results: SandboxBatchSimulationItem[];
+}
+
+export interface SandboxBatchSummary {
+  id: number;
+  status: string;
+  total_rows: number;
+  success_rows: number;
+  error_rows: number;
+  created_at: string;
+}
+
+export interface SandboxBatchDetailItem {
+  id: number;
+  row_id: string;
+  row_number: number;
+  status: string;
+  sandbox_result_id: number | null;
+  car_description: string | null;
+  overdue_bucket: string | null;
+  overdue_amount: number | null;
+  che300_value: number | null;
+  best_path: string | null;
+  error: string | null;
+  result: SandboxResult | null;
+}
+
+export interface SandboxBatchDetail {
+  batch: SandboxBatchSummary;
+  items: SandboxBatchDetailItem[];
 }
 
 export interface LegalCostDetail {

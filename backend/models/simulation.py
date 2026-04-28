@@ -275,7 +275,38 @@ class SandboxBatchSimulationItem(BaseModel):
 
 
 class SandboxBatchSimulationResult(BaseModel):
+    batch_id: Optional[int] = None
+    created_at: Optional[str] = None
     total_rows: int
     success_rows: int
     error_rows: int
     results: list[SandboxBatchSimulationItem]
+
+
+class SandboxBatchSummary(BaseModel):
+    id: int
+    status: str
+    total_rows: int
+    success_rows: int
+    error_rows: int
+    created_at: str
+
+
+class SandboxBatchDetailItem(BaseModel):
+    id: int
+    row_id: str
+    row_number: int
+    status: str
+    sandbox_result_id: Optional[int] = None
+    car_description: Optional[str] = None
+    overdue_bucket: Optional[str] = None
+    overdue_amount: Optional[float] = None
+    che300_value: Optional[float] = None
+    best_path: Optional[str] = None
+    error: Optional[str] = None
+    result: Optional[SandboxResult] = None
+
+
+class SandboxBatchDetail(BaseModel):
+    batch: SandboxBatchSummary
+    items: list[SandboxBatchDetailItem]

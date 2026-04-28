@@ -13,6 +13,8 @@ REQUIRED_TABLES = sorted([
     "assets",
     "depreciation_cache",
     "sandbox_results",
+    "sandbox_simulation_batches",
+    "sandbox_simulation_batch_items",
     "portfolio_snapshots",
     "asset_segments",
     "segment_metrics",
