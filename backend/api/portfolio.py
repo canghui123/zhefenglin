@@ -1,6 +1,6 @@
 """模块3：公司级不良资产经营驾驶舱API"""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 
 from dependencies.auth import get_current_user, require_role
@@ -10,6 +10,8 @@ from services.portfolio_engine import (
     compute_cashflow_projection,
 )
 from services.recommendation_engine import (
+    build_action_work_order_candidates,
+    find_segment_by_name,
     get_executive_dashboard,
     get_manager_playbook,
     get_supervisor_console,
@@ -214,3 +216,18 @@ async def action_center():
     """动作中心"""
     data = _get_portfolio()
     return get_action_center(data["overview"], data["segments"])
+
+
+@router.get("/action-center/candidates", dependencies=[Depends(require_role("operator"))])
+async def action_center_candidates(
+    order_type: str = Query(..., description="工单类型: towing / auction_push"),
+    segment_name: str = Query(..., description="动作中心分层名称"),
+):
+    """按动作中心分层展开候选车辆，用于批量编排拖车/拍卖工单。"""
+    if order_type not in {"towing", "auction_push"}:
+        raise HTTPException(status_code=400, detail="order_type 仅支持 towing / auction_push")
+    data = _get_portfolio()
+    segment = find_segment_by_name(data["segments"], segment_name)
+    if segment is None:
+        raise HTTPException(status_code=404, detail="未找到对应分层")
+    return build_action_work_order_candidates(segment, order_type=order_type)

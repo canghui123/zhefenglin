@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   createWorkOrder,
   generateLegalDocument,
@@ -48,61 +49,6 @@ export default function ActionCenterPage() {
   async function refreshWorkOrders() {
     const orders = await listWorkOrders();
     setWorkOrders(orders);
-  }
-
-  async function handleCreateAuctionOrder(item: ActionCenterData["auction_ready"][number]) {
-    const key = `auction:${item.segment_name}`;
-    setSubmittingKey(key);
-    setMessage("");
-    try {
-      await createWorkOrder({
-        order_type: "auction_push",
-        title: `拍卖推送：${item.segment_name}`,
-        target_description: `${item.count}台在库车辆，建议单台底价 ¥${fmt(item.recommended_floor_price)}`,
-        priority: item.risk_tags.length > 0 ? "high" : "normal",
-        source_type: "portfolio_segment",
-        source_id: item.segment_name,
-        payload: {
-          count: item.count,
-          estimated_value: item.estimated_value,
-          recommended_floor_price: item.recommended_floor_price,
-          risk_tags: item.risk_tags,
-        },
-      });
-      await refreshWorkOrders();
-      setMessage("已生成拍卖推送工单");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "生成工单失败");
-    } finally {
-      setSubmittingKey("");
-    }
-  }
-
-  async function handleCreateTowingOrder(item: ActionCenterData["recovery_tasks"][number]) {
-    const key = `towing:${item.segment_name}`;
-    setSubmittingKey(key);
-    setMessage("");
-    try {
-      await createWorkOrder({
-        order_type: "towing",
-        title: `委外拖车：${item.segment_name}`,
-        target_description: `${item.count}台未收回车辆，逾期阶段 ${item.overdue_bucket}`,
-        priority: item.overdue_bucket.startsWith("M5") || item.overdue_bucket.startsWith("M6") ? "urgent" : "high",
-        source_type: "portfolio_segment",
-        source_id: item.segment_name,
-        payload: {
-          count: item.count,
-          overdue_bucket: item.overdue_bucket,
-          total_ead: item.total_ead,
-        },
-      });
-      await refreshWorkOrders();
-      setMessage("已生成委外拖车工单");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "生成工单失败");
-    } finally {
-      setSubmittingKey("");
-    }
   }
 
   async function handleStatus(workOrderId: number, status: string) {
@@ -220,13 +166,12 @@ export default function ActionCenterPage() {
                       ))}
                     </td>
                     <td className="text-right px-3 py-2">
-                      <button
-                        className="rounded border border-emerald-200 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                        disabled={submittingKey === `auction:${item.segment_name}`}
-                        onClick={() => handleCreateAuctionOrder(item)}
+                      <Link
+                        className="rounded border border-emerald-200 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+                        href={`/portfolio/actions/auction?segment=${encodeURIComponent(item.segment_name)}`}
                       >
-                        生成拍卖工单
-                      </button>
+                        进入拍卖编排
+                      </Link>
                     </td>
                   </tr>
                 ))}
@@ -261,13 +206,12 @@ export default function ActionCenterPage() {
                     <td className="px-3 py-2 text-xs">{item.overdue_bucket}</td>
                     <td className="text-right px-3 py-2">¥{fmt(item.total_ead)}</td>
                     <td className="text-right px-3 py-2">
-                      <button
-                        className="rounded border border-blue-200 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
-                        disabled={submittingKey === `towing:${item.segment_name}`}
-                        onClick={() => handleCreateTowingOrder(item)}
+                      <Link
+                        className="rounded border border-blue-200 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50"
+                        href={`/portfolio/actions/towing?segment=${encodeURIComponent(item.segment_name)}`}
                       >
-                        生成拖车工单
-                      </button>
+                        进入拖车编排
+                      </Link>
                     </td>
                   </tr>
                 ))}

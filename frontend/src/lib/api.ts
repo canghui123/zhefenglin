@@ -175,6 +175,17 @@ export async function getActionCenter() {
   return request<ActionCenterData>("/api/portfolio/action-center");
 }
 
+export async function getActionWorkOrderCandidates(
+  orderType: "towing" | "auction_push",
+  segmentName: string,
+) {
+  const query = new URLSearchParams({
+    order_type: orderType,
+    segment_name: segmentName,
+  });
+  return request<ActionWorkOrderCandidateData>(`/api/portfolio/action-center/candidates?${query}`);
+}
+
 // ============ 执行工单 API ============
 
 export interface WorkOrderCreate {
@@ -185,6 +196,38 @@ export interface WorkOrderCreate {
   source_type?: string | null;
   source_id?: string | null;
   payload?: Record<string, unknown>;
+}
+
+export interface ActionWorkOrderCandidateAsset {
+  asset_identifier: string;
+  contract_number: string;
+  debtor_name: string;
+  car_description: string;
+  license_plate: string;
+  vin: string;
+  province: string;
+  city: string;
+  overdue_bucket: string;
+  overdue_days: number;
+  overdue_amount: number;
+  vehicle_value: number;
+  recovered_status: string;
+  gps_last_seen: string;
+  risk_tags: string[];
+  default_towing_commission: number;
+  default_work_order_days: number;
+  default_starting_price: number;
+  default_reserve_price: number;
+  default_auction_start_at: string;
+  default_auction_end_at: string;
+}
+
+export interface ActionWorkOrderCandidateData {
+  order_type: "towing" | "auction_push";
+  segment_name: string;
+  segment_count: number;
+  total_ead: number;
+  candidates: ActionWorkOrderCandidateAsset[];
 }
 
 export interface WorkOrderInfo {

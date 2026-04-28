@@ -83,6 +83,68 @@ def test_operator_can_create_list_and_complete_work_order(authed_client):
     assert completed.json()["result"]["vendor"] == "mock-towing"
 
 
+def test_action_center_returns_asset_level_towing_candidates(authed_client):
+    response = authed_client.get(
+        "/api/portfolio/action-center/candidates",
+        params={
+            "order_type": "towing",
+            "segment_name": "M3(61-90天) | 未收回",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["order_type"] == "towing"
+    assert body["segment_name"] == "M3(61-90天) | 未收回"
+    assert body["segment_count"] == len(body["candidates"])
+    assert body["segment_count"] > 0
+    first = body["candidates"][0]
+    assert first["asset_identifier"]
+    assert first["overdue_bucket"] == "M3(61-90天)"
+    assert first["recovered_status"] == "未收回"
+    assert first["default_towing_commission"] > 0
+    assert first["default_work_order_days"] > 0
+
+
+def test_batch_work_order_payload_can_store_asset_line_items(authed_client):
+    candidates = authed_client.get(
+        "/api/portfolio/action-center/candidates",
+        params={
+            "order_type": "auction_push",
+            "segment_name": "M3(61-90天) | 已入库",
+        },
+    )
+    assert candidates.status_code == 200, candidates.text
+    selected = candidates.json()["candidates"][:2]
+
+    created = authed_client.post(
+        "/api/work-orders",
+        json=_create_payload(
+            order_type="auction_push",
+            title="拍卖推送：M3在库批量",
+            source_id="M3(61-90天) | 已入库",
+            payload={
+                "workflow": "auction_batch_builder",
+                "line_items": [
+                    {
+                        "asset_identifier": item["asset_identifier"],
+                        "starting_price": item["default_starting_price"],
+                        "auction_start_at": item["default_auction_start_at"],
+                        "auction_end_at": item["default_auction_end_at"],
+                    }
+                    for item in selected
+                ],
+            },
+        ),
+    )
+
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["order_type"] == "auction_push"
+    assert body["payload"]["workflow"] == "auction_batch_builder"
+    assert len(body["payload"]["line_items"]) == 2
+
+
 def test_invalid_work_order_transition_is_rejected(authed_client):
     created = authed_client.post("/api/work-orders", json=_create_payload())
     work_order_id = created.json()["id"]

@@ -1,5 +1,10 @@
 """角色建议引擎 — 基于规则为不同角色生成建议"""
 
+import hashlib
+import random
+from datetime import date, timedelta
+from typing import Optional
+
 from services.portfolio_engine import (
     generate_role_recommendations,
     STRATEGY_TYPES,
@@ -145,4 +150,113 @@ def get_action_center(overview: dict, segments: list) -> dict:
         "recommendations": recommendations,
         "auction_ready": auction_ready,
         "recovery_tasks": recovery_tasks,
+    }
+
+
+def _seed_for_segment(segment_name: str, order_type: str) -> int:
+    raw = f"{segment_name}:{order_type}".encode("utf-8")
+    return int(hashlib.sha256(raw).hexdigest()[:12], 16)
+
+
+def _overdue_day_floor(overdue_bucket: str) -> int:
+    if overdue_bucket.startswith("M1"):
+        return 1
+    if overdue_bucket.startswith("M2"):
+        return 31
+    if overdue_bucket.startswith("M3"):
+        return 61
+    if overdue_bucket.startswith("M4"):
+        return 91
+    if overdue_bucket.startswith("M5"):
+        return 121
+    return 151
+
+
+def _default_work_order_days(overdue_bucket: str) -> int:
+    if overdue_bucket.startswith(("M5", "M6")):
+        return 5
+    if overdue_bucket.startswith("M4"):
+        return 7
+    return 10
+
+
+def find_segment_by_name(segments: list[dict], segment_name: str) -> Optional[dict]:
+    return next((seg for seg in segments if seg["segment_name"] == segment_name), None)
+
+
+def build_action_work_order_candidates(
+    segment: dict,
+    *,
+    order_type: str,
+) -> dict:
+    """Build deterministic asset-level candidates for action-center work orders.
+
+    当前组合驾驶舱仍由分层级数据驱动；这里先把分层展开为稳定的候选资产清单，
+    保持前端和工单 payload 契约，后续可无缝替换为真实资产台账查询。
+    """
+    rng = random.Random(_seed_for_segment(segment["segment_name"], order_type))
+    count = max(int(segment.get("asset_count", 0)), 0)
+    overdue_bucket = segment.get("overdue_bucket", "M3(61-90天)")
+    recovered_status = segment.get("recovered_status", "未收回")
+    per_ead = segment.get("total_ead", 0) / count if count else 0
+    avg_vehicle_value = segment.get("avg_vehicle_value", 0)
+    overdue_floor = _overdue_day_floor(overdue_bucket)
+    today = date.today()
+    provinces = [("江苏省", "南京市"), ("浙江省", "杭州市"), ("广东省", "广州市"), ("四川省", "成都市")]
+    vehicle_models = [
+        "丰田 凯美瑞 2021款",
+        "大众 迈腾 2020款",
+        "比亚迪 汉EV 2022款",
+        "宝马 3系 2020款",
+        "本田 雅阁 2021款",
+        "特斯拉 Model 3 2021款",
+    ]
+
+    candidates = []
+    for idx in range(count):
+        province, city = provinces[idx % len(provinces)]
+        vehicle_value = max(20_000, avg_vehicle_value * rng.uniform(0.82, 1.18))
+        overdue_amount = max(5_000, per_ead * rng.uniform(0.75, 1.25))
+        overdue_days = overdue_floor + rng.randint(0, 28)
+        gps_days = rng.randint(1, 18)
+        risk_tags = []
+        if overdue_days >= 120:
+            risk_tags.append("高逾期")
+        if recovered_status == "未收回":
+            risk_tags.append("待收车")
+        if segment.get("avg_recovery_days", 0) > 60:
+            risk_tags.append("长周期")
+
+        candidates.append(
+            {
+                "asset_identifier": f"AF-{overdue_bucket[:2]}-{idx + 1:04d}",
+                "contract_number": f"HT{today:%Y%m}{idx + 1001}",
+                "debtor_name": f"客户{idx + 1:03d}",
+                "car_description": vehicle_models[idx % len(vehicle_models)],
+                "license_plate": f"苏A{rng.randint(10000, 99999)}",
+                "vin": f"LFP{rng.randint(10**12, 10**13 - 1)}",
+                "province": province,
+                "city": city,
+                "overdue_bucket": overdue_bucket,
+                "overdue_days": overdue_days,
+                "overdue_amount": round(overdue_amount, 2),
+                "vehicle_value": round(vehicle_value, 2),
+                "recovered_status": recovered_status,
+                "gps_last_seen": (today - timedelta(days=gps_days)).isoformat(),
+                "risk_tags": risk_tags,
+                "default_towing_commission": round(max(1200, min(6000, vehicle_value * 0.025)), 2),
+                "default_work_order_days": _default_work_order_days(overdue_bucket),
+                "default_starting_price": round(vehicle_value * 0.85, 2),
+                "default_reserve_price": round(vehicle_value * 0.78, 2),
+                "default_auction_start_at": (today + timedelta(days=1)).isoformat(),
+                "default_auction_end_at": (today + timedelta(days=8)).isoformat(),
+            }
+        )
+
+    return {
+        "order_type": order_type,
+        "segment_name": segment["segment_name"],
+        "segment_count": count,
+        "total_ead": round(segment.get("total_ead", 0), 2),
+        "candidates": candidates,
     }
