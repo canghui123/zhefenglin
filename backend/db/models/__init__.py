@@ -24,3 +24,4 @@ from db.models.decision_model_config import (  # noqa: F401
 )
 from db.models.work_order import WorkOrder  # noqa: F401
 from db.models.model_feedback import DisposalOutcome, ModelLearningRun  # noqa: F401
+from db.models.data_import import DataImportBatch, DataImportRow  # noqa: F401

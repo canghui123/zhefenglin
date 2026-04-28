@@ -80,6 +80,11 @@ class WorkOrderNotFound(BusinessError):
         super().__init__("WORK_ORDER_NOT_FOUND", "工单不存在", 404)
 
 
+class DataImportBatchNotFound(BusinessError):
+    def __init__(self):
+        super().__init__("DATA_IMPORT_BATCH_NOT_FOUND", "数据导入批次不存在", 404)
+
+
 class InvalidWorkOrderTransition(BusinessError):
     def __init__(self, detail: str = "工单状态流转不合法"):
         super().__init__("INVALID_WORK_ORDER_TRANSITION", detail, 400)

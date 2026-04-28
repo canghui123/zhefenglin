@@ -20,6 +20,7 @@ const navSections = [
     title: "资产处置",
     items: [
       { href: "/", label: "首页" },
+      { href: "/data-import", label: "数据接入" },
       { href: "/asset-pricing", label: "资产包定价" },
       { href: "/inventory-sandbox", label: "库存决策沙盘" },
     ],

@@ -475,6 +475,92 @@ export async function getJudicialRisk(input: JudicialRiskRequest) {
   });
 }
 
+// ============ 客户数据接入 API ============
+
+export interface DataImportErrorInfo {
+  field: string;
+  message: string;
+}
+
+export interface DataImportBatchInfo {
+  id: number;
+  tenant_id: number;
+  created_by: number | null;
+  import_type: string;
+  filename: string;
+  source_system: string | null;
+  storage_key: string | null;
+  status: string;
+  total_rows: number;
+  success_rows: number;
+  error_rows: number;
+  created_at: string;
+}
+
+export interface DataImportRowInfo {
+  id: number;
+  batch_id: number;
+  row_number: number;
+  row_status: "valid" | "error" | string;
+  asset_identifier: string | null;
+  contract_number: string | null;
+  debtor_name: string | null;
+  car_description: string | null;
+  vin: string | null;
+  license_plate: string | null;
+  province: string | null;
+  city: string | null;
+  overdue_bucket: string | null;
+  overdue_days: number | null;
+  overdue_amount: number | null;
+  loan_principal: number | null;
+  vehicle_value: number | null;
+  recovered_status: string | null;
+  gps_last_seen: string | null;
+  errors: DataImportErrorInfo[];
+  raw: Record<string, unknown>;
+  normalized: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DataImportUploadResult {
+  batch: DataImportBatchInfo;
+  rows_preview: DataImportRowInfo[];
+  detected_columns: Record<string, string>;
+  unmapped_columns: string[];
+}
+
+export interface DataImportRowsPage {
+  batch: DataImportBatchInfo;
+  rows: DataImportRowInfo[];
+}
+
+export async function uploadCustomerDataImport(input: {
+  file: File;
+  source_system?: string;
+  import_type?: string;
+}) {
+  const form = new FormData();
+  form.append("file", input.file);
+  if (input.source_system) form.append("source_system", input.source_system);
+  form.append("import_type", input.import_type || "asset_ledger");
+  return request<DataImportUploadResult>("/api/data-import/upload", {
+    method: "POST",
+    body: form,
+  });
+}
+
+export async function listDataImportBatches() {
+  return request<DataImportBatchInfo[]>("/api/data-import/batches");
+}
+
+export async function listDataImportRows(batchId: number, status?: string) {
+  const query = new URLSearchParams();
+  if (status) query.set("status", status);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<DataImportRowsPage>(`/api/data-import/batches/${batchId}/rows${suffix}`);
+}
+
 // ============ 用户管理 API ============
 
 export interface UserInfo {

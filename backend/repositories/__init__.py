@@ -10,3 +10,4 @@ from repositories import portfolio_repo  # noqa: F401
 from repositories import user_repo  # noqa: F401
 from repositories import tenant_repo  # noqa: F401
 from repositories import audit_repo  # noqa: F401
+from repositories import data_import_repo  # noqa: F401

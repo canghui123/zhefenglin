@@ -31,6 +31,8 @@ REQUIRED_TABLES = sorted([
     "work_orders",
     "disposal_outcomes",
     "model_learning_runs",
+    "data_import_batches",
+    "data_import_rows",
 ])
 
 
