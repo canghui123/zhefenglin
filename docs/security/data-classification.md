@@ -19,7 +19,7 @@
 
 ### Level 4 — Restricted
 - **User credentials**: Password hashes (bcrypt), JWT secrets
-- **API keys**: che300 access credentials, DeepSeek API key
+- **API keys**: che300 access credentials, Qwen/DashScope API key
 - **Audit logs**: User actions with IP addresses and user agents
 - **Session tokens**: JWT tokens in cookies
 

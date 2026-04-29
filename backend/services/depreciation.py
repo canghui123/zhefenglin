@@ -1,4 +1,4 @@
-"""LLM贬值预测服务 — DeepSeek驱动"""
+"""LLM贬值预测服务 — 通过统一千问优先 LLM 网关驱动"""
 
 import json
 import re

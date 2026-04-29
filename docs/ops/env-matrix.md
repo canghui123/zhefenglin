@@ -24,8 +24,16 @@
 | `CHE300_API_BASE` | 否 | `https://cloud-api.che300.com` | 车300 API 地址 |
 | `DEFAULT_CITY_CODE` | 否 | `320100` | 默认城市编码（南京） |
 | `DEFAULT_CITY_NAME` | 否 | `南京` | 默认城市名称 |
-| `DEEPSEEK_API_KEY` | 否 | — | DeepSeek LLM API Key |
-| `DEEPSEEK_BASE_URL` | 否 | `https://api.deepseek.com` | DeepSeek API 地址 |
+| `LLM_PROVIDER` | 否 | `qwen` | 大模型供应商，默认千问；旧部署可临时用 `deepseek` |
+| `LLM_API_KEY` | 否 | — | 通用 OpenAI-compatible API Key，优先级最高 |
+| `LLM_BASE_URL` | 否 | — | 通用 OpenAI-compatible Base URL；为空时按供应商默认 |
+| `LLM_MODEL` | 否 | `qwen-plus` | 默认大模型名称 |
+| `QWEN_API_KEY` | 否 | — | 通义千问 / DashScope API Key |
+| `QWEN_BASE_URL` | 否 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 千问 OpenAI 兼容接口地址 |
+| `DASHSCOPE_API_KEY` | 否 | — | `QWEN_API_KEY` 的兼容别名 |
+| `DASHSCOPE_BASE_URL` | 否 | — | `QWEN_BASE_URL` 的兼容别名 |
+| `DEEPSEEK_API_KEY` | 否 | — | 旧版 DeepSeek LLM API Key，仅作兼容兜底 |
+| `DEEPSEEK_BASE_URL` | 否 | `https://api.deepseek.com` | 旧版 DeepSeek API 地址 |
 | `UPLOAD_DIR` | 否 | `backend/data/uploads` | 本地上传目录（local 模式） |
 
 ## 部署构建变量 (deploy/)

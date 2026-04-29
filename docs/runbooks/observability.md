@@ -42,7 +42,7 @@ Metrics are exposed at `GET /api/metrics` in Prometheus text format.
 - `http_request_duration_seconds{method, path}` — latency histogram
 
 #### External API Metrics
-- `external_api_calls_total{service, status}` — calls to che300/deepseek
+- `external_api_calls_total{service, status}` — calls to che300/qwen
 - `external_api_duration_seconds{service}` — external call latency
 
 #### Job Metrics

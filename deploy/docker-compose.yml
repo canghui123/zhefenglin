@@ -61,6 +61,14 @@ services:
       CHE300_API_BASE: ${CHE300_API_BASE:-https://cloud-api.che300.com}
       DEFAULT_CITY_CODE: ${DEFAULT_CITY_CODE:-320100}
       DEFAULT_CITY_NAME: ${DEFAULT_CITY_NAME:-南京}
+      LLM_PROVIDER: ${LLM_PROVIDER:-qwen}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-qwen-plus}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       DEFAULT_REGISTRATION_TENANT_CODE: ${DEFAULT_REGISTRATION_TENANT_CODE:-default}

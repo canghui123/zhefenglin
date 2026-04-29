@@ -53,12 +53,16 @@ nano .env
 | `S3_SECRET_KEY` | MinIO 密码 | `openssl rand -hex 16` |
 | `CHE300_ACCESS_KEY` | 车300 API Key | 从车300后台获取 |
 | `CHE300_ACCESS_SECRET` | 车300 API Secret | 从车300后台获取 |
+| `QWEN_API_KEY` | 通义千问 / DashScope API Key | 从阿里云 DashScope 控制台获取 |
+| `LLM_PROVIDER` | 大模型供应商 | 默认 `qwen` |
+| `LLM_MODEL` | 千问模型名称 | 默认 `qwen-plus` |
 
 说明：
 
 - 中国大陆 ECS 可保留 `BACKEND_PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/` 和 `BACKEND_PIP_TRUSTED_HOST=mirrors.aliyun.com`；海外 / CI 环境可改回官方 PyPI 并清空 trusted host
 - `DEFAULT_REGISTRATION_TENANT_CODE` / `DEFAULT_REGISTRATION_TENANT_NAME` 控制公开注册用户进入哪个默认租户
 - 后端镜像已把 `boto3` 作为正式依赖，用于 `STORAGE_BACKEND=s3` 的 MinIO / S3 存储
+- 大模型默认走千问 OpenAI 兼容接口：`QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
 
 ### 第四步：确认域名解析
 

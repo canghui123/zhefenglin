@@ -39,9 +39,17 @@ class Settings(BaseSettings):
     default_city_name: str = "南京"
 
     # ---------- LLM ----------
+    llm_provider: str = "qwen"
+    llm_api_key: str = ""
+    llm_base_url: str = ""
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    llm_model: str = ""
+    qwen_api_key: str = ""
+    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_model: str = "qwen-plus"
+    dashscope_api_key: str = ""
+    dashscope_base_url: str = ""
+    llm_model: str = "qwen-plus"
 
     class Config:
         env_file = os.path.join(_THIS_DIR, "..", ".env")
