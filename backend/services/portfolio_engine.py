@@ -1,8 +1,17 @@
-"""组合损失引擎 + 现金回流引擎 — MVP版本(规则+Mock数据驱动)"""
+"""组合损失引擎 + 现金回流引擎.
 
+优先使用客户通过数据接入中心导入的有效资产台账；没有导入数据时才回退
+内置演示组合，保证空库环境仍可浏览产品能力。
+"""
+
+import json
 import random
 from datetime import date
 from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from repositories import data_import_repo
 
 # ============ 常量 ============
 
@@ -61,10 +70,246 @@ STRATEGY_PROFILES = {
 
 
 def _bucket_index(bucket: str) -> int:
+    normalized = (bucket or "").upper()
     for i, b in enumerate(OVERDUE_BUCKETS):
-        if b == bucket:
+        if normalized.startswith(b[:2]):
             return i
     return 2
+
+
+def _money(value: Optional[float], fallback: float = 0) -> float:
+    if value is None:
+        return float(fallback)
+    try:
+        return max(float(value), 0)
+    except (TypeError, ValueError):
+        return float(fallback)
+
+
+def _row_financials(row) -> tuple[float, float]:
+    ead = _money(row.loan_principal) or _money(row.overdue_amount)
+    vehicle_value = _money(row.vehicle_value, ead * 0.65 if ead else 0)
+    if not ead and vehicle_value:
+        ead = vehicle_value / 0.65
+    return ead, vehicle_value
+
+
+def _row_lgd(row) -> float:
+    ead, vehicle_value = _row_financials(row)
+    bucket_idx = _bucket_index(row.overdue_bucket or "")
+    status = row.recovered_status or "未收回"
+    base = 0.28 + bucket_idx * 0.08
+    if status == "已入库":
+        base -= 0.10
+    elif status == "已收回未入库":
+        base -= 0.03
+    elif status == "未收回":
+        base += 0.12
+    if ead and vehicle_value:
+        exposure_gap = max(0, ead - vehicle_value) / ead
+        base += exposure_gap * 0.18
+    return min(0.95, max(0.08, base))
+
+
+def _row_recovery_days(row) -> int:
+    bucket_idx = _bucket_index(row.overdue_bucket or "")
+    status = row.recovered_status or "未收回"
+    days = 30 + bucket_idx * 22
+    if status == "已入库":
+        days = max(7, days - 30)
+    elif status == "已收回未入库":
+        days += 15
+    else:
+        days += 50
+    return int(days)
+
+
+def _segment_strategy(overdue_bucket: str, recovered_status: str) -> str:
+    bucket_idx = _bucket_index(overdue_bucket)
+    if recovered_status == "已入库":
+        return "bulk_clearance" if bucket_idx >= 4 else "retail_auction"
+    if recovered_status == "已收回未入库":
+        return "retail_auction"
+    if bucket_idx <= 1:
+        return "collection"
+    if bucket_idx <= 3:
+        return "litigation"
+    return "debt_transfer"
+
+
+def _asset_payload(row) -> dict:
+    ead, vehicle_value = _row_financials(row)
+    raw = {}
+    if row.normalized_json:
+        try:
+            raw = json.loads(row.normalized_json)
+        except json.JSONDecodeError:
+            raw = {}
+    return {
+        "asset_identifier": row.asset_identifier or f"IMPORT-{row.id}",
+        "contract_number": row.contract_number,
+        "debtor_name": row.debtor_name,
+        "car_description": row.car_description,
+        "vin": row.vin,
+        "license_plate": row.license_plate,
+        "province": row.province,
+        "city": row.city,
+        "overdue_bucket": row.overdue_bucket or "M3(61-90天)",
+        "overdue_days": row.overdue_days,
+        "overdue_amount": round(_money(row.overdue_amount, ead), 2),
+        "loan_principal": round(_money(row.loan_principal, ead), 2),
+        "vehicle_value": round(vehicle_value, 2),
+        "recovered_status": row.recovered_status or "未收回",
+        "gps_last_seen": row.gps_last_seen,
+        "raw": raw,
+    }
+
+
+def generate_portfolio_from_imports(session: Session, *, tenant_id: int) -> Optional[dict]:
+    """Build portfolio analytics from the latest valid customer import batch."""
+    batch = data_import_repo.get_latest_batch_with_rows(
+        session,
+        tenant_id=tenant_id,
+        import_type="asset_ledger",
+    ) or data_import_repo.get_latest_batch_with_rows(session, tenant_id=tenant_id)
+    if batch is None:
+        return None
+
+    rows = [
+        row
+        for row in data_import_repo.list_valid_rows_for_batch(session, batch_id=batch.id)
+        if _row_financials(row)[0] > 0
+    ]
+    if not rows:
+        return None
+
+    grouped: dict[tuple[str, str], dict] = {}
+    total_ead = 0.0
+    total_loss = 0.0
+    total_cash_30 = 0.0
+    total_cash_90 = 0.0
+    total_cash_180 = 0.0
+
+    for row in rows:
+        overdue_bucket = row.overdue_bucket or "M3(61-90天)"
+        recovered_status = row.recovered_status or "未收回"
+        key = (overdue_bucket, recovered_status)
+        if key not in grouped:
+            grouped[key] = {
+                "segment_name": f"{overdue_bucket} | {recovered_status}",
+                "overdue_bucket": overdue_bucket,
+                "recovered_status": recovered_status,
+                "asset_count": 0,
+                "total_ead": 0.0,
+                "vehicle_value_sum": 0.0,
+                "expected_loss_amount": 0.0,
+                "recovery_days_weighted": 0.0,
+                "cash_30d": 0.0,
+                "cash_90d": 0.0,
+                "cash_180d": 0.0,
+                "assets": [],
+            }
+        seg = grouped[key]
+        ead, vehicle_value = _row_financials(row)
+        lgd = _row_lgd(row)
+        recovery_days = _row_recovery_days(row)
+        loss = ead * lgd
+        net_rate = 1 - lgd
+        if recovered_status == "已入库":
+            c30, c90, c180 = net_rate * 0.50, net_rate * 0.80, net_rate * 0.95
+        elif recovered_status == "已收回未入库":
+            c30, c90, c180 = net_rate * 0.20, net_rate * 0.55, net_rate * 0.80
+        else:
+            c30, c90, c180 = net_rate * 0.05, net_rate * 0.20, net_rate * 0.50
+
+        seg["asset_count"] += 1
+        seg["total_ead"] += ead
+        seg["vehicle_value_sum"] += vehicle_value
+        seg["expected_loss_amount"] += loss
+        seg["recovery_days_weighted"] += recovery_days * ead
+        seg["cash_30d"] += ead * c30
+        seg["cash_90d"] += ead * c90
+        seg["cash_180d"] += ead * c180
+        seg["assets"].append(_asset_payload(row))
+
+        total_ead += ead
+        total_loss += loss
+        total_cash_30 += ead * c30
+        total_cash_90 += ead * c90
+        total_cash_180 += ead * c180
+
+    segments = []
+    for seg in grouped.values():
+        total = seg["total_ead"]
+        avg_vehicle_value = seg["vehicle_value_sum"] / seg["asset_count"] if seg["asset_count"] else 0
+        expected_loss_rate = seg["expected_loss_amount"] / total if total else 0
+        avg_recovery_days = seg["recovery_days_weighted"] / total if total else 0
+        segments.append({
+            "segment_name": seg["segment_name"],
+            "overdue_bucket": seg["overdue_bucket"],
+            "recovered_status": seg["recovered_status"],
+            "asset_count": seg["asset_count"],
+            "total_ead": round(total, 2),
+            "avg_vehicle_value": round(avg_vehicle_value, 2),
+            "avg_lgd": round(expected_loss_rate, 4),
+            "avg_recovery_days": round(avg_recovery_days, 1),
+            "expected_loss_amount": round(seg["expected_loss_amount"], 2),
+            "expected_loss_rate": round(expected_loss_rate, 4),
+            "cash_30d": round(seg["cash_30d"], 2),
+            "cash_90d": round(seg["cash_90d"], 2),
+            "cash_180d": round(seg["cash_180d"], 2),
+            "recommended_strategy": _segment_strategy(
+                seg["overdue_bucket"],
+                seg["recovered_status"],
+            ),
+            "assets": seg["assets"],
+        })
+
+    segments.sort(
+        key=lambda item: (
+            _bucket_index(item["overdue_bucket"]),
+            RECOVERED_STATUSES.index(item["recovered_status"])
+            if item["recovered_status"] in RECOVERED_STATUSES
+            else 99,
+        )
+    )
+
+    recovered_count = sum(
+        s["asset_count"] for s in segments if s["recovered_status"] != "未收回"
+    )
+    inventory_count = sum(
+        s["asset_count"] for s in segments if s["recovered_status"] == "已入库"
+    )
+    high_risk = sum(1 for s in segments if s["expected_loss_rate"] > 0.60)
+    avg_inventory_days = 0
+    inventory_segments = [s for s in segments if s["recovered_status"] == "已入库"]
+    if inventory_segments:
+        inv_ead = sum(s["total_ead"] for s in inventory_segments)
+        avg_inventory_days = sum(
+            s["avg_recovery_days"] * s["total_ead"] for s in inventory_segments
+        ) / inv_ead if inv_ead else 0
+
+    overview = {
+        "snapshot_date": date.today().isoformat(),
+        "scenario_name": "customer_import",
+        "data_source": "customer_import",
+        "source_batch_id": batch.id,
+        "source_filename": batch.filename,
+        "total_ead": round(total_ead, 2),
+        "total_asset_count": len(rows),
+        "total_expected_loss": round(total_loss, 2),
+        "total_expected_loss_rate": round(total_loss / total_ead, 4) if total_ead else 0,
+        "cash_30d": round(total_cash_30, 2),
+        "cash_90d": round(total_cash_90, 2),
+        "cash_180d": round(total_cash_180, 2),
+        "recovered_rate": round(recovered_count / len(rows), 4) if rows else 0,
+        "in_inventory_rate": round(inventory_count / len(rows), 4) if rows else 0,
+        "avg_inventory_days": round(avg_inventory_days, 1),
+        "high_risk_segment_count": high_risk,
+        "provision_impact": round(total_loss * 0.015, 2),
+        "capital_release_score": round(max(0, min(100, 100 - (total_loss / total_ead * 100 if total_ead else 0))), 1),
+    }
+    return {"overview": overview, "segments": segments}
 
 
 # ============ Mock组合生成 ============

@@ -37,6 +37,14 @@ export default function PortfolioOverviewPage() {
         <p className="text-sm text-gray-500 mt-1">
           快照日期: {data.snapshot_date} | 公司级不良资产组合经营概览
         </p>
+        <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 shadow-sm">
+          <span className="font-medium text-slate-900">数据来源</span>
+          <span>
+            {data.data_source === "customer_import" ? "客户导入表格" : "演示数据"}
+            {data.source_batch_id ? ` #${data.source_batch_id}` : ""}
+            {data.source_filename ? ` · ${data.source_filename}` : ""}
+          </span>
+        </div>
       </div>
 
       {/* 经营判断 */}

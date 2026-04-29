@@ -925,6 +925,10 @@ export interface SandboxResult {
 
 export interface PortfolioOverviewData {
   snapshot_date: string;
+  scenario_name?: string;
+  data_source?: string;
+  source_batch_id?: number;
+  source_filename?: string;
   total_ead: number;
   total_asset_count: number;
   total_expected_loss: number;

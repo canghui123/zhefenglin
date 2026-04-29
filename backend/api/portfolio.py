@@ -1,11 +1,17 @@
 """模块3：公司级不良资产经营驾驶舱API"""
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
 
+from sqlalchemy.orm import Session
+
+from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
+from repositories import tenant_repo
+from services.tenant_context import TENANT_HEADER
 from services.portfolio_engine import (
     generate_mock_portfolio,
+    generate_portfolio_from_imports,
     compute_strategy_comparison,
     compute_cashflow_projection,
 )
@@ -28,16 +34,47 @@ router = APIRouter(
 _cache = {}
 
 
-def _get_portfolio():
-    if "data" not in _cache:
-        _cache["data"] = generate_mock_portfolio()
-    return _cache["data"]
+def get_optional_portfolio_tenant_id(
+    request: Request,
+    user=Depends(get_current_user),
+    session: Session = Depends(get_db_session),
+) -> Optional[int]:
+    """Resolve tenant for import-backed analytics, but keep legacy demo access.
+
+    Some old accounts/tests were created before tenant membership existed. For
+    those users we still allow the mock portfolio, while real tenant users get
+    isolated customer-import analytics.
+    """
+    requested_code = request.headers.get(TENANT_HEADER)
+    if requested_code:
+        tenant = tenant_repo.get_tenant_by_code(session, requested_code.strip())
+        if tenant is None:
+            raise HTTPException(status_code=404, detail="租户不存在")
+        if not tenant_repo.has_membership(
+            session, user_id=user.id, tenant_id=tenant.id
+        ):
+            raise HTTPException(status_code=403, detail="无权访问该租户")
+        return tenant.id
+    return user.default_tenant_id
+
+
+def _get_portfolio(session: Optional[Session] = None, tenant_id: Optional[int] = None):
+    if isinstance(session, Session) and isinstance(tenant_id, int):
+        imported = generate_portfolio_from_imports(session, tenant_id=tenant_id)
+        if imported is not None:
+            return imported
+    if "mock" not in _cache:
+        _cache["mock"] = generate_mock_portfolio()
+    return _cache["mock"]
 
 
 @router.get("/overview")
-async def portfolio_overview():
+async def portfolio_overview(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
     """组合总览"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     ov = data["overview"]
     segments = data["segments"]
 
@@ -96,9 +133,11 @@ async def portfolio_overview():
 @router.get("/segmentation")
 async def portfolio_segmentation(
     dimension: str = Query("overdue_bucket", description="分层维度: overdue_bucket / recovered_status"),
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
 ):
     """分层分析"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     segments = data["segments"]
 
     # 按维度汇总
@@ -149,9 +188,11 @@ async def portfolio_segmentation(
 @router.get("/strategies")
 async def portfolio_strategies(
     segment_index: int = Query(0, description="分层索引(0-based)"),
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
 ):
     """处置路径模拟 — 对指定分层对比所有路径"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     segments = data["segments"]
 
     if segment_index < 0 or segment_index >= len(segments):
@@ -177,9 +218,12 @@ async def portfolio_strategies(
 
 
 @router.get("/cashflow")
-async def portfolio_cashflow():
+async def portfolio_cashflow(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
     """现金回流分析"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     cf = compute_cashflow_projection(data["segments"])
     return {
         "snapshot_date": data["overview"]["snapshot_date"],
@@ -191,30 +235,42 @@ async def portfolio_cashflow():
 # ============ 管理智能决策 ============
 
 @router.get("/executive", dependencies=[Depends(require_role("manager"))])
-async def executive_dashboard():
+async def executive_dashboard(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
     """高管驾驶页"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     return get_executive_dashboard(data["overview"], data["segments"])
 
 
 @router.get("/manager-playbook", dependencies=[Depends(require_role("manager"))])
-async def manager_playbook():
+async def manager_playbook(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
     """经理作战手册"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     return get_manager_playbook(data["overview"], data["segments"])
 
 
 @router.get("/supervisor-console", dependencies=[Depends(require_role("operator"))])
-async def supervisor_console():
+async def supervisor_console(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
     """主管执行控制台"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     return get_supervisor_console(data["overview"], data["segments"])
 
 
 @router.get("/action-center", dependencies=[Depends(require_role("operator"))])
-async def action_center():
+async def action_center(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
     """动作中心"""
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     return get_action_center(data["overview"], data["segments"])
 
 
@@ -222,11 +278,13 @@ async def action_center():
 async def action_center_candidates(
     order_type: str = Query(..., description="工单类型: towing / auction_push"),
     segment_name: str = Query(..., description="动作中心分层名称"),
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
 ):
     """按动作中心分层展开候选车辆，用于批量编排拖车/拍卖工单。"""
     if order_type not in {"towing", "auction_push"}:
         raise HTTPException(status_code=400, detail="order_type 仅支持 towing / auction_push")
-    data = _get_portfolio()
+    data = _get_portfolio(session, tenant_id)
     segment = find_segment_by_name(data["segments"], segment_name)
     if segment is None:
         raise HTTPException(status_code=404, detail="未找到对应分层")

@@ -66,6 +66,25 @@ def list_batches(
     return list(session.scalars(stmt).all())
 
 
+def get_latest_batch_with_rows(
+    session: Session,
+    *,
+    tenant_id: int,
+    import_type: Optional[str] = None,
+) -> Optional[DataImportBatch]:
+    stmt = (
+        select(DataImportBatch)
+        .where(DataImportBatch.tenant_id == tenant_id)
+        .where(DataImportBatch.success_rows > 0)
+        .where(DataImportBatch.status == "parsed")
+        .order_by(DataImportBatch.created_at.desc(), DataImportBatch.id.desc())
+        .limit(1)
+    )
+    if import_type:
+        stmt = stmt.where(DataImportBatch.import_type == import_type)
+    return session.scalars(stmt).first()
+
+
 def get_batch_by_id(
     session: Session,
     batch_id: int,
@@ -95,4 +114,20 @@ def list_rows(
     )
     if status:
         stmt = stmt.where(DataImportRow.row_status == status)
+    return list(session.scalars(stmt).all())
+
+
+def list_valid_rows_for_batch(
+    session: Session,
+    *,
+    batch_id: int,
+    limit: int = 10000,
+) -> list[DataImportRow]:
+    stmt = (
+        select(DataImportRow)
+        .where(DataImportRow.batch_id == batch_id)
+        .where(DataImportRow.row_status == "valid")
+        .order_by(DataImportRow.row_number.asc(), DataImportRow.id.asc())
+        .limit(limit)
+    )
     return list(session.scalars(stmt).all())

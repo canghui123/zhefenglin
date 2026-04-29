@@ -194,14 +194,64 @@ def build_action_work_order_candidates(
     当前组合驾驶舱仍由分层级数据驱动；这里先把分层展开为稳定的候选资产清单，
     保持前端和工单 payload 契约，后续可无缝替换为真实资产台账查询。
     """
-    rng = random.Random(_seed_for_segment(segment["segment_name"], order_type))
     count = max(int(segment.get("asset_count", 0)), 0)
     overdue_bucket = segment.get("overdue_bucket", "M3(61-90天)")
     recovered_status = segment.get("recovered_status", "未收回")
     per_ead = segment.get("total_ead", 0) / count if count else 0
     avg_vehicle_value = segment.get("avg_vehicle_value", 0)
-    overdue_floor = _overdue_day_floor(overdue_bucket)
     today = date.today()
+    imported_assets = segment.get("assets") or []
+    if imported_assets:
+        candidates = []
+        for idx, asset in enumerate(imported_assets):
+            vehicle_value = max(20_000, float(asset.get("vehicle_value") or avg_vehicle_value or 0))
+            overdue_amount = max(5_000, float(asset.get("loan_principal") or asset.get("overdue_amount") or per_ead or 0))
+            overdue_days = int(asset.get("overdue_days") or _overdue_day_floor(overdue_bucket))
+            risk_tags = []
+            if overdue_days >= 120:
+                risk_tags.append("高逾期")
+            if recovered_status == "未收回":
+                risk_tags.append("待收车")
+            if segment.get("avg_recovery_days", 0) > 60:
+                risk_tags.append("长周期")
+            if not asset.get("gps_last_seen") and recovered_status == "未收回":
+                risk_tags.append("缺GPS")
+
+            candidates.append(
+                {
+                    "asset_identifier": asset.get("asset_identifier") or f"IMPORT-{idx + 1:04d}",
+                    "contract_number": asset.get("contract_number") or "",
+                    "debtor_name": asset.get("debtor_name") or "",
+                    "car_description": asset.get("car_description") or "未命名车辆",
+                    "license_plate": asset.get("license_plate") or "",
+                    "vin": asset.get("vin") or "",
+                    "province": asset.get("province") or "",
+                    "city": asset.get("city") or "",
+                    "overdue_bucket": overdue_bucket,
+                    "overdue_days": overdue_days,
+                    "overdue_amount": round(overdue_amount, 2),
+                    "vehicle_value": round(vehicle_value, 2),
+                    "recovered_status": recovered_status,
+                    "gps_last_seen": asset.get("gps_last_seen") or "",
+                    "risk_tags": risk_tags,
+                    "default_towing_commission": round(max(1200, min(6000, vehicle_value * 0.025)), 2),
+                    "default_work_order_days": _default_work_order_days(overdue_bucket),
+                    "default_starting_price": round(vehicle_value * 0.85, 2),
+                    "default_reserve_price": round(vehicle_value * 0.78, 2),
+                    "default_auction_start_at": (today + timedelta(days=1)).isoformat(),
+                    "default_auction_end_at": (today + timedelta(days=8)).isoformat(),
+                }
+            )
+        return {
+            "order_type": order_type,
+            "segment_name": segment["segment_name"],
+            "segment_count": count,
+            "total_ead": round(segment.get("total_ead", 0), 2),
+            "candidates": candidates,
+        }
+
+    rng = random.Random(_seed_for_segment(segment["segment_name"], order_type))
+    overdue_floor = _overdue_day_floor(overdue_bucket)
     provinces = [("江苏省", "南京市"), ("浙江省", "杭州市"), ("广东省", "广州市"), ("四川省", "成都市")]
     vehicle_models = [
         "丰田 凯美瑞 2021款",
