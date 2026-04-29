@@ -29,6 +29,10 @@ export default function PortfolioOverviewPage() {
     : data.total_expected_loss_rate > 0.35
     ? "bg-yellow-50 border-yellow-200 text-yellow-800"
     : "bg-green-50 border-green-200 text-green-800";
+  const sourceCount = data.source_batch_ids?.length || (data.source_batch_id ? 1 : 0);
+  const sourceNames = data.source_filenames?.length
+    ? data.source_filenames.join("、")
+    : data.source_filename || "";
 
   return (
     <div className="space-y-6">
@@ -41,8 +45,8 @@ export default function PortfolioOverviewPage() {
           <span className="font-medium text-slate-900">数据来源</span>
           <span>
             {data.data_source === "customer_import" ? "客户导入表格" : "演示数据"}
-            {data.source_batch_id ? ` #${data.source_batch_id}` : ""}
-            {data.source_filename ? ` · ${data.source_filename}` : ""}
+            {sourceCount ? ` · ${sourceCount}个批次` : ""}
+            {sourceNames ? ` · ${sourceNames}` : ""}
           </span>
         </div>
       </div>

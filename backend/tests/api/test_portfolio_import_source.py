@@ -63,6 +63,7 @@ def _upload_import(client: TestClient) -> dict:
 
 def test_portfolio_pages_use_latest_customer_import(authed_client):
     batch = _upload_import(authed_client)
+    assert batch["status"] == "active"
 
     overview = authed_client.get("/api/portfolio/overview")
     assert overview.status_code == 200, overview.text
@@ -175,5 +176,48 @@ def test_clear_portfolio_source_preserves_import_history(authed_client):
     batches = authed_client.get("/api/data-import/batches")
     assert batches.status_code == 200, batches.text
     statuses = {item["id"]: item["status"] for item in batches.json()}
-    assert statuses[new_batch["id"]] == "parsed"
+    assert statuses[new_batch["id"]] == "active"
     assert statuses[old_batch["id"]] == "archived"
+
+
+def test_multiple_batches_can_be_merged_as_portfolio_source(authed_client):
+    first_batch = _upload_import(authed_client)
+    second_batch = _upload_import(authed_client)
+    assert first_batch["id"] != second_batch["id"]
+
+    listed = authed_client.get("/api/data-import/batches")
+    assert listed.status_code == 200, listed.text
+    initial_statuses = {item["id"]: item["status"] for item in listed.json()}
+    assert initial_statuses[first_batch["id"]] == "archived"
+    assert initial_statuses[second_batch["id"]] == "active"
+
+    selected = authed_client.post(
+        "/api/portfolio/source/select",
+        json={"batch_ids": [first_batch["id"], second_batch["id"]]},
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["active_batch_ids"] == [first_batch["id"], second_batch["id"]]
+    assert selected.json()["active_batches"] == 2
+
+    overview = authed_client.get("/api/portfolio/overview")
+    assert overview.status_code == 200, overview.text
+    body = overview.json()
+    assert body["data_source"] == "customer_import"
+    assert set(body["source_batch_ids"]) == {first_batch["id"], second_batch["id"]}
+    assert body["total_asset_count"] == 4
+    assert body["total_ead"] == 600000
+
+    segmentation = authed_client.get(
+        "/api/portfolio/segmentation",
+        params={"dimension": "recovered_status"},
+    )
+    assert segmentation.status_code == 200, segmentation.text
+    groups = {item["dimension_value"]: item for item in segmentation.json()["groups"]}
+    assert groups["未收回"]["asset_count"] == 2
+    assert groups["已入库"]["asset_count"] == 2
+
+    updated = authed_client.get("/api/data-import/batches")
+    assert updated.status_code == 200, updated.text
+    statuses = {item["id"]: item["status"] for item in updated.json()}
+    assert statuses[first_batch["id"]] == "active"
+    assert statuses[second_batch["id"]] == "active"

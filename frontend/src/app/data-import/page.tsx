@@ -5,6 +5,7 @@ import {
   clearPortfolioDataSource,
   listDataImportBatches,
   listDataImportRows,
+  selectPortfolioDataSource,
   uploadCustomerDataImport,
   type DataImportBatchInfo,
   type DataImportRowInfo,
@@ -47,11 +48,25 @@ function shortDate(value: string) {
 }
 
 function statusBadge(status: string) {
+  if (status === "active") return "bg-blue-50 text-blue-700 border-blue-200";
   if (status === "parsed") return "bg-emerald-50 text-emerald-700 border-emerald-200";
   if (status === "archived") return "bg-slate-50 text-slate-600 border-slate-200";
   if (status === "empty") return "bg-slate-50 text-slate-600 border-slate-200";
   if (status === "failed") return "bg-red-50 text-red-700 border-red-200";
   return "bg-blue-50 text-blue-700 border-blue-200";
+}
+
+function statusLabel(status: string) {
+  if (status === "active") return "分析中";
+  if (status === "parsed") return "可用";
+  if (status === "archived") return "已归档";
+  if (status === "empty") return "空批次";
+  if (status === "failed") return "失败";
+  return status;
+}
+
+function canSelectAsPortfolioSource(batch: DataImportBatchInfo) {
+  return batch.import_type === "asset_ledger" && batch.success_rows > 0;
 }
 
 function rowBadge(status: string) {
@@ -66,11 +81,13 @@ export default function DataImportPage() {
   const [importType, setImportType] = useState("asset_ledger");
   const [uploading, setUploading] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [selectingSource, setSelectingSource] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [batches, setBatches] = useState<DataImportBatchInfo[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<DataImportBatchInfo | null>(null);
+  const [selectedSourceBatchIds, setSelectedSourceBatchIds] = useState<number[]>([]);
   const [rows, setRows] = useState<DataImportRowInfo[]>([]);
   const [rowStatus, setRowStatus] = useState("");
   const [uploadResult, setUploadResult] = useState<DataImportUploadResult | null>(null);
@@ -78,6 +95,11 @@ export default function DataImportPage() {
   async function loadBatches() {
     const data = await listDataImportBatches();
     setBatches(data);
+    setSelectedSourceBatchIds(
+      data
+        .filter((batch) => batch.status === "active" && canSelectAsPortfolioSource(batch))
+        .map((batch) => batch.id)
+    );
     if (!selectedBatch && data.length > 0) {
       await loadRows(data[0], "");
     }
@@ -156,6 +178,35 @@ export default function DataImportPage() {
       setError(err instanceof Error ? err.message : "清空组合数据源失败");
     } finally {
       setClearing(false);
+    }
+  }
+
+  function toggleSourceBatch(batch: DataImportBatchInfo) {
+    if (!canSelectAsPortfolioSource(batch)) return;
+    setSelectedSourceBatchIds((current) =>
+      current.includes(batch.id)
+        ? current.filter((id) => id !== batch.id)
+        : [...current, batch.id]
+    );
+  }
+
+  async function handleSelectPortfolioSource() {
+    if (selectedSourceBatchIds.length === 0) return;
+    const confirmed = window.confirm(
+      `确认将已勾选的 ${selectedSourceBatchIds.length} 个批次合并设为组合分析数据源？未勾选的资产台账批次会保留历史但不参与本次分析。`
+    );
+    if (!confirmed) return;
+    setSelectingSource(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await selectPortfolioDataSource(selectedSourceBatchIds);
+      setMessage(`${result.message}，组合分析将合并这些批次的可用行`);
+      await loadBatches();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "设置组合分析数据源失败");
+    } finally {
+      setSelectingSource(false);
     }
   }
 
@@ -286,14 +337,29 @@ export default function DataImportPage() {
 
       <section className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
         <div className="rounded-xl border bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">最近接入批次</h2>
-            <button
-              onClick={() => loadBatches().catch(console.error)}
-              className="text-xs font-medium text-blue-600 hover:text-blue-700"
-            >
-              刷新
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">最近接入批次</h2>
+              <p className="mt-1 text-xs text-gray-500">
+                勾选多个资产/逾期台账，可合并设为组合分析数据源。
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-500">已选 {selectedSourceBatchIds.length} 个</span>
+              <button
+                onClick={handleSelectPortfolioSource}
+                disabled={selectedSourceBatchIds.length === 0 || selectingSource}
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:bg-blue-200"
+              >
+                {selectingSource ? "设置中..." : "设为组合分析数据源"}
+              </button>
+              <button
+                onClick={() => loadBatches().catch(console.error)}
+                className="text-xs font-medium text-blue-600 hover:text-blue-700"
+              >
+                刷新
+              </button>
+            </div>
           </div>
           <div className="mt-4 space-y-2">
             {batches.length === 0 && (
@@ -302,32 +368,48 @@ export default function DataImportPage() {
               </div>
             )}
             {batches.map((batch) => (
-              <button
+              <div
                 key={batch.id}
-                onClick={() => loadRows(batch).catch(console.error)}
-                className={`w-full rounded-lg border p-3 text-left transition ${
+                className={`flex items-start gap-3 rounded-lg border p-3 transition ${
                   selectedBatch?.id === batch.id
                     ? "border-blue-200 bg-blue-50"
                     : "border-gray-100 hover:bg-gray-50"
                 }`}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="truncate text-sm font-semibold text-gray-900">
-                    {batch.filename}
+                <label className="mt-0.5 flex items-center gap-2 text-xs text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={selectedSourceBatchIds.includes(batch.id)}
+                    disabled={!canSelectAsPortfolioSource(batch)}
+                    onChange={() => toggleSourceBatch(batch)}
+                    className="h-4 w-4 rounded border-gray-300"
+                    aria-label={`选择批次 ${batch.id} 作为组合分析数据源`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => loadRows(batch).catch(console.error)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="truncate text-sm font-semibold text-gray-900">
+                      {batch.filename}
+                    </div>
+                    <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadge(batch.status)}`}>
+                      {statusLabel(batch.status)}
+                    </span>
                   </div>
-                  <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadge(batch.status)}`}>
-                    {batch.status}
-                  </span>
-                </div>
-                <div className="mt-2 text-xs text-gray-500">
-                  {batch.source_system || "未标注来源"} · {shortDate(batch.created_at)}
-                </div>
-                <div className="mt-2 flex gap-3 text-xs">
-                  <span>总 {batch.total_rows}</span>
-                  <span className="text-emerald-600">可用 {batch.success_rows}</span>
-                  <span className="text-orange-600">错误 {batch.error_rows}</span>
-                </div>
-              </button>
+                  <div className="mt-2 text-xs text-gray-500">
+                    {batch.source_system || "未标注来源"} · {shortDate(batch.created_at)}
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                    <span>{batch.import_type}</span>
+                    <span>总 {batch.total_rows}</span>
+                    <span className="text-emerald-600">可用 {batch.success_rows}</span>
+                    <span className="text-orange-600">错误 {batch.error_rows}</span>
+                  </div>
+                </button>
+              </div>
             ))}
           </div>
         </div>

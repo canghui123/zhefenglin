@@ -385,6 +385,13 @@ def create_import_batch(
     status = "failed" if parsed.total_rows > 0 and parsed.success_rows == 0 else "parsed"
     if parsed.total_rows == 0:
         status = "empty"
+    if import_type == "asset_ledger" and status == "parsed":
+        data_import_repo.archive_active_batches(
+            session,
+            tenant_id=tenant_id,
+            import_type=import_type,
+        )
+        status = "active"
 
     batch = data_import_repo.create_batch(
         session,

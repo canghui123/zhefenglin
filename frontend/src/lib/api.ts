@@ -226,6 +226,19 @@ export async function clearPortfolioDataSource() {
   );
 }
 
+export async function selectPortfolioDataSource(batchIds: number[]) {
+  return request<{
+    data_source: string;
+    active_batch_ids: number[];
+    active_batches: number;
+    message: string;
+  }>("/api/portfolio/source/select", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ batch_ids: batchIds }),
+  });
+}
+
 // ============ 执行工单 API ============
 
 export interface WorkOrderCreate {
@@ -935,7 +948,9 @@ export interface PortfolioOverviewData {
   scenario_name?: string;
   data_source?: string;
   source_batch_id?: number | null;
+  source_batch_ids?: number[];
   source_filename?: string | null;
+  source_filenames?: string[];
   total_ead: number;
   total_asset_count: number;
   total_expected_loss: number;

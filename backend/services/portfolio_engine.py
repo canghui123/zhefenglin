@@ -166,17 +166,25 @@ def _asset_payload(row) -> dict:
 
 
 def generate_portfolio_from_imports(session: Session, *, tenant_id: int) -> Optional[dict]:
-    """Build portfolio analytics from the latest valid customer import batch."""
-    batch = data_import_repo.get_latest_batch_with_rows(
+    """Build portfolio analytics from active customer import batches."""
+    batches = data_import_repo.list_active_batches_with_rows(
         session,
         tenant_id=tenant_id,
         import_type="asset_ledger",
-    ) or data_import_repo.get_latest_batch_with_rows(session, tenant_id=tenant_id)
-    if batch is None:
+    )
+    if not batches:
+        latest = data_import_repo.get_latest_batch_with_rows(
+            session,
+            tenant_id=tenant_id,
+            import_type="asset_ledger",
+        ) or data_import_repo.get_latest_batch_with_rows(session, tenant_id=tenant_id)
+        batches = [latest] if latest else []
+    if not batches:
         return None
 
     rows = [
         row
+        for batch in batches
         for row in data_import_repo.list_valid_rows_for_batch(session, batch_id=batch.id)
         if _row_financials(row)[0] > 0
     ]
@@ -293,8 +301,10 @@ def generate_portfolio_from_imports(session: Session, *, tenant_id: int) -> Opti
         "snapshot_date": date.today().isoformat(),
         "scenario_name": "customer_import",
         "data_source": "customer_import",
-        "source_batch_id": batch.id,
-        "source_filename": batch.filename,
+        "source_batch_id": batches[0].id,
+        "source_batch_ids": [batch.id for batch in batches],
+        "source_filename": batches[0].filename,
+        "source_filenames": [batch.filename for batch in batches],
         "total_ead": round(total_ead, 2),
         "total_asset_count": len(rows),
         "total_expected_loss": round(total_loss, 2),
@@ -319,7 +329,9 @@ def generate_empty_portfolio() -> dict:
         "scenario_name": "empty",
         "data_source": "empty",
         "source_batch_id": None,
+        "source_batch_ids": [],
         "source_filename": None,
+        "source_filenames": [],
         "total_ead": 0,
         "total_asset_count": 0,
         "total_expected_loss": 0,

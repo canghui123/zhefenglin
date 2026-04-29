@@ -8,6 +8,11 @@ from sqlalchemy.orm import Session
 from db.models.data_import import DataImportBatch, DataImportRow
 
 
+ACTIVE_SOURCE_STATUS = "active"
+ARCHIVED_SOURCE_STATUS = "archived"
+PARSED_STATUS = "parsed"
+
+
 def create_batch(
     session: Session,
     *,
@@ -76,13 +81,30 @@ def get_latest_batch_with_rows(
         select(DataImportBatch)
         .where(DataImportBatch.tenant_id == tenant_id)
         .where(DataImportBatch.success_rows > 0)
-        .where(DataImportBatch.status == "parsed")
+        .where(DataImportBatch.status == PARSED_STATUS)
         .order_by(DataImportBatch.created_at.desc(), DataImportBatch.id.desc())
         .limit(1)
     )
     if import_type:
         stmt = stmt.where(DataImportBatch.import_type == import_type)
     return session.scalars(stmt).first()
+
+
+def list_active_batches_with_rows(
+    session: Session,
+    *,
+    tenant_id: int,
+    import_type: str = "asset_ledger",
+) -> list[DataImportBatch]:
+    stmt = (
+        select(DataImportBatch)
+        .where(DataImportBatch.tenant_id == tenant_id)
+        .where(DataImportBatch.import_type == import_type)
+        .where(DataImportBatch.success_rows > 0)
+        .where(DataImportBatch.status == ACTIVE_SOURCE_STATUS)
+        .order_by(DataImportBatch.created_at.desc(), DataImportBatch.id.desc())
+    )
+    return list(session.scalars(stmt).all())
 
 
 def has_any_batch(
@@ -111,8 +133,49 @@ def archive_active_batches(
         update(DataImportBatch)
         .where(DataImportBatch.tenant_id == tenant_id)
         .where(DataImportBatch.import_type == import_type)
-        .where(DataImportBatch.status == "parsed")
-        .values(status="archived")
+        .where(DataImportBatch.status.in_([ACTIVE_SOURCE_STATUS, PARSED_STATUS]))
+        .values(status=ARCHIVED_SOURCE_STATUS)
+    )
+    session.flush()
+    return int(result.rowcount or 0)
+
+
+def list_source_batches_by_ids(
+    session: Session,
+    *,
+    tenant_id: int,
+    batch_ids: list[int],
+    import_type: str = "asset_ledger",
+) -> list[DataImportBatch]:
+    if not batch_ids:
+        return []
+    stmt = (
+        select(DataImportBatch)
+        .where(DataImportBatch.tenant_id == tenant_id)
+        .where(DataImportBatch.import_type == import_type)
+        .where(DataImportBatch.success_rows > 0)
+        .where(DataImportBatch.id.in_(batch_ids))
+        .order_by(DataImportBatch.created_at.desc(), DataImportBatch.id.desc())
+    )
+    return list(session.scalars(stmt).all())
+
+
+def activate_batches_as_source(
+    session: Session,
+    *,
+    tenant_id: int,
+    batch_ids: list[int],
+    import_type: str = "asset_ledger",
+) -> int:
+    if not batch_ids:
+        return 0
+    archive_active_batches(session, tenant_id=tenant_id, import_type=import_type)
+    result = session.execute(
+        update(DataImportBatch)
+        .where(DataImportBatch.tenant_id == tenant_id)
+        .where(DataImportBatch.import_type == import_type)
+        .where(DataImportBatch.id.in_(batch_ids))
+        .values(status=ACTIVE_SOURCE_STATUS)
     )
     session.flush()
     return int(result.rowcount or 0)

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from db.session import get_db_session
@@ -33,6 +34,10 @@ router = APIRouter(
 
 # 缓存mock数据（单次启动期间不变）
 _cache = {}
+
+
+class PortfolioSourceSelection(BaseModel):
+    batch_ids: list[int] = Field(..., min_length=1)
 
 
 def get_optional_portfolio_tenant_id(
@@ -92,6 +97,43 @@ async def clear_portfolio_source(
         "data_source": "empty",
         "cleared_batches": cleared,
         "message": "已清空当前组合分析数据源，历史导入批次和明细仍保留",
+    }
+
+
+@router.post("/source/select", dependencies=[Depends(require_role("operator"))])
+async def select_portfolio_source(
+    payload: PortfolioSourceSelection,
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
+    """选择一个或多个导入批次作为组合分析数据源。"""
+    if tenant_id is None:
+        raise HTTPException(status_code=403, detail="未配置默认租户")
+    batch_ids = list(dict.fromkeys(payload.batch_ids))
+    batches = data_import_repo.list_source_batches_by_ids(
+        session,
+        tenant_id=tenant_id,
+        batch_ids=batch_ids,
+        import_type="asset_ledger",
+    )
+    found_ids = {batch.id for batch in batches}
+    missing_ids = [batch_id for batch_id in batch_ids if batch_id not in found_ids]
+    if missing_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"以下批次不能作为组合分析数据源: {missing_ids}",
+        )
+    activated = data_import_repo.activate_batches_as_source(
+        session,
+        tenant_id=tenant_id,
+        batch_ids=batch_ids,
+        import_type="asset_ledger",
+    )
+    return {
+        "data_source": "customer_import",
+        "active_batch_ids": batch_ids,
+        "active_batches": activated,
+        "message": f"已将 {activated} 个批次设为组合分析数据源",
     }
 
 
