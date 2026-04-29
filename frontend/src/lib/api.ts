@@ -433,6 +433,23 @@ export interface ModelLearningRunInfo extends ModelFeedbackSummary {
   created_at: string;
 }
 
+export interface ModelFeedbackBatchImportError {
+  row_number: number;
+  field: string;
+  message: string;
+}
+
+export interface ModelFeedbackBatchImportResult {
+  filename: string;
+  total_rows: number;
+  imported_rows: number;
+  error_rows: number;
+  errors: ModelFeedbackBatchImportError[];
+  detected_columns: Record<string, string>;
+  unmapped_columns: string[];
+  learning_run: ModelLearningRunInfo | null;
+}
+
 export async function listDisposalOutcomes() {
   return request<DisposalOutcomeInfo[]>("/api/model-feedback/outcomes");
 }
@@ -461,6 +478,23 @@ export async function createModelLearningRun(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+}
+
+export async function importModelFeedbackBatch(
+  file: File,
+  options: {
+    apply_region_adjustments?: boolean;
+    apply_success_adjustment?: boolean;
+  } = {},
+) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("apply_region_adjustments", String(Boolean(options.apply_region_adjustments)));
+  form.append("apply_success_adjustment", String(Boolean(options.apply_success_adjustment)));
+  return request<ModelFeedbackBatchImportResult>("/api/model-feedback/outcomes/import", {
+    method: "POST",
+    body: form,
   });
 }
 

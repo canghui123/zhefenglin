@@ -3,12 +3,14 @@
 import { useEffect, useState } from "react";
 import {
   createDisposalOutcome,
+  importModelFeedbackBatch,
   createModelLearningRun,
   getModelFeedbackSummary,
   listDisposalOutcomes,
   listModelLearningRuns,
   type DisposalOutcomeCreate,
   type DisposalOutcomeInfo,
+  type ModelFeedbackBatchImportResult,
   type ModelFeedbackSummary,
   type ModelLearningRunInfo,
 } from "@/lib/api";
@@ -44,6 +46,10 @@ export default function PortfolioLearningPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState("");
   const [message, setMessage] = useState("");
+  const [batchFile, setBatchFile] = useState<File | null>(null);
+  const [batchApplySuccess, setBatchApplySuccess] = useState(false);
+  const [batchApplyRegion, setBatchApplyRegion] = useState(false);
+  const [batchResult, setBatchResult] = useState<ModelFeedbackBatchImportResult | null>(null);
 
   async function refresh() {
     const [nextSummary, nextOutcomes, nextRuns] = await Promise.all([
@@ -78,6 +84,32 @@ export default function PortfolioLearningPage() {
       setMessage("已记录真实处置结果，模型复盘指标已更新");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "录入失败");
+    } finally {
+      setSubmitting("");
+    }
+  }
+
+  async function handleBatchImport() {
+    if (!batchFile) return;
+    setSubmitting("batch-import");
+    setMessage("");
+    setBatchResult(null);
+    try {
+      const result = await importModelFeedbackBatch(batchFile, {
+        apply_region_adjustments: batchApplyRegion,
+        apply_success_adjustment: batchApplySuccess,
+      });
+      setBatchResult(result);
+      await refresh();
+      if (result.imported_rows > 0) {
+        setMessage(
+          `已导入 ${result.imported_rows} 条复盘样本并生成学习记录，${result.error_rows} 行需修正`,
+        );
+      } else {
+        setMessage("表格未导入有效复盘样本，请根据错误提示修正后重新上传");
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "批量学习失败");
     } finally {
       setSubmitting("");
     }
@@ -178,6 +210,79 @@ export default function PortfolioLearningPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
+        <div className="space-y-6">
+        <div className="rounded-xl border border-emerald-100 bg-white p-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-gray-700">批量上传学习样本</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              支持 CSV/XLS/XLSX。系统会把每一行真实处置结果导入复盘样本，并立即生成学习运行。
+            </p>
+          </div>
+          <div className="space-y-3">
+            <label className="block text-xs font-medium text-gray-600">
+              复盘学习表格
+              <input
+                accept=".csv,.xls,.xlsx"
+                className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+                type="file"
+                onChange={(event) => setBatchFile(event.target.files?.[0] || null)}
+              />
+            </label>
+            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-800">
+              建议列名：资产标识、实际路径、预测回款、实际回款、预测周期、实际周期、预测成功率、实际结果。
+            </div>
+            <label className="flex items-start gap-2 text-xs text-gray-600">
+              <input
+                checked={batchApplySuccess}
+                className="mt-0.5"
+                type="checkbox"
+                onChange={(event) => setBatchApplySuccess(event.target.checked)}
+              />
+              <span>导入后应用成功率修正到后续沙盘模型</span>
+            </label>
+            <label className="flex items-start gap-2 text-xs text-gray-600">
+              <input
+                checked={batchApplyRegion}
+                className="mt-0.5"
+                type="checkbox"
+                onChange={(event) => setBatchApplyRegion(event.target.checked)}
+              />
+              <span>导入后应用区域系数修正</span>
+            </label>
+            <button
+              className="w-full rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+              disabled={!batchFile || submitting === "batch-import"}
+              onClick={handleBatchImport}
+            >
+              {submitting === "batch-import" ? "学习中..." : "上传并学习"}
+            </button>
+            {batchResult && (
+              <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3 text-xs text-gray-600">
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <MetricPill label="总行数" value={`${batchResult.total_rows}`} />
+                  <MetricPill label="已导入" value={`${batchResult.imported_rows}`} tone="green" />
+                  <MetricPill label="需修正" value={`${batchResult.error_rows}`} tone="orange" />
+                </div>
+                {batchResult.learning_run && (
+                  <div className="mt-3 rounded-md bg-white px-3 py-2">
+                    学习运行 #{batchResult.learning_run.id}，样本 {batchResult.learning_run.sample_count}，
+                    成功率建议修正 {pct(batchResult.learning_run.suggested_success_adjustment)}
+                  </div>
+                )}
+                {batchResult.errors.length > 0 && (
+                  <div className="mt-3 space-y-1">
+                    {batchResult.errors.slice(0, 5).map((error) => (
+                      <div key={`${error.row_number}-${error.field}-${error.message}`}>
+                        第 {error.row_number} 行：{error.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="rounded-xl border bg-white p-5">
           <h3 className="mb-4 text-sm font-semibold text-gray-700">录入真实处置结果</h3>
           <div className="space-y-3">
@@ -277,6 +382,7 @@ export default function PortfolioLearningPage() {
               {submitting === "outcome" ? "保存中..." : "记录处置结果"}
             </button>
           </div>
+        </div>
         </div>
 
         <div className="space-y-6">
@@ -448,6 +554,29 @@ function MetricCard({ title, value }: { title: string; value: string }) {
     <div className="rounded-xl border bg-white p-4">
       <div className="text-xs text-gray-500">{title}</div>
       <div className="mt-2 text-xl font-bold text-gray-900">{value}</div>
+    </div>
+  );
+}
+
+function MetricPill({
+  label,
+  value,
+  tone = "slate",
+}: {
+  label: string;
+  value: string;
+  tone?: "slate" | "green" | "orange";
+}) {
+  const toneClass =
+    tone === "green"
+      ? "text-emerald-700"
+      : tone === "orange"
+        ? "text-orange-700"
+        : "text-slate-700";
+  return (
+    <div className="rounded-md bg-white px-2 py-1">
+      <div className="text-[11px] text-gray-400">{label}</div>
+      <div className={`text-sm font-semibold ${toneClass}`}>{value}</div>
     </div>
   );
 }

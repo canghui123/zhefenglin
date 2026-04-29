@@ -106,3 +106,20 @@ class ModelLearningRunOut(BaseModel):
     applied: bool
     success_adjustment_applied: bool
     created_at: str
+
+
+class ModelFeedbackBatchImportError(BaseModel):
+    row_number: int
+    field: str
+    message: str
+
+
+class ModelFeedbackBatchImportResult(BaseModel):
+    filename: str
+    total_rows: int
+    imported_rows: int
+    error_rows: int
+    errors: list[ModelFeedbackBatchImportError] = Field(default_factory=list)
+    detected_columns: dict[str, str] = Field(default_factory=dict)
+    unmapped_columns: list[str] = Field(default_factory=list)
+    learning_run: Optional[ModelLearningRunOut] = None

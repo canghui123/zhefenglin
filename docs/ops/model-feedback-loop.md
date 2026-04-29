@@ -11,11 +11,32 @@
 
 - `GET /api/model-feedback/outcomes`
 - `POST /api/model-feedback/outcomes`
+- `POST /api/model-feedback/outcomes/import`
 - `GET /api/model-feedback/summary`
 - `GET /api/model-feedback/learning-runs`
 - `POST /api/model-feedback/learning-runs`
 
-录入和查看需要 `operator` 及以上权限；创建学习运行需要 `manager` 及以上权限。
+录入和查看需要 `operator` 及以上权限；创建学习运行和批量导入学习样本需要 `manager` 及以上权限。
+
+### 批量导入学习样本
+
+`POST /api/model-feedback/outcomes/import` 接收 `multipart/form-data`：
+
+- `file`：CSV/XLS/XLSX 表格。
+- `apply_success_adjustment`：可选，是否在导入后把成功率修正应用到后续沙盘。
+- `apply_region_adjustments`：可选，是否在导入后应用区域系数修正。
+
+表格每一行会先转换为一条 `disposal_outcomes` 复盘样本，再自动生成一次 `model_learning_runs`。有效行会被导入；无效行会在响应里返回行号、字段和错误信息，便于客户修正后重新上传。
+
+建议表头：
+
+- `资产标识` / `资产/VIN/合同标识`
+- `实际路径`：支持拍卖、收车/拖车、常规诉讼、特别程序、分期重组/和解等写法
+- `预测回款`、`实际回款`
+- `预测周期`、`实际周期`
+- `预测成功率`：支持 `0.75` 或 `75%`
+- `实际结果`：成功、部分成功、失败
+- 可选：`省份`、`城市`、`复盘备注`
 
 ## 调整策略
 
@@ -42,6 +63,7 @@
 页面支持：
 
 - 录入真实处置结果
+- 上传复盘学习表格并批量生成学习样本
 - 查看整体预测偏差与成功率差距
 - 查看路径级成功率修正建议与当前生效校准
 - 查看区域维度调整建议

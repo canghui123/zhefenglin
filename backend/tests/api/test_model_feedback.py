@@ -106,3 +106,41 @@ def test_manager_can_create_learning_run_but_operator_cannot(authed_client):
     assert run.status_code == 200, run.text
     assert run.json()["sample_count"] == 1
     assert run.json()["applied"] is False
+
+
+def test_manager_can_import_feedback_spreadsheet_and_trigger_learning():
+    _seed_user(
+        email="feedback-import-manager@example.com",
+        role="manager",
+        tenant_code="feedback-import",
+    )
+    manager = _login("feedback-import-manager@example.com")
+    csv = "\n".join(
+        [
+            "资产标识,实际路径,省份,城市,预测回款,实际回款,预测周期,实际周期,预测成功率,实际结果,复盘备注",
+            "CAR-001,拍卖,江苏省,南京市,100000,90000,30,45,75%,部分成功,实际拖期",
+            "CAR-002,拖车,江苏省,苏州市,80000,85000,60,50,0.60,成功,找车顺利",
+            ",拍卖,江苏省,南京市,100000,90000,30,45,75%,失败,缺少资产",
+        ]
+    )
+
+    response = manager.post(
+        "/api/model-feedback/outcomes/import",
+        files={"file": ("feedback.csv", csv.encode("utf-8-sig"), "text/csv")},
+        data={"apply_success_adjustment": "true"},
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total_rows"] == 3
+    assert data["imported_rows"] == 2
+    assert data["error_rows"] == 1
+    assert data["errors"][0]["row_number"] == 4
+    assert data["learning_run"]["sample_count"] == 2
+    assert data["learning_run"]["success_adjustment_applied"] is True
+
+    outcomes = manager.get("/api/model-feedback/outcomes")
+    assert outcomes.status_code == 200, outcomes.text
+    rows = outcomes.json()
+    assert {row["asset_identifier"] for row in rows} >= {"CAR-001", "CAR-002"}
+    assert all(row["source_type"] == "batch_feedback_upload" for row in rows)
