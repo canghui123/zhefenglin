@@ -14,6 +14,20 @@ def _portfolio_csv() -> bytes:
     ).encode("utf-8-sig")
 
 
+def _portfolio_alias_csv() -> bytes:
+    return (
+        "案件号,贷款合同号,借款人,品牌车系,车架号,资产城市,DPD,贷款余额,市场估值,是否入库\n"
+        "ALIAS-001,ALIAS-HT-001,王五,奔驰C级,LSV000001,苏州市,46,210000,160000,未收回\n"
+    ).encode("utf-8-sig")
+
+
+def _portfolio_without_amount_csv() -> bytes:
+    return (
+        "资产编号,合同编号,客户姓名,品牌型号,VIN,车牌号,资产所在地,逾期天数,车辆状态\n"
+        "NOAMT-001,HT-NOAMT-001,赵六,大众帕萨特,LFVNOAMT001,苏B12345,江苏省苏州市,88,未收回\n"
+    ).encode("utf-8-sig")
+
+
 def _seed_user(email: str, *, role: str = "operator"):
     gen = get_db_session()
     session = next(gen)
@@ -56,6 +70,16 @@ def _upload_import(client: TestClient) -> dict:
         "/api/data-import/upload",
         data={"source_system": "customer-core", "import_type": "asset_ledger"},
         files={"file": ("customer-portfolio.csv", _portfolio_csv(), "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["batch"]
+
+
+def _upload_file(client: TestClient, filename: str, content: bytes) -> dict:
+    response = client.post(
+        "/api/data-import/upload",
+        data={"source_system": "customer-core", "import_type": "asset_ledger"},
+        files={"file": (filename, content, "text/csv")},
     )
     assert response.status_code == 200, response.text
     return response.json()["batch"]
@@ -221,3 +245,38 @@ def test_multiple_batches_can_be_merged_as_portfolio_source(authed_client):
     statuses = {item["id"]: item["status"] for item in updated.json()}
     assert statuses[first_batch["id"]] == "active"
     assert statuses[second_batch["id"]] == "active"
+
+
+def test_portfolio_import_recognizes_common_customer_amount_aliases(authed_client):
+    batch = _upload_file(authed_client, "customer-alias.csv", _portfolio_alias_csv())
+    assert batch["status"] == "active"
+
+    overview = authed_client.get("/api/portfolio/overview")
+    assert overview.status_code == 200, overview.text
+    body = overview.json()
+    assert body["data_source"] == "customer_import"
+    assert body["source_batch_id"] == batch["id"]
+    assert body["total_asset_count"] == 1
+    assert body["total_ead"] == 210000
+
+
+def test_select_portfolio_source_rejects_batches_without_analysis_amounts(authed_client):
+    batch = _upload_file(
+        authed_client,
+        "customer-no-amount.csv",
+        _portfolio_without_amount_csv(),
+    )
+    assert batch["status"] == "parsed"
+
+    selected = authed_client.post(
+        "/api/portfolio/source/select",
+        json={"batch_ids": [batch["id"]]},
+    )
+    assert selected.status_code == 400
+    assert "没有可参与组合分析的金额数据" in selected.json()["error"]["message"]
+
+    status = authed_client.get("/api/portfolio/source/status")
+    assert status.status_code == 200, status.text
+    status_body = status.json()
+    assert status_body["data_source"] == "empty"
+    assert status_body["source_summary"]["analyzable_rows"] == 0

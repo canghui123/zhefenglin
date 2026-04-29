@@ -58,7 +58,7 @@ FIELD_ALIASES: dict[str, list[str]] = {
     ],
     "contract_number": ["合同编号", "合同号", "借据号", "贷款合同号", "contract_no"],
     "debtor_name": ["客户姓名", "债务人", "借款人", "姓名", "客户名称", "debtor"],
-    "car_description": ["车型", "品牌型号", "车辆", "车辆描述", "车辆型号", "车型名称"],
+    "car_description": ["车型", "品牌型号", "车辆", "车辆描述", "车辆型号", "车型名称", "品牌车系"],
     "vin": ["vin", "VIN", "车架号", "车辆识别代码", "识别代码"],
     "license_plate": ["车牌", "牌照", "车牌号", "号牌号码"],
     "province": ["省份", "省", "所在省", "资产省份"],
@@ -66,10 +66,47 @@ FIELD_ALIASES: dict[str, list[str]] = {
     "location": ["所在地", "资产所在地", "地区", "区域", "车辆所在地"],
     "overdue_bucket": ["逾期阶段", "逾期分段", "逾期桶", "M值", "bucket"],
     "overdue_days": ["逾期天数", "逾期日数", "DPD", "overdue_days"],
-    "overdue_amount": ["逾期金额", "欠款金额", "未偿金额", "EAD", "风险敞口", "当前欠款"],
-    "loan_principal": ["剩余本金", "本金", "贷款余额", "未还本金"],
-    "vehicle_value": ["车辆估值", "车300估值", "市场价", "评估价", "车辆价值"],
-    "recovered_status": ["车辆状态", "收车状态", "是否收回", "入库状态", "占有状态"],
+    "overdue_amount": [
+        "逾期金额",
+        "欠款金额",
+        "未偿金额",
+        "未偿余额",
+        "应收金额",
+        "应收总额",
+        "债权余额",
+        "待收金额",
+        "EAD",
+        "风险敞口",
+        "当前欠款",
+    ],
+    "loan_principal": [
+        "剩余本金",
+        "本金",
+        "本金余额",
+        "未还本金",
+        "未偿本金",
+        "贷款余额",
+        "贷款本金余额",
+        "剩余贷款本金",
+        "借款余额",
+        "合同余额",
+        "当前本金",
+    ],
+    "vehicle_value": [
+        "车辆估值",
+        "当前车300估值",
+        "当前车300估值(元)",
+        "车300估值",
+        "市场价",
+        "市场估值",
+        "评估价",
+        "评估价格",
+        "车辆评估价",
+        "车辆价值",
+        "估值金额",
+        "二手车估值",
+    ],
+    "recovered_status": ["车辆状态", "收车状态", "是否收回", "入库状态", "是否入库", "车辆是否入库", "占有状态", "处置状态"],
     "gps_last_seen": ["GPS时间", "定位时间", "最近定位", "gps_last_seen", "最后GPS时间"],
 }
 
@@ -261,6 +298,21 @@ def _normalize_recovered_status(value: Any) -> Optional[str]:
     return text[:64]
 
 
+def _row_analysis_amount(row: dict) -> float:
+    """Return the EAD proxy used by portfolio analysis for a parsed row."""
+    if row["row_status"] != "valid":
+        return 0
+    ead = row.get("loan_principal") or row.get("overdue_amount") or 0
+    if ead:
+        return float(ead)
+    vehicle_value = row.get("vehicle_value") or 0
+    return float(vehicle_value) / 0.65 if vehicle_value else 0
+
+
+def _has_portfolio_analyzable_rows(rows: list[dict]) -> bool:
+    return any(_row_analysis_amount(row) > 0 for row in rows)
+
+
 def _read_dataframe(filename: str, content: bytes) -> pd.DataFrame:
     ext = os.path.splitext(filename or "")[1].lower()
     if ext not in SUPPORTED_EXTENSIONS:
@@ -385,7 +437,11 @@ def create_import_batch(
     status = "failed" if parsed.total_rows > 0 and parsed.success_rows == 0 else "parsed"
     if parsed.total_rows == 0:
         status = "empty"
-    if import_type == "asset_ledger" and status == "parsed":
+    if (
+        import_type == "asset_ledger"
+        and status == "parsed"
+        and _has_portfolio_analyzable_rows(parsed.rows)
+    ):
         data_import_repo.archive_active_batches(
             session,
             tenant_id=tenant_id,

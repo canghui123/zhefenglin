@@ -165,6 +165,50 @@ def _asset_payload(row) -> dict:
     }
 
 
+def summarize_import_batches_for_portfolio(session: Session, batches: list) -> dict:
+    """Summarize how many active import rows can actually feed analytics."""
+    details = []
+    total_rows = 0
+    valid_rows = 0
+    analyzable_rows = 0
+
+    for batch in batches:
+        rows = data_import_repo.list_valid_rows_for_batch(session, batch_id=batch.id)
+        batch_analyzable = 0
+        batch_skipped_no_amount = 0
+        for row in rows:
+            ead, _vehicle_value = _row_financials(row)
+            if ead > 0:
+                batch_analyzable += 1
+            else:
+                batch_skipped_no_amount += 1
+
+        total_rows += batch.total_rows
+        valid_rows += len(rows)
+        analyzable_rows += batch_analyzable
+        details.append(
+            {
+                "id": batch.id,
+                "filename": batch.filename,
+                "status": batch.status,
+                "total_rows": batch.total_rows,
+                "success_rows": batch.success_rows,
+                "valid_rows": len(rows),
+                "analyzable_rows": batch_analyzable,
+                "skipped_no_amount_rows": batch_skipped_no_amount,
+            }
+        )
+
+    return {
+        "batch_count": len(batches),
+        "total_rows": total_rows,
+        "valid_rows": valid_rows,
+        "analyzable_rows": analyzable_rows,
+        "skipped_no_amount_rows": max(valid_rows - analyzable_rows, 0),
+        "batches": details,
+    }
+
+
 def generate_portfolio_from_imports(session: Session, *, tenant_id: int) -> Optional[dict]:
     """Build portfolio analytics from active customer import batches."""
     batches = data_import_repo.list_active_batches_with_rows(

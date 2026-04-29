@@ -16,6 +16,7 @@ from services.portfolio_engine import (
     generate_portfolio_from_imports,
     compute_strategy_comparison,
     compute_cashflow_projection,
+    summarize_import_batches_for_portfolio,
 )
 from services.recommendation_engine import (
     build_action_work_order_candidates,
@@ -123,6 +124,16 @@ async def select_portfolio_source(
             status_code=400,
             detail=f"以下批次不能作为组合分析数据源: {missing_ids}",
         )
+    source_summary = summarize_import_batches_for_portfolio(session, batches)
+    if source_summary["analyzable_rows"] == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "所选批次没有可参与组合分析的金额数据。"
+                "请确认表格包含剩余本金/贷款余额/逾期金额/风险敞口/车辆估值等字段，"
+                "或在数据接入明细中检查字段映射。"
+            ),
+        )
     activated = data_import_repo.activate_batches_as_source(
         session,
         tenant_id=tenant_id,
@@ -133,7 +144,35 @@ async def select_portfolio_source(
         "data_source": "customer_import",
         "active_batch_ids": batch_ids,
         "active_batches": activated,
+        "source_summary": source_summary,
         "message": f"已将 {activated} 个批次设为组合分析数据源",
+    }
+
+
+@router.get("/source/status", dependencies=[Depends(require_role("operator"))])
+async def portfolio_source_status(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
+    """Show active import batches and row counts used by portfolio analytics."""
+    if tenant_id is None:
+        raise HTTPException(status_code=403, detail="未配置默认租户")
+    batches = data_import_repo.list_active_batches_with_rows(
+        session,
+        tenant_id=tenant_id,
+        import_type="asset_ledger",
+    )
+    summary = summarize_import_batches_for_portfolio(session, batches)
+    return {
+        "data_source": "customer_import" if batches else "empty",
+        "active_batch_ids": [batch.id for batch in batches],
+        "active_filenames": [batch.filename for batch in batches],
+        "source_summary": summary,
+        "message": (
+            f"当前有 {summary['analyzable_rows']} 行参与组合分析"
+            if summary["analyzable_rows"] > 0
+            else "当前没有可参与组合分析的活跃行"
+        ),
     }
 
 

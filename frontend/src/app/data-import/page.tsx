@@ -202,7 +202,12 @@ export default function DataImportPage() {
     setMessage("");
     try {
       const result = await selectPortfolioDataSource(selectedSourceBatchIds);
-      setMessage(`${result.message}，组合分析将合并这些批次的可用行`);
+      const analyzableRows = result.source_summary?.analyzable_rows;
+      setMessage(
+        `${result.message}，组合分析将合并这些批次的可用行${
+          analyzableRows === undefined ? "" : `，其中 ${analyzableRows} 行参与分析`
+        }`
+      );
       await loadBatches();
     } catch (err) {
       setError(err instanceof Error ? err.message : "设置组合分析数据源失败");

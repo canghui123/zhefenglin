@@ -232,6 +232,13 @@ export async function selectPortfolioDataSource(batchIds: number[]) {
     data_source: string;
     active_batch_ids: number[];
     active_batches: number;
+    source_summary?: {
+      batch_count: number;
+      total_rows: number;
+      valid_rows: number;
+      analyzable_rows: number;
+      skipped_no_amount_rows: number;
+    };
     message: string;
   }>("/api/portfolio/source/select", {
     method: "POST",
