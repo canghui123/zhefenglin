@@ -142,10 +142,11 @@ export default function DataImportPage() {
       setSelectedBatch(result.batch);
       setRows(result.rows_preview);
       setMessage(
-        `已接入 ${result.batch.total_rows} 行，${result.batch.success_rows} 行可用，${result.batch.error_rows} 行待处理`
+        `已接入 ${result.batch.total_rows} 行，${result.batch.success_rows} 行可用，${result.batch.error_rows} 行待处理${
+          result.batch.status === "active" ? "，并已设为当前组合分析数据源" : ""
+        }`
       );
-      const data = await listDataImportBatches();
-      setBatches(data);
+      await loadBatches();
     } catch (err) {
       setError(err instanceof Error ? err.message : "上传解析失败");
     } finally {
