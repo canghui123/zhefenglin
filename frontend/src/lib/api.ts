@@ -219,6 +219,13 @@ export async function getActionWorkOrderCandidates(
   return request<ActionWorkOrderCandidateData>(`/api/portfolio/action-center/candidates?${query}`);
 }
 
+export async function clearPortfolioDataSource() {
+  return request<{ data_source: string; cleared_batches: number; message: string }>(
+    "/api/portfolio/source/clear",
+    { method: "POST" },
+  );
+}
+
 // ============ 执行工单 API ============
 
 export interface WorkOrderCreate {
@@ -927,8 +934,8 @@ export interface PortfolioOverviewData {
   snapshot_date: string;
   scenario_name?: string;
   data_source?: string;
-  source_batch_id?: number;
-  source_filename?: string;
+  source_batch_id?: number | null;
+  source_filename?: string | null;
   total_ead: number;
   total_asset_count: number;
   total_expected_loss: number;

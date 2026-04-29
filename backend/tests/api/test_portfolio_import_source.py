@@ -141,3 +141,39 @@ def test_management_decision_pages_use_imported_portfolio():
     pool_segments = {item["segment_name"] for item in supervisor.json()["high_priority_pool"]}
     assert "M3(61-90天) | 未收回" in pool_segments
     assert "M4(91-120天) | 已入库" in pool_segments
+
+
+def test_clear_portfolio_source_preserves_import_history(authed_client):
+    old_batch = _upload_import(authed_client)
+
+    cleared = authed_client.post("/api/portfolio/source/clear")
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["cleared_batches"] == 1
+
+    overview = authed_client.get("/api/portfolio/overview")
+    assert overview.status_code == 200, overview.text
+    overview_body = overview.json()
+    assert overview_body["data_source"] == "empty"
+    assert overview_body["total_asset_count"] == 0
+    assert overview_body["total_ead"] == 0
+
+    rows = authed_client.get(f"/api/data-import/batches/{old_batch['id']}/rows")
+    assert rows.status_code == 200, rows.text
+    assert rows.json()["batch"]["status"] == "archived"
+    assert len(rows.json()["rows"]) == 2
+
+    new_batch = _upload_import(authed_client)
+    assert new_batch["id"] != old_batch["id"]
+
+    refreshed = authed_client.get("/api/portfolio/overview")
+    assert refreshed.status_code == 200, refreshed.text
+    refreshed_body = refreshed.json()
+    assert refreshed_body["data_source"] == "customer_import"
+    assert refreshed_body["source_batch_id"] == new_batch["id"]
+    assert refreshed_body["total_asset_count"] == 2
+
+    batches = authed_client.get("/api/data-import/batches")
+    assert batches.status_code == 200, batches.text
+    statuses = {item["id"]: item["status"] for item in batches.json()}
+    assert statuses[new_batch["id"]] == "parsed"
+    assert statuses[old_batch["id"]] == "archived"

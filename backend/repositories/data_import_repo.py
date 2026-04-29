@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from db.models.data_import import DataImportBatch, DataImportRow
@@ -83,6 +83,39 @@ def get_latest_batch_with_rows(
     if import_type:
         stmt = stmt.where(DataImportBatch.import_type == import_type)
     return session.scalars(stmt).first()
+
+
+def has_any_batch(
+    session: Session,
+    *,
+    tenant_id: int,
+    import_type: Optional[str] = None,
+) -> bool:
+    stmt = (
+        select(DataImportBatch.id)
+        .where(DataImportBatch.tenant_id == tenant_id)
+        .limit(1)
+    )
+    if import_type:
+        stmt = stmt.where(DataImportBatch.import_type == import_type)
+    return session.scalars(stmt).first() is not None
+
+
+def archive_active_batches(
+    session: Session,
+    *,
+    tenant_id: int,
+    import_type: str = "asset_ledger",
+) -> int:
+    result = session.execute(
+        update(DataImportBatch)
+        .where(DataImportBatch.tenant_id == tenant_id)
+        .where(DataImportBatch.import_type == import_type)
+        .where(DataImportBatch.status == "parsed")
+        .values(status="archived")
+    )
+    session.flush()
+    return int(result.rowcount or 0)
 
 
 def get_batch_by_id(

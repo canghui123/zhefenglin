@@ -312,6 +312,31 @@ def generate_portfolio_from_imports(session: Session, *, tenant_id: int) -> Opti
     return {"overview": overview, "segments": segments}
 
 
+def generate_empty_portfolio() -> dict:
+    """Return an explicit empty state after customer data is cleared."""
+    overview = {
+        "snapshot_date": date.today().isoformat(),
+        "scenario_name": "empty",
+        "data_source": "empty",
+        "source_batch_id": None,
+        "source_filename": None,
+        "total_ead": 0,
+        "total_asset_count": 0,
+        "total_expected_loss": 0,
+        "total_expected_loss_rate": 0,
+        "cash_30d": 0,
+        "cash_90d": 0,
+        "cash_180d": 0,
+        "recovered_rate": 0,
+        "in_inventory_rate": 0,
+        "avg_inventory_days": 0,
+        "high_risk_segment_count": 0,
+        "provision_impact": 0,
+        "capital_release_score": 0,
+    }
+    return {"overview": overview, "segments": []}
+
+
 # ============ Mock组合生成 ============
 
 def generate_mock_portfolio(org_id: str = "default") -> dict:
@@ -639,6 +664,20 @@ def compute_cashflow_projection(segments: list, strategies_by_segment: Optional[
 
 def generate_role_recommendations(overview: dict, segments: list, role_level: str = "executive") -> list:
     """根据角色生成建议"""
+    if not segments and overview.get("data_source") == "empty":
+        return [
+            {
+                "role_level": role_level,
+                "recommendation_title": "暂无活跃组合数据",
+                "recommendation_text": "当前组合分析数据源已清空，请在数据接入中心上传新的资产/逾期台账后再查看分析建议。",
+                "expected_impact": {},
+                "feasibility_score": 1,
+                "realism_score": 1,
+                "priority": 1,
+                "approval_needed": False,
+            }
+        ]
+
     recs = []
     lr = overview.get("total_expected_loss_rate", 0)
     loss_sorted = sorted(segments, key=lambda s: s["expected_loss_amount"], reverse=True)

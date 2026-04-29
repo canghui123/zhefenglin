@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  clearPortfolioDataSource,
   listDataImportBatches,
   listDataImportRows,
   uploadCustomerDataImport,
@@ -47,6 +48,7 @@ function shortDate(value: string) {
 
 function statusBadge(status: string) {
   if (status === "parsed") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (status === "archived") return "bg-slate-50 text-slate-600 border-slate-200";
   if (status === "empty") return "bg-slate-50 text-slate-600 border-slate-200";
   if (status === "failed") return "bg-red-50 text-red-700 border-red-200";
   return "bg-blue-50 text-blue-700 border-blue-200";
@@ -63,6 +65,7 @@ export default function DataImportPage() {
   const [sourceSystem, setSourceSystem] = useState("");
   const [importType, setImportType] = useState("asset_ledger");
   const [uploading, setUploading] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [loadingRows, setLoadingRows] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -134,6 +137,25 @@ export default function DataImportPage() {
       loadRows(selectedBatch, status).catch((err) => {
         setError(err instanceof Error ? err.message : "筛选明细失败");
       });
+    }
+  }
+
+  async function handleClearPortfolioSource() {
+    const confirmed = window.confirm(
+      "确认清空当前组合分析数据源？历史导入批次和行明细会保留，组合页会进入空状态，直到你上传新的资产/逾期台账。"
+    );
+    if (!confirmed) return;
+    setClearing(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await clearPortfolioDataSource();
+      setMessage(`${result.message}，本次归档 ${result.cleared_batches} 个批次`);
+      await loadBatches();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "清空组合数据源失败");
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -214,8 +236,15 @@ export default function DataImportPage() {
             >
               {uploading ? "接入解析中..." : "上传并解析"}
             </button>
+            <button
+              onClick={handleClearPortfolioSource}
+              disabled={clearing}
+              className="rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 text-sm font-medium text-orange-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {clearing ? "清空中..." : "清空当前组合分析数据源"}
+            </button>
             <p className="text-xs text-gray-500">
-              解析结果不会直接覆盖业务数据，先进入批次台账，便于客户确认字段和异常行。
+              解析结果会保留历史批次；组合分析默认使用最新可用的资产/逾期台账。
             </p>
           </div>
 

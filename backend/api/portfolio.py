@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
-from repositories import tenant_repo
+from repositories import data_import_repo, tenant_repo
 from services.tenant_context import TENANT_HEADER
 from services.portfolio_engine import (
+    generate_empty_portfolio,
     generate_mock_portfolio,
     generate_portfolio_from_imports,
     compute_strategy_comparison,
@@ -63,9 +64,35 @@ def _get_portfolio(session: Optional[Session] = None, tenant_id: Optional[int] =
         imported = generate_portfolio_from_imports(session, tenant_id=tenant_id)
         if imported is not None:
             return imported
+        if data_import_repo.has_any_batch(
+            session,
+            tenant_id=tenant_id,
+            import_type="asset_ledger",
+        ):
+            return generate_empty_portfolio()
     if "mock" not in _cache:
         _cache["mock"] = generate_mock_portfolio()
     return _cache["mock"]
+
+
+@router.post("/source/clear", dependencies=[Depends(require_role("operator"))])
+async def clear_portfolio_source(
+    session: Session = Depends(get_db_session),
+    tenant_id: Optional[int] = Depends(get_optional_portfolio_tenant_id),
+):
+    """清空当前组合分析数据源，保留历史导入批次和行明细。"""
+    if tenant_id is None:
+        raise HTTPException(status_code=403, detail="未配置默认租户")
+    cleared = data_import_repo.archive_active_batches(
+        session,
+        tenant_id=tenant_id,
+        import_type="asset_ledger",
+    )
+    return {
+        "data_source": "empty",
+        "cleared_batches": cleared,
+        "message": "已清空当前组合分析数据源，历史导入批次和明细仍保留",
+    }
 
 
 @router.get("/overview")
@@ -80,7 +107,9 @@ async def portfolio_overview(
 
     # 补充建议区
     lr = ov["total_expected_loss_rate"]
-    if lr > 0.50:
+    if ov.get("data_source") == "empty":
+        judgment = "当前没有启用的客户资产台账，请先在数据接入中心上传新的资产/逾期表格"
+    elif lr > 0.50:
         judgment = "整体损失率超50%，经营压力极大，需立即启动应急处置方案"
     elif lr > 0.35:
         judgment = "整体损失率偏高，需加速处置并控制新增不良"
@@ -88,16 +117,20 @@ async def portfolio_overview(
         judgment = "整体损失率可控，保持当前处置节奏，关注高风险分层"
 
     loss_sorted = sorted(segments, key=lambda s: s["expected_loss_amount"], reverse=True)
-    top_risks = [
-        f"{loss_sorted[0]['segment_name']}损失占比最高" if loss_sorted else "",
-        f"高风险分层{ov['high_risk_segment_count']}个，需重点关注",
-        f"平均库存{ov['avg_inventory_days']}天，贬值风险持续累积",
-    ]
-    top_actions = [
-        "加速在库资产竞拍出清",
-        "M4+资产启动法务推进",
-        "评估未收回资产的收车ROI",
-    ]
+    if ov.get("data_source") == "empty":
+        top_risks = ["暂无活跃数据源，所有经营分析暂不可用"]
+        top_actions = ["上传新的资产/逾期台账", "确认可用行和错误行", "刷新组合总览查看新分析"]
+    else:
+        top_risks = [
+            f"{loss_sorted[0]['segment_name']}损失占比最高" if loss_sorted else "",
+            f"高风险分层{ov['high_risk_segment_count']}个，需重点关注",
+            f"平均库存{ov['avg_inventory_days']}天，贬值风险持续累积",
+        ]
+        top_actions = [
+            "加速在库资产竞拍出清",
+            "M4+资产启动法务推进",
+            "评估未收回资产的收车ROI",
+        ]
 
     # 图表数据
     bucket_dist = {}
@@ -113,11 +146,15 @@ async def portfolio_overview(
         "monthly_judgment": judgment,
         "top_risks": [r for r in top_risks if r],
         "top_actions": top_actions,
-        "resource_suggestions": [
-            "评估收车团队产能是否匹配",
-            "检查竞拍渠道承接能力",
-            "确认法务预算是否充足",
-        ],
+        "resource_suggestions": (
+            ["先完成客户资产台账上传，再生成资源配置建议"]
+            if ov.get("data_source") == "empty"
+            else [
+                "评估收车团队产能是否匹配",
+                "检查竞拍渠道承接能力",
+                "确认法务预算是否充足",
+            ]
+        ),
         "charts": {
             "overdue_distribution": [{"bucket": k, "ead": round(v, 2)} for k, v in bucket_dist.items()],
             "status_distribution": [{"status": k, "ead": round(v, 2)} for k, v in status_dist.items()],
@@ -194,6 +231,18 @@ async def portfolio_strategies(
     """处置路径模拟 — 对指定分层对比所有路径"""
     data = _get_portfolio(session, tenant_id)
     segments = data["segments"]
+
+    if not segments:
+        return {
+            "segment_index": 0,
+            "segment_name": "暂无数据",
+            "segment_ead": 0,
+            "segment_count": 0,
+            "strategies": [],
+            "recommended_strategy": None,
+            "total_segments": 0,
+            "segment_list": [],
+        }
 
     if segment_index < 0 or segment_index >= len(segments):
         segment_index = 0

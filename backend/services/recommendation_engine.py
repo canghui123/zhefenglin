@@ -14,6 +14,14 @@ from services.portfolio_engine import (
 def get_executive_dashboard(overview: dict, segments: list) -> dict:
     """生成高管驾驶页数据"""
     recommendations = generate_role_recommendations(overview, segments, "executive")
+    if not segments and overview.get("data_source") == "empty":
+        return {
+            "overview": overview,
+            "loss_contribution_by_segment": [],
+            "resource_suggestions": ["请先在数据接入中心上传新的资产/逾期台账"],
+            "approval_items": [],
+            "recommendations": recommendations,
+        }
 
     loss_sorted = sorted(segments, key=lambda s: s["expected_loss_amount"], reverse=True)
     loss_contribution = []
@@ -58,6 +66,12 @@ def get_executive_dashboard(overview: dict, segments: list) -> dict:
 def get_manager_playbook(overview: dict, segments: list) -> dict:
     """生成经理作战手册"""
     recommendations = generate_role_recommendations(overview, segments, "manager")
+    if not segments and overview.get("data_source") == "empty":
+        return {
+            "recommendations": recommendations,
+            "kpis": [],
+            "weekly_rhythm": [],
+        }
 
     kpis = [
         {
@@ -103,6 +117,11 @@ def get_manager_playbook(overview: dict, segments: list) -> dict:
 def get_supervisor_console(overview: dict, segments: list) -> dict:
     """生成主管执行控制台"""
     recommendations = generate_role_recommendations(overview, segments, "supervisor")
+    if not segments and overview.get("data_source") == "empty":
+        return {
+            "recommendations": recommendations,
+            "high_priority_pool": [],
+        }
 
     high_priority_pool = []
     for seg in sorted(segments, key=lambda s: s["expected_loss_amount"], reverse=True)[:5]:
@@ -124,6 +143,12 @@ def get_supervisor_console(overview: dict, segments: list) -> dict:
 def get_action_center(overview: dict, segments: list) -> dict:
     """生成动作中心（执行层）"""
     recommendations = generate_role_recommendations(overview, segments, "operator")
+    if not segments and overview.get("data_source") == "empty":
+        return {
+            "recommendations": recommendations,
+            "auction_ready": [],
+            "recovery_tasks": [],
+        }
 
     inv_segs = [s for s in segments if s["recovered_status"] == "已入库"]
     auction_ready = []
