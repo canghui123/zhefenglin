@@ -75,6 +75,12 @@ FIELD_ALIASES: dict[str, list[str]] = {
         "应收总额",
         "债权余额",
         "待收金额",
+        "最终催收金额",
+        "最终应收金额",
+        "代偿+逾期+尾款",
+        "代偿逾期尾款",
+        "当前逾期金额",
+        "尾款",
         "EAD",
         "风险敞口",
         "当前欠款",
@@ -91,6 +97,10 @@ FIELD_ALIASES: dict[str, list[str]] = {
         "借款余额",
         "合同余额",
         "当前本金",
+        "贷款金额",
+        "放款金额",
+        "融资金额",
+        "分期金额",
     ],
     "vehicle_value": [
         "车辆估值",
@@ -112,6 +122,12 @@ FIELD_ALIASES: dict[str, list[str]] = {
 
 MONEY_FIELDS = {"overdue_amount", "loan_principal", "vehicle_value"}
 INTEGER_FIELDS = {"overdue_days"}
+TEN_THOUSAND_YUAN_COLUMNS = {
+    "贷款金额",
+    "放款金额",
+    "融资金额",
+    "分期金额",
+}
 
 
 @dataclass
@@ -163,10 +179,16 @@ def _parse_text(value: Any, *, max_length: int = 255) -> Optional[str]:
     return text[:max_length] if text else None
 
 
-def _parse_number(value: Any, field: str) -> tuple[Optional[int], Optional[str]]:
+def _parse_number(
+    value: Any,
+    field: str,
+    *,
+    source_column: Optional[str] = None,
+) -> tuple[Optional[int], Optional[str]]:
     cleaned = _clean_cell(value)
     if cleaned is None:
         return None, None
+    column_name = source_column or ""
     if isinstance(cleaned, (int, float)):
         number = float(cleaned)
     else:
@@ -175,6 +197,12 @@ def _parse_number(value: Any, field: str) -> tuple[Optional[int], Optional[str]]
         if text.endswith("万"):
             multiplier = 10000.0
             text = text[:-1]
+        elif field in MONEY_FIELDS and (
+            "万元" in column_name or column_name in TEN_THOUSAND_YUAN_COLUMNS
+        ):
+            # Some customer ledgers export financing amounts as bare values
+            # like 9.3 while the business meaning is 93,000 yuan.
+            multiplier = 10000.0
         text = (
             text.replace(",", "")
             .replace("，", "")
@@ -342,7 +370,11 @@ def parse_customer_import(filename: str, content: bytes) -> ParsedImport:
 
         for field in CANONICAL_FIELDS:
             if field in MONEY_FIELDS or field in INTEGER_FIELDS:
-                value, err = _parse_number(_extract(raw, detected_columns, field), field)
+                value, err = _parse_number(
+                    _extract(raw, detected_columns, field),
+                    field,
+                    source_column=detected_columns.get(field),
+                )
                 if err:
                     errors.append({"field": field, "message": err})
                 normalized[field] = value

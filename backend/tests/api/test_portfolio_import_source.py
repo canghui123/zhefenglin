@@ -28,6 +28,13 @@ def _portfolio_without_amount_csv() -> bytes:
     ).encode("utf-8-sig")
 
 
+def _returned_case_csv() -> bytes:
+    return (
+        "序号,姓名,身份证号,车型,车架号,车牌,放贷时间,贷款金额,分期金额,最终催收金额,是否全额,代偿+逾期+尾款,当前逾期金额,尾款,逾期阶段,情况分类\n"
+        "580,柳群,522226198206230026,2019款 缤越1.5T-A/MT前驱260T运动款Battle双离合(国VI),LB37622Z7KX614046,浙D6B1M5,2019-10-30,9.3,9.3,69845.64,否,69845.64,0.0,0,0,\n"
+    ).encode("utf-8-sig")
+
+
 def _seed_user(email: str, *, role: str = "operator"):
     gen = get_db_session()
     session = next(gen)
@@ -258,6 +265,27 @@ def test_portfolio_import_recognizes_common_customer_amount_aliases(authed_clien
     assert body["source_batch_id"] == batch["id"]
     assert body["total_asset_count"] == 1
     assert body["total_ead"] == 210000
+
+
+def test_portfolio_import_recognizes_returned_case_ledger_amounts(authed_client):
+    batch = _upload_file(authed_client, "returned-cases.csv", _returned_case_csv())
+    assert batch["status"] == "active"
+
+    rows = authed_client.get(f"/api/data-import/batches/{batch['id']}/rows")
+    assert rows.status_code == 200, rows.text
+    row = rows.json()["rows"][0]
+    assert row["debtor_name"] == "柳群"
+    assert row["vin"] == "LB37622Z7KX614046"
+    assert row["loan_principal"] == 93000
+    assert row["overdue_amount"] == 69846
+
+    overview = authed_client.get("/api/portfolio/overview")
+    assert overview.status_code == 200, overview.text
+    body = overview.json()
+    assert body["data_source"] == "customer_import"
+    assert body["source_batch_id"] == batch["id"]
+    assert body["total_asset_count"] == 1
+    assert body["total_ead"] == 93000
 
 
 def test_select_portfolio_source_rejects_batches_without_analysis_amounts(authed_client):
