@@ -94,6 +94,85 @@ def test_upload_csv_imports_customer_legacy_rows(authed_client):
     assert len(error_rows.json()["rows"]) == 1
 
 
+def test_data_import_batch_can_be_edited_and_deleted(authed_client):
+    response = authed_client.post(
+        "/api/data-import/upload",
+        data={"source_system": "legacy-loan-core", "import_type": "asset_ledger"},
+        files={"file": ("legacy-assets.csv", _csv_bytes(), "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    batch_id = response.json()["batch"]["id"]
+
+    updated = authed_client.put(
+        f"/api/data-import/batches/{batch_id}",
+        json={"filename": "客户退案修正版.csv", "source_system": "人工复核台账"},
+    )
+    assert updated.status_code == 200, updated.text
+    updated_body = updated.json()
+    assert updated_body["filename"] == "客户退案修正版.csv"
+    assert updated_body["source_system"] == "人工复核台账"
+
+    listed = authed_client.get("/api/data-import/batches")
+    assert listed.status_code == 200, listed.text
+    listed_batch = next(item for item in listed.json() if item["id"] == batch_id)
+    assert listed_batch["filename"] == "客户退案修正版.csv"
+
+    deleted = authed_client.delete(f"/api/data-import/batches/{batch_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["status"] == "deleted"
+
+    relisted = authed_client.get("/api/data-import/batches")
+    assert relisted.status_code == 200, relisted.text
+    assert all(item["id"] != batch_id for item in relisted.json())
+
+    rows = authed_client.get(f"/api/data-import/batches/{batch_id}/rows")
+    assert rows.status_code == 404
+    assert rows.json()["error"]["code"] == "DATA_IMPORT_BATCH_NOT_FOUND"
+
+
+def test_data_import_row_can_be_edited_and_recounted(authed_client):
+    response = authed_client.post(
+        "/api/data-import/upload",
+        data={"source_system": "legacy-loan-core", "import_type": "asset_ledger"},
+        files={"file": ("legacy-assets.csv", _csv_bytes(), "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    batch_id = response.json()["batch"]["id"]
+    error_row = response.json()["rows_preview"][1]
+    assert error_row["row_status"] == "error"
+
+    updated = authed_client.put(
+        f"/api/data-import/rows/{error_row['id']}",
+        json={
+            "debtor_name": "李四",
+            "car_description": "奥迪A4L",
+            "vin": "LFV000002",
+            "province": "上海市",
+            "city": "上海市",
+            "overdue_days": 45,
+            "overdue_amount": 50000,
+            "loan_principal": 60000,
+            "vehicle_value": 45000,
+            "recovered_status": "未收回",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    updated_row = updated.json()
+    assert updated_row["row_status"] == "valid"
+    assert updated_row["errors"] == []
+    assert updated_row["loan_principal"] == 60000
+
+    rows = authed_client.get(f"/api/data-import/batches/{batch_id}/rows")
+    assert rows.status_code == 200, rows.text
+    assert rows.json()["batch"]["success_rows"] == 2
+    assert rows.json()["batch"]["error_rows"] == 0
+
+    overview = authed_client.get("/api/portfolio/overview")
+    assert overview.status_code == 200, overview.text
+    assert overview.json()["total_asset_count"] == 2
+    assert overview.json()["total_ead"] == 240000
+
+
 def test_data_import_batches_are_tenant_scoped():
     _seed_tenant_user(tenant_code="alpha", email="alpha-import@example.com")
     _seed_tenant_user(tenant_code="beta", email="beta-import@example.com")

@@ -630,6 +630,29 @@ export interface DataImportRowsPage {
   rows: DataImportRowInfo[];
 }
 
+export type DataImportBatchUpdate = Partial<Pick<DataImportBatchInfo, "filename" | "source_system">>;
+
+export type DataImportRowUpdate = Partial<
+  Pick<
+    DataImportRowInfo,
+    | "asset_identifier"
+    | "contract_number"
+    | "debtor_name"
+    | "car_description"
+    | "vin"
+    | "license_plate"
+    | "province"
+    | "city"
+    | "overdue_bucket"
+    | "overdue_days"
+    | "overdue_amount"
+    | "loan_principal"
+    | "vehicle_value"
+    | "recovered_status"
+    | "gps_last_seen"
+  >
+>;
+
 export async function uploadCustomerDataImport(input: {
   file: File;
   source_system?: string;
@@ -654,6 +677,29 @@ export async function listDataImportRows(batchId: number, status?: string) {
   if (status) query.set("status", status);
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<DataImportRowsPage>(`/api/data-import/batches/${batchId}/rows${suffix}`);
+}
+
+export async function updateDataImportBatch(batchId: number, input: DataImportBatchUpdate) {
+  return request<DataImportBatchInfo>(`/api/data-import/batches/${batchId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteDataImportBatch(batchId: number) {
+  return request<{ id: number; status: string; message: string }>(
+    `/api/data-import/batches/${batchId}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function updateDataImportRow(rowId: number, input: DataImportRowUpdate) {
+  return request<DataImportRowInfo>(`/api/data-import/rows/${rowId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
 }
 
 // ============ 用户管理 API ============

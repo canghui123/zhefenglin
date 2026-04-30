@@ -1,6 +1,6 @@
 """Repository helpers for customer data imports."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -11,6 +11,8 @@ from db.models.data_import import DataImportBatch, DataImportRow
 ACTIVE_SOURCE_STATUS = "active"
 ARCHIVED_SOURCE_STATUS = "archived"
 PARSED_STATUS = "parsed"
+DELETED_STATUS = "deleted"
+UNSET = object()
 
 
 def create_batch(
@@ -61,6 +63,7 @@ def list_batches(
     *,
     tenant_id: int,
     limit: int = 50,
+    include_deleted: bool = False,
 ) -> list[DataImportBatch]:
     stmt = (
         select(DataImportBatch)
@@ -68,6 +71,8 @@ def list_batches(
         .order_by(DataImportBatch.created_at.desc(), DataImportBatch.id.desc())
         .limit(limit)
     )
+    if not include_deleted:
+        stmt = stmt.where(DataImportBatch.status != DELETED_STATUS)
     return list(session.scalars(stmt).all())
 
 
@@ -154,6 +159,7 @@ def list_source_batches_by_ids(
         .where(DataImportBatch.tenant_id == tenant_id)
         .where(DataImportBatch.import_type == import_type)
         .where(DataImportBatch.success_rows > 0)
+        .where(DataImportBatch.status != DELETED_STATUS)
         .where(DataImportBatch.id.in_(batch_ids))
         .order_by(DataImportBatch.created_at.desc(), DataImportBatch.id.desc())
     )
@@ -175,6 +181,7 @@ def activate_batches_as_source(
         .where(DataImportBatch.tenant_id == tenant_id)
         .where(DataImportBatch.import_type == import_type)
         .where(DataImportBatch.id.in_(batch_ids))
+        .where(DataImportBatch.status != DELETED_STATUS)
         .values(status=ACTIVE_SOURCE_STATUS)
     )
     session.flush()
@@ -186,13 +193,37 @@ def get_batch_by_id(
     batch_id: int,
     *,
     tenant_id: int,
+    include_deleted: bool = False,
 ) -> Optional[DataImportBatch]:
     stmt = (
         select(DataImportBatch)
         .where(DataImportBatch.id == batch_id)
         .where(DataImportBatch.tenant_id == tenant_id)
     )
+    if not include_deleted:
+        stmt = stmt.where(DataImportBatch.status != DELETED_STATUS)
     return session.scalars(stmt).first()
+
+
+def update_batch_metadata(
+    session: Session,
+    batch: DataImportBatch,
+    *,
+    filename: Any = UNSET,
+    source_system: Any = UNSET,
+) -> DataImportBatch:
+    if filename is not UNSET:
+        batch.filename = filename
+    if source_system is not UNSET:
+        batch.source_system = source_system
+    session.flush()
+    return batch
+
+
+def mark_batch_deleted(session: Session, batch: DataImportBatch) -> DataImportBatch:
+    batch.status = DELETED_STATUS
+    session.flush()
+    return batch
 
 
 def list_rows(
@@ -211,6 +242,33 @@ def list_rows(
     if status:
         stmt = stmt.where(DataImportRow.row_status == status)
     return list(session.scalars(stmt).all())
+
+
+def get_row_by_id(
+    session: Session,
+    row_id: int,
+    *,
+    tenant_id: int,
+) -> Optional[DataImportRow]:
+    stmt = (
+        select(DataImportRow)
+        .join(DataImportBatch, DataImportBatch.id == DataImportRow.batch_id)
+        .where(DataImportRow.id == row_id)
+        .where(DataImportBatch.tenant_id == tenant_id)
+        .where(DataImportBatch.status != DELETED_STATUS)
+    )
+    return session.scalars(stmt).first()
+
+
+def recalculate_batch_counts(session: Session, batch: DataImportBatch) -> DataImportBatch:
+    statuses = session.scalars(
+        select(DataImportRow.row_status).where(DataImportRow.batch_id == batch.id)
+    ).all()
+    batch.total_rows = len(statuses)
+    batch.success_rows = sum(1 for status in statuses if status == "valid")
+    batch.error_rows = batch.total_rows - batch.success_rows
+    session.flush()
+    return batch
 
 
 def list_valid_rows_for_batch(

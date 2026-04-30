@@ -3,12 +3,17 @@
 import { useEffect, useState } from "react";
 import {
   clearPortfolioDataSource,
+  deleteDataImportBatch,
   listDataImportBatches,
   listDataImportRows,
   selectPortfolioDataSource,
+  updateDataImportBatch,
+  updateDataImportRow,
   uploadCustomerDataImport,
   type DataImportBatchInfo,
+  type DataImportBatchUpdate,
   type DataImportRowInfo,
+  type DataImportRowUpdate,
   type DataImportUploadResult,
 } from "@/lib/api";
 
@@ -36,6 +41,26 @@ const fieldLabels: Record<string, string> = {
   recovered_status: "车辆状态",
   gps_last_seen: "最近定位",
 };
+
+type RowDraftField = keyof DataImportRowUpdate;
+
+const rowEditFields: Array<{ key: RowDraftField; label: string; numeric?: boolean }> = [
+  { key: "asset_identifier", label: "资产编号" },
+  { key: "contract_number", label: "合同号" },
+  { key: "debtor_name", label: "客户" },
+  { key: "car_description", label: "车辆" },
+  { key: "vin", label: "VIN" },
+  { key: "license_plate", label: "车牌" },
+  { key: "province", label: "省份" },
+  { key: "city", label: "城市" },
+  { key: "overdue_bucket", label: "逾期阶段" },
+  { key: "overdue_days", label: "逾期天数", numeric: true },
+  { key: "overdue_amount", label: "逾期金额", numeric: true },
+  { key: "loan_principal", label: "剩余本金", numeric: true },
+  { key: "vehicle_value", label: "车辆估值", numeric: true },
+  { key: "recovered_status", label: "车辆状态" },
+  { key: "gps_last_seen", label: "最近定位" },
+];
 
 function fmt(n: number | null) {
   if (n === null || Number.isNaN(n)) return "-";
@@ -91,8 +116,15 @@ export default function DataImportPage() {
   const [rows, setRows] = useState<DataImportRowInfo[]>([]);
   const [rowStatus, setRowStatus] = useState("");
   const [uploadResult, setUploadResult] = useState<DataImportUploadResult | null>(null);
+  const [editingBatchId, setEditingBatchId] = useState<number | null>(null);
+  const [batchDraft, setBatchDraft] = useState<DataImportBatchUpdate>({});
+  const [savingBatch, setSavingBatch] = useState(false);
+  const [deletingBatchId, setDeletingBatchId] = useState<number | null>(null);
+  const [editingRow, setEditingRow] = useState<DataImportRowInfo | null>(null);
+  const [rowDraft, setRowDraft] = useState<Record<string, string>>({});
+  const [savingRow, setSavingRow] = useState(false);
 
-  async function loadBatches() {
+  async function loadBatches(options?: { selectFirst?: boolean }) {
     const data = await listDataImportBatches();
     setBatches(data);
     setSelectedSourceBatchIds(
@@ -100,8 +132,14 @@ export default function DataImportPage() {
         .filter((batch) => batch.status === "active" && canSelectAsPortfolioSource(batch))
         .map((batch) => batch.id)
     );
-    if (!selectedBatch && data.length > 0) {
+    const selectedStillExists = selectedBatch
+      ? data.some((batch) => batch.id === selectedBatch.id)
+      : false;
+    if ((options?.selectFirst || !selectedStillExists) && data.length > 0) {
       await loadRows(data[0], "");
+    } else if (data.length === 0) {
+      setSelectedBatch(null);
+      setRows([]);
     }
   }
 
@@ -213,6 +251,112 @@ export default function DataImportPage() {
       setError(err instanceof Error ? err.message : "设置组合分析数据源失败");
     } finally {
       setSelectingSource(false);
+    }
+  }
+
+  function startEditBatch(batch: DataImportBatchInfo) {
+    setEditingBatchId(batch.id);
+    setBatchDraft({
+      filename: batch.filename,
+      source_system: batch.source_system || "",
+    });
+  }
+
+  async function handleSaveBatch(batchId: number) {
+    setSavingBatch(true);
+    setError("");
+    setMessage("");
+    try {
+      const updated = await updateDataImportBatch(batchId, {
+        filename: batchDraft.filename,
+        source_system: batchDraft.source_system || null,
+      });
+      setMessage(`已更新批次 #${updated.id}`);
+      setEditingBatchId(null);
+      if (selectedBatch?.id === batchId) {
+        await loadRows(updated, rowStatus);
+      }
+      await loadBatches();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "更新批次失败");
+    } finally {
+      setSavingBatch(false);
+    }
+  }
+
+  async function handleDeleteBatch(batch: DataImportBatchInfo) {
+    const confirmed = window.confirm(
+      `确认删除批次「${batch.filename}」？删除后它会从最近接入批次中隐藏，并且不再参与组合分析。`
+    );
+    if (!confirmed) return;
+    setDeletingBatchId(batch.id);
+    setError("");
+    setMessage("");
+    try {
+      const result = await deleteDataImportBatch(batch.id);
+      setMessage(result.message);
+      if (selectedBatch?.id === batch.id) {
+        setSelectedBatch(null);
+        setRows([]);
+      }
+      setSelectedSourceBatchIds((current) => current.filter((id) => id !== batch.id));
+      await loadBatches({ selectFirst: selectedBatch?.id === batch.id });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除批次失败");
+    } finally {
+      setDeletingBatchId(null);
+    }
+  }
+
+  function startEditRow(row: DataImportRowInfo) {
+    const draft: Record<string, string> = {};
+    for (const field of rowEditFields) {
+      const value = row[field.key];
+      draft[field.key] = value === null || value === undefined ? "" : String(value);
+    }
+    setEditingRow(row);
+    setRowDraft(draft);
+  }
+
+  function buildRowPayload(): DataImportRowUpdate | null {
+    const payload: DataImportRowUpdate = {};
+    for (const field of rowEditFields) {
+      const rawValue = rowDraft[field.key] ?? "";
+      const value = rawValue.trim();
+      if (field.numeric) {
+        const parsed = value === "" ? null : Number(value);
+        if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
+          setError(`${field.label}必须是大于等于 0 的数字`);
+          return null;
+        }
+        (payload as Record<string, string | number | null>)[field.key] = parsed;
+      } else {
+        (payload as Record<string, string | number | null>)[field.key] = value || null;
+      }
+    }
+    return payload;
+  }
+
+  async function handleSaveRow() {
+    if (!editingRow) return;
+    const payload = buildRowPayload();
+    if (!payload) return;
+    setSavingRow(true);
+    setError("");
+    setMessage("");
+    try {
+      const updated = await updateDataImportRow(editingRow.id, payload);
+      setRows((current) => current.map((row) => (row.id === updated.id ? updated : row)));
+      setEditingRow(null);
+      setMessage(`已更新第 ${updated.row_number} 行，批次统计和组合分析将使用修正后的字段`);
+      if (selectedBatch) {
+        await loadRows(selectedBatch, rowStatus);
+      }
+      await loadBatches();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "更新行明细失败");
+    } finally {
+      setSavingRow(false);
     }
   }
 
@@ -376,45 +520,114 @@ export default function DataImportPage() {
             {batches.map((batch) => (
               <div
                 key={batch.id}
-                className={`flex items-start gap-3 rounded-lg border p-3 transition ${
+                className={`rounded-lg border p-3 transition ${
                   selectedBatch?.id === batch.id
                     ? "border-blue-200 bg-blue-50"
                     : "border-gray-100 hover:bg-gray-50"
                 }`}
               >
-                <label className="mt-0.5 flex items-center gap-2 text-xs text-gray-600">
-                  <input
-                    type="checkbox"
-                    checked={selectedSourceBatchIds.includes(batch.id)}
-                    disabled={!canSelectAsPortfolioSource(batch)}
-                    onChange={() => toggleSourceBatch(batch)}
-                    className="h-4 w-4 rounded border-gray-300"
-                    aria-label={`选择批次 ${batch.id} 作为组合分析数据源`}
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => loadRows(batch).catch(console.error)}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="truncate text-sm font-semibold text-gray-900">
-                      {batch.filename}
+                <div className="flex items-start gap-3">
+                  <label className="mt-0.5 flex items-center gap-2 text-xs text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={selectedSourceBatchIds.includes(batch.id)}
+                      disabled={!canSelectAsPortfolioSource(batch)}
+                      onChange={() => toggleSourceBatch(batch)}
+                      className="h-4 w-4 rounded border-gray-300"
+                      aria-label={`选择批次 ${batch.id} 作为组合分析数据源`}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => loadRows(batch).catch(console.error)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="truncate text-sm font-semibold text-gray-900">
+                        {batch.filename}
+                      </div>
+                      <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadge(batch.status)}`}>
+                        {statusLabel(batch.status)}
+                      </span>
                     </div>
-                    <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadge(batch.status)}`}>
-                      {statusLabel(batch.status)}
-                    </span>
+                    <div className="mt-2 text-xs text-gray-500">
+                      {batch.source_system || "未标注来源"} · {shortDate(batch.created_at)}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                      <span>{batch.import_type}</span>
+                      <span>总 {batch.total_rows}</span>
+                      <span className="text-emerald-600">可用 {batch.success_rows}</span>
+                      <span className="text-orange-600">错误 {batch.error_rows}</span>
+                    </div>
+                  </button>
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => startEditBatch(batch)}
+                      className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:border-blue-200 hover:text-blue-700"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteBatch(batch)}
+                      disabled={deletingBatchId === batch.id}
+                      className="rounded border border-red-100 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {deletingBatchId === batch.id ? "删除中" : "删除"}
+                    </button>
                   </div>
-                  <div className="mt-2 text-xs text-gray-500">
-                    {batch.source_system || "未标注来源"} · {shortDate(batch.created_at)}
+                </div>
+                {editingBatchId === batch.id && (
+                  <div className="mt-3 rounded-lg border border-blue-100 bg-white p-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="space-y-1 text-xs">
+                        <span className="font-medium text-gray-600">文件名</span>
+                        <input
+                          value={batchDraft.filename || ""}
+                          onChange={(event) =>
+                            setBatchDraft((current) => ({
+                              ...current,
+                              filename: event.target.value,
+                            }))
+                          }
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-400"
+                        />
+                      </label>
+                      <label className="space-y-1 text-xs">
+                        <span className="font-medium text-gray-600">来源系统</span>
+                        <input
+                          value={batchDraft.source_system || ""}
+                          onChange={(event) =>
+                            setBatchDraft((current) => ({
+                              ...current,
+                              source_system: event.target.value,
+                            }))
+                          }
+                          placeholder="如：客户核心系统 / 人工修正台账"
+                          className="w-full rounded-lg border px-3 py-2 outline-none focus:border-blue-400"
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSaveBatch(batch.id)}
+                        disabled={savingBatch}
+                        className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                      >
+                        {savingBatch ? "保存中..." : "保存批次"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingBatchId(null)}
+                        className="rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-600"
+                      >
+                        取消
+                      </button>
+                    </div>
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs">
-                    <span>{batch.import_type}</span>
-                    <span>总 {batch.total_rows}</span>
-                    <span className="text-emerald-600">可用 {batch.success_rows}</span>
-                    <span className="text-orange-600">错误 {batch.error_rows}</span>
-                  </div>
-                </button>
+                )}
               </div>
             ))}
           </div>
@@ -440,8 +653,66 @@ export default function DataImportPage() {
             </select>
           </div>
 
+          {editingRow && (
+            <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">
+                    编辑第 {editingRow.row_number} 行标准化字段
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">
+                    原始导入内容会保留；这里修正的是系统用于组合分析、分层和动作中心的标准字段。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingRow(null)}
+                  className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                >
+                  收起
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                {rowEditFields.map((field) => (
+                  <label key={field.key} className="space-y-1 text-xs">
+                    <span className="font-medium text-gray-600">{field.label}</span>
+                    <input
+                      type={field.numeric ? "number" : "text"}
+                      min={field.numeric ? 0 : undefined}
+                      value={rowDraft[field.key] || ""}
+                      onChange={(event) =>
+                        setRowDraft((current) => ({
+                          ...current,
+                          [field.key]: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-lg border bg-white px-3 py-2 outline-none focus:border-blue-400"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleSaveRow}
+                  disabled={savingRow}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {savingRow ? "保存中..." : "保存行明细"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingRow(null)}
+                  className="rounded-lg border px-4 py-2 text-sm font-medium text-slate-600"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 overflow-x-auto">
-            <table className="min-w-[980px] w-full text-sm">
+            <table className="min-w-[1080px] w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500">
                 <tr>
                   <th className="px-3 py-2 text-left">行</th>
@@ -452,19 +723,20 @@ export default function DataImportPage() {
                   <th className="px-3 py-2 text-left">逾期</th>
                   <th className="px-3 py-2 text-right">金额</th>
                   <th className="px-3 py-2 text-left">错误</th>
+                  <th className="px-3 py-2 text-left">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {loadingRows && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-8 text-center text-gray-400">
+                    <td colSpan={9} className="px-3 py-8 text-center text-gray-400">
                       加载中...
                     </td>
                   </tr>
                 )}
                 {!loadingRows && rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-8 text-center text-gray-400">
+                    <td colSpan={9} className="px-3 py-8 text-center text-gray-400">
                       暂无明细
                     </td>
                   </tr>
@@ -503,6 +775,15 @@ export default function DataImportPage() {
                         {row.errors.length === 0
                           ? "-"
                           : row.errors.map((item) => `${fieldLabels[item.field] || item.field}: ${item.message}`).join("；")}
+                      </td>
+                      <td className="px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => startEditRow(row)}
+                          className="rounded border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:border-blue-200 hover:text-blue-700"
+                        >
+                          编辑
+                        </button>
                       </td>
                     </tr>
                   ))}

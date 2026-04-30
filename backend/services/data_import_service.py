@@ -128,6 +128,36 @@ TEN_THOUSAND_YUAN_COLUMNS = {
     "融资金额",
     "分期金额",
 }
+EDITABLE_ROW_FIELDS = [
+    "asset_identifier",
+    "contract_number",
+    "debtor_name",
+    "car_description",
+    "vin",
+    "license_plate",
+    "province",
+    "city",
+    "overdue_bucket",
+    "overdue_days",
+    "overdue_amount",
+    "loan_principal",
+    "vehicle_value",
+    "recovered_status",
+    "gps_last_seen",
+]
+ROW_TEXT_MAX_LENGTHS = {
+    "asset_identifier": 120,
+    "contract_number": 120,
+    "debtor_name": 120,
+    "car_description": 255,
+    "vin": 80,
+    "license_plate": 40,
+    "province": 64,
+    "city": 64,
+    "overdue_bucket": 64,
+    "recovered_status": 64,
+    "gps_last_seen": 120,
+}
 
 
 @dataclass
@@ -339,6 +369,104 @@ def _row_analysis_amount(row: dict) -> float:
 
 def _has_portfolio_analyzable_rows(rows: list[dict]) -> bool:
     return any(_row_analysis_amount(row) > 0 for row in rows)
+
+
+def _clean_edit_text(value: Any, *, max_length: int) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:max_length] if text else None
+
+
+def _row_identity_errors(row: DataImportRow) -> list[dict[str, str]]:
+    has_identity = any(
+        getattr(row, key)
+        for key in (
+            "asset_identifier",
+            "contract_number",
+            "vin",
+            "license_plate",
+        )
+    )
+    has_descriptive_identity = bool(row.debtor_name and row.car_description)
+    if has_identity or has_descriptive_identity:
+        return []
+    return [
+        {
+            "field": "asset_identifier",
+            "message": "缺少资产编号/合同号/VIN/车牌，且没有客户+车辆组合",
+        }
+    ]
+
+
+def _row_normalized_payload(row: DataImportRow) -> dict[str, Any]:
+    return {field: getattr(row, field) for field in EDITABLE_ROW_FIELDS}
+
+
+def update_import_batch_metadata(
+    session: Session,
+    batch: DataImportBatch,
+    *,
+    updates: dict[str, Any],
+) -> DataImportBatch:
+    filename = updates.get("filename")
+    source_system = updates.get("source_system")
+    cleaned_filename = None
+    if "filename" in updates:
+        cleaned_filename = _clean_edit_text(filename, max_length=255)
+        if not cleaned_filename:
+            raise ValueError("文件名不能为空")
+    cleaned_source = None
+    if "source_system" in updates:
+        cleaned_source = _clean_edit_text(source_system, max_length=120)
+    return data_import_repo.update_batch_metadata(
+        session,
+        batch,
+        filename=(
+            cleaned_filename
+            if "filename" in updates
+            else data_import_repo.UNSET
+        ),
+        source_system=(
+            cleaned_source
+            if "source_system" in updates
+            else data_import_repo.UNSET
+        ),
+    )
+
+
+def delete_import_batch(session: Session, batch: DataImportBatch) -> DataImportBatch:
+    return data_import_repo.mark_batch_deleted(session, batch)
+
+
+def update_import_row(
+    session: Session,
+    row: DataImportRow,
+    *,
+    updates: dict[str, Any],
+) -> DataImportRow:
+    for field, value in updates.items():
+        if field not in EDITABLE_ROW_FIELDS:
+            continue
+        if field in MONEY_FIELDS or field in INTEGER_FIELDS:
+            setattr(row, field, value)
+        else:
+            setattr(
+                row,
+                field,
+                _clean_edit_text(value, max_length=ROW_TEXT_MAX_LENGTHS[field]),
+            )
+
+    errors = _row_identity_errors(row)
+    row.row_status = "error" if errors else "valid"
+    row.errors_json = _json_dumps(errors) if errors else None
+    normalized = _json_loads(row.normalized_json, {})
+    normalized.update(_row_normalized_payload(row))
+    row.normalized_json = _json_dumps(normalized)
+    session.flush()
+    if row.batch is not None:
+        data_import_repo.recalculate_batch_counts(session, row.batch)
+    return row
 
 
 def _read_dataframe(filename: str, content: bytes) -> pd.DataFrame:

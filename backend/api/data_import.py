@@ -10,15 +10,31 @@ from sqlalchemy.orm import Session
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
-from errors import DataImportBatchNotFound, InvalidFileFormat, ParseError
-from models.data_import import DataImportBatchOut, DataImportRowsPage, DataImportUploadResult
+from errors import (
+    DataImportBatchNotFound,
+    DataImportRowNotFound,
+    InvalidFileFormat,
+    ParseError,
+)
+from models.data_import import (
+    DataImportBatchDeleteResult,
+    DataImportBatchOut,
+    DataImportBatchUpdate,
+    DataImportRowOut,
+    DataImportRowsPage,
+    DataImportRowUpdate,
+    DataImportUploadResult,
+)
 from repositories import data_import_repo
 from services import audit_service  # noqa: F401
 from services.data_import_service import (
     build_upload_result,
     create_import_batch,
+    delete_import_batch,
     serialize_batch,
     serialize_row,
+    update_import_batch_metadata,
+    update_import_row,
 )
 from services.storage.factory import get_storage
 from services.tenant_context import get_current_tenant_id
@@ -121,6 +137,91 @@ async def list_batches(
     return [serialize_batch(row) for row in rows]
 
 
+@router.put(
+    "/batches/{batch_id}",
+    response_model=DataImportBatchOut,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def update_batch(
+    batch_id: int,
+    payload: DataImportBatchUpdate,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    batch = data_import_repo.get_batch_by_id(
+        session,
+        batch_id,
+        tenant_id=tenant_id,
+    )
+    if batch is None:
+        raise DataImportBatchNotFound()
+    before = serialize_batch(batch).model_dump()
+    try:
+        updated = update_import_batch_metadata(
+            session,
+            batch,
+            updates=payload.model_dump(
+                exclude_unset=True,
+            ),
+        )
+    except ValueError as exc:
+        raise ParseError(str(exc))
+    after = serialize_batch(updated).model_dump()
+    audit_service.record(
+        session,
+        request,
+        action="data_import.batch_update",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="data_import_batch",
+        resource_id=batch.id,
+        before=before,
+        after=after,
+    )
+    return serialize_batch(updated)
+
+
+@router.delete(
+    "/batches/{batch_id}",
+    response_model=DataImportBatchDeleteResult,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def delete_batch(
+    batch_id: int,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    batch = data_import_repo.get_batch_by_id(
+        session,
+        batch_id,
+        tenant_id=tenant_id,
+    )
+    if batch is None:
+        raise DataImportBatchNotFound()
+    before = serialize_batch(batch).model_dump()
+    deleted = delete_import_batch(session, batch)
+    audit_service.record(
+        session,
+        request,
+        action="data_import.batch_delete",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="data_import_batch",
+        resource_id=batch.id,
+        before=before,
+        after=serialize_batch(deleted).model_dump(),
+    )
+    return DataImportBatchDeleteResult(
+        id=deleted.id,
+        status=deleted.status,
+        message="已删除导入批次，该批次不会再显示或参与组合分析",
+    )
+
+
 @router.get(
     "/batches/{batch_id}/rows",
     response_model=DataImportRowsPage,
@@ -150,3 +251,44 @@ async def list_batch_rows(
         batch=serialize_batch(batch),
         rows=[serialize_row(row) for row in rows],
     )
+
+
+@router.put(
+    "/rows/{row_id}",
+    response_model=DataImportRowOut,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def update_row(
+    row_id: int,
+    payload: DataImportRowUpdate,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    row = data_import_repo.get_row_by_id(
+        session,
+        row_id,
+        tenant_id=tenant_id,
+    )
+    if row is None:
+        raise DataImportRowNotFound()
+    before = serialize_row(row).model_dump()
+    updated = update_import_row(
+        session,
+        row,
+        updates=payload.model_dump(exclude_unset=True),
+    )
+    after = serialize_row(updated).model_dump()
+    audit_service.record(
+        session,
+        request,
+        action="data_import.row_update",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="data_import_row",
+        resource_id=row.id,
+        before=before,
+        after=after,
+    )
+    return serialize_row(updated)
