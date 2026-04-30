@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useState } from "react";
+import { Fragment, type FormEvent, useEffect, useState } from "react";
 import {
   clearPortfolioDataSource,
   deleteDataImportBatch,
@@ -825,64 +825,6 @@ export default function DataImportPage() {
             </div>
           </div>
 
-          {editingRow && (
-            <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-gray-900">
-                    编辑第 {editingRow.row_number} 行标准化字段
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">
-                    原始导入内容会保留；这里修正的是系统用于组合分析、分层和动作中心的标准字段。
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEditingRow(null)}
-                  className="text-xs font-medium text-slate-500 hover:text-slate-700"
-                >
-                  收起
-                </button>
-              </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                {rowEditFields.map((field) => (
-                  <label key={field.key} className="space-y-1 text-xs">
-                    <span className="font-medium text-gray-600">{field.label}</span>
-                    <input
-                      type={field.numeric ? "number" : "text"}
-                      min={field.numeric ? 0 : undefined}
-                      value={rowDraft[field.key] || ""}
-                      onChange={(event) =>
-                        setRowDraft((current) => ({
-                          ...current,
-                          [field.key]: event.target.value,
-                        }))
-                      }
-                      className="w-full rounded-lg border bg-white px-3 py-2 outline-none focus:border-blue-400"
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={handleSaveRow}
-                  disabled={savingRow}
-                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-                >
-                  {savingRow ? "保存中..." : "保存行明细"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingRow(null)}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium text-slate-600"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-          )}
-
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-[1080px] w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500">
@@ -914,52 +856,122 @@ export default function DataImportPage() {
                   </tr>
                 )}
                 {!loadingRows &&
-                  rows.map((row) => (
-                    <tr key={row.id} className="border-t align-top hover:bg-gray-50">
-                      <td className="px-3 py-3 text-gray-500">{row.row_number}</td>
-                      <td className="px-3 py-3">
-                        <span className={`rounded-full border px-2 py-0.5 text-xs ${rowBadge(row.row_status)}`}>
-                          {row.row_status === "valid" ? "可用" : "错误"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="font-medium text-gray-900">{row.asset_identifier || "-"}</div>
-                        <div className="text-xs text-gray-500">{row.contract_number || row.vin || "-"}</div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div>{row.debtor_name || "-"}</div>
-                        <div className="text-xs text-gray-500">{row.car_description || row.license_plate || "-"}</div>
-                      </td>
-                      <td className="px-3 py-3">
-                        {[row.province, row.city].filter(Boolean).join(" / ") || "-"}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div>{row.overdue_bucket || "-"}</div>
-                        <div className="text-xs text-gray-500">
-                          {row.overdue_days === null ? "-" : `${row.overdue_days}天`} · {row.recovered_status || "状态未知"}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        <div>本金 ¥{fmt(row.loan_principal)}</div>
-                        <div>逾期 ¥{fmt(row.overdue_amount)}</div>
-                        <div className="text-xs text-gray-500">估值 ¥{fmt(row.vehicle_value)}</div>
-                      </td>
-                      <td className="px-3 py-3 text-xs text-orange-700">
-                        {row.errors.length === 0
-                          ? "-"
-                          : row.errors.map((item) => `${fieldLabels[item.field] || item.field}: ${item.message}`).join("；")}
-                      </td>
-                      <td className="px-3 py-3">
-                        <button
-                          type="button"
-                          onClick={() => startEditRow(row)}
-                          className="rounded border border-slate-200 px-2 py-1 text-xs font-medium text-slate-700 hover:border-blue-200 hover:text-blue-700"
-                        >
-                          编辑
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  rows.map((row) => {
+                    const isEditing = editingRow?.id === row.id;
+                    return (
+                      <Fragment key={row.id}>
+                        <tr className={`border-t align-top ${isEditing ? "bg-blue-50" : "hover:bg-gray-50"}`}>
+                          <td className="px-3 py-3 text-gray-500">{row.row_number}</td>
+                          <td className="px-3 py-3">
+                            <span className={`rounded-full border px-2 py-0.5 text-xs ${rowBadge(row.row_status)}`}>
+                              {row.row_status === "valid" ? "可用" : "错误"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="font-medium text-gray-900">{row.asset_identifier || "-"}</div>
+                            <div className="text-xs text-gray-500">{row.contract_number || row.vin || "-"}</div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div>{row.debtor_name || "-"}</div>
+                            <div className="text-xs text-gray-500">{row.car_description || row.license_plate || "-"}</div>
+                          </td>
+                          <td className="px-3 py-3">
+                            {[row.province, row.city].filter(Boolean).join(" / ") || "-"}
+                          </td>
+                          <td className="px-3 py-3">
+                            <div>{row.overdue_bucket || "-"}</div>
+                            <div className="text-xs text-gray-500">
+                              {row.overdue_days === null ? "-" : `${row.overdue_days}天`} · {row.recovered_status || "状态未知"}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            <div>本金 ¥{fmt(row.loan_principal)}</div>
+                            <div>逾期 ¥{fmt(row.overdue_amount)}</div>
+                            <div className="text-xs text-gray-500">估值 ¥{fmt(row.vehicle_value)}</div>
+                          </td>
+                          <td className="px-3 py-3 text-xs text-orange-700">
+                            {row.errors.length === 0
+                              ? "-"
+                              : row.errors.map((item) => `${fieldLabels[item.field] || item.field}: ${item.message}`).join("；")}
+                          </td>
+                          <td className="px-3 py-3">
+                            <button
+                              type="button"
+                              onClick={() => (isEditing ? setEditingRow(null) : startEditRow(row))}
+                              className={`rounded border px-2 py-1 text-xs font-medium ${
+                                isEditing
+                                  ? "border-blue-200 bg-white text-blue-700"
+                                  : "border-slate-200 text-slate-700 hover:border-blue-200 hover:text-blue-700"
+                              }`}
+                            >
+                              {isEditing ? "收起" : "编辑"}
+                            </button>
+                          </td>
+                        </tr>
+                        {isEditing && (
+                          <tr className="border-t border-blue-100 bg-blue-50/60">
+                            <td colSpan={9} className="px-3 py-4">
+                              <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                  <div>
+                                    <div className="text-sm font-semibold text-gray-900">
+                                      正在编辑第 {row.row_number} 行
+                                    </div>
+                                    <p className="mt-1 text-xs text-gray-500">
+                                      直接修改这条数据的标准化字段；保存后组合分析、分层和动作中心会读取修正后的值。
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingRow(null)}
+                                    className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                                  >
+                                    取消编辑
+                                  </button>
+                                </div>
+                                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                                  {rowEditFields.map((field) => (
+                                    <label key={field.key} className="space-y-1 text-xs">
+                                      <span className="font-medium text-gray-600">{field.label}</span>
+                                      <input
+                                        type={field.numeric ? "number" : "text"}
+                                        min={field.numeric ? 0 : undefined}
+                                        value={rowDraft[field.key] || ""}
+                                        onChange={(event) =>
+                                          setRowDraft((current) => ({
+                                            ...current,
+                                            [field.key]: event.target.value,
+                                          }))
+                                        }
+                                        className="w-full rounded-lg border bg-white px-3 py-2 outline-none focus:border-blue-400"
+                                      />
+                                    </label>
+                                  ))}
+                                </div>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveRow}
+                                    disabled={savingRow}
+                                    className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                                  >
+                                    {savingRow ? "保存中..." : "保存这一行"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingRow(null)}
+                                    className="rounded-lg border px-4 py-2 text-sm font-medium text-slate-600"
+                                  >
+                                    取消
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
               </tbody>
             </table>
           </div>
