@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import {
   clearPortfolioDataSource,
   deleteDataImportBatch,
@@ -43,6 +43,14 @@ const fieldLabels: Record<string, string> = {
 };
 
 type RowDraftField = keyof DataImportRowUpdate;
+type AmountFilter = "" | "analyzable" | "missing_amount";
+type RowLoadOptions = {
+  status?: string;
+  q?: string;
+  amountFilter?: AmountFilter;
+  limit?: number;
+  offset?: number;
+};
 
 const rowEditFields: Array<{ key: RowDraftField; label: string; numeric?: boolean }> = [
   { key: "asset_identifier", label: "资产编号" },
@@ -115,6 +123,11 @@ export default function DataImportPage() {
   const [selectedSourceBatchIds, setSelectedSourceBatchIds] = useState<number[]>([]);
   const [rows, setRows] = useState<DataImportRowInfo[]>([]);
   const [rowStatus, setRowStatus] = useState("");
+  const [rowSearch, setRowSearch] = useState("");
+  const [rowAmountFilter, setRowAmountFilter] = useState<AmountFilter>("");
+  const [rowLimit, setRowLimit] = useState(100);
+  const [rowOffset, setRowOffset] = useState(0);
+  const [rowTotal, setRowTotal] = useState(0);
   const [uploadResult, setUploadResult] = useState<DataImportUploadResult | null>(null);
   const [editingBatchId, setEditingBatchId] = useState<number | null>(null);
   const [batchDraft, setBatchDraft] = useState<DataImportBatchUpdate>({});
@@ -136,20 +149,44 @@ export default function DataImportPage() {
       ? data.some((batch) => batch.id === selectedBatch.id)
       : false;
     if ((options?.selectFirst || !selectedStillExists) && data.length > 0) {
-      await loadRows(data[0], "");
+      await loadRows(data[0], {
+        status: "",
+        q: "",
+        amountFilter: "",
+        offset: 0,
+      });
     } else if (data.length === 0) {
       setSelectedBatch(null);
       setRows([]);
+      setRowTotal(0);
+      setRowOffset(0);
     }
   }
 
-  async function loadRows(batch: DataImportBatchInfo, status = rowStatus) {
+  async function loadRows(batch: DataImportBatchInfo, options: RowLoadOptions = {}) {
     setLoadingRows(true);
     setError("");
+    const nextStatus = options.status ?? rowStatus;
+    const nextSearch = options.q ?? rowSearch;
+    const nextAmountFilter = options.amountFilter ?? rowAmountFilter;
+    const nextLimit = options.limit ?? rowLimit;
+    const nextOffset = options.offset ?? rowOffset;
     try {
-      const data = await listDataImportRows(batch.id, status || undefined);
+      const data = await listDataImportRows(batch.id, {
+        status: nextStatus || undefined,
+        q: nextSearch.trim() || undefined,
+        amount_filter: nextAmountFilter,
+        limit: nextLimit,
+        offset: nextOffset,
+      });
       setSelectedBatch(data.batch);
       setRows(data.rows);
+      setRowStatus(nextStatus);
+      setRowSearch(nextSearch);
+      setRowAmountFilter(nextAmountFilter);
+      setRowLimit(data.limit);
+      setRowOffset(data.offset);
+      setRowTotal(data.total);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载导入明细失败");
     } finally {
@@ -179,11 +216,22 @@ export default function DataImportPage() {
       setUploadResult(result);
       setSelectedBatch(result.batch);
       setRows(result.rows_preview);
+      setRowStatus("");
+      setRowSearch("");
+      setRowAmountFilter("");
+      setRowOffset(0);
+      setRowTotal(result.batch.total_rows);
       setMessage(
         `已接入 ${result.batch.total_rows} 行，${result.batch.success_rows} 行可用，${result.batch.error_rows} 行待处理${
           result.batch.status === "active" ? "，并已设为当前组合分析数据源" : ""
         }`
       );
+      await loadRows(result.batch, {
+        status: "",
+        q: "",
+        amountFilter: "",
+        offset: 0,
+      });
       await loadBatches();
     } catch (err) {
       setError(err instanceof Error ? err.message : "上传解析失败");
@@ -193,12 +241,49 @@ export default function DataImportPage() {
   }
 
   function handleStatusFilter(status: string) {
-    setRowStatus(status);
     if (selectedBatch) {
-      loadRows(selectedBatch, status).catch((err) => {
+      loadRows(selectedBatch, { status, offset: 0 }).catch((err) => {
         setError(err instanceof Error ? err.message : "筛选明细失败");
       });
+    } else {
+      setRowStatus(status);
     }
+  }
+
+  function handleAmountFilter(filter: AmountFilter) {
+    if (selectedBatch) {
+      loadRows(selectedBatch, { amountFilter: filter, offset: 0 }).catch((err) => {
+        setError(err instanceof Error ? err.message : "筛选明细失败");
+      });
+    } else {
+      setRowAmountFilter(filter);
+    }
+  }
+
+  function handleRowLimitChange(limit: number) {
+    if (selectedBatch) {
+      loadRows(selectedBatch, { limit, offset: 0 }).catch((err) => {
+        setError(err instanceof Error ? err.message : "切换分页失败");
+      });
+    } else {
+      setRowLimit(limit);
+    }
+  }
+
+  function handleRowSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (selectedBatch) {
+      loadRows(selectedBatch, { q: rowSearch, offset: 0 }).catch((err) => {
+        setError(err instanceof Error ? err.message : "搜索明细失败");
+      });
+    }
+  }
+
+  function handleRowPage(nextOffset: number) {
+    if (!selectedBatch) return;
+    loadRows(selectedBatch, { offset: Math.max(0, nextOffset) }).catch((err) => {
+      setError(err instanceof Error ? err.message : "翻页失败");
+    });
   }
 
   async function handleClearPortfolioSource() {
@@ -274,7 +359,7 @@ export default function DataImportPage() {
       setMessage(`已更新批次 #${updated.id}`);
       setEditingBatchId(null);
       if (selectedBatch?.id === batchId) {
-        await loadRows(updated, rowStatus);
+        await loadRows(updated, { offset: rowOffset });
       }
       await loadBatches();
     } catch (err) {
@@ -298,6 +383,8 @@ export default function DataImportPage() {
       if (selectedBatch?.id === batch.id) {
         setSelectedBatch(null);
         setRows([]);
+        setRowTotal(0);
+        setRowOffset(0);
       }
       setSelectedSourceBatchIds((current) => current.filter((id) => id !== batch.id));
       await loadBatches({ selectFirst: selectedBatch?.id === batch.id });
@@ -350,7 +437,7 @@ export default function DataImportPage() {
       setEditingRow(null);
       setMessage(`已更新第 ${updated.row_number} 行，批次统计和组合分析将使用修正后的字段`);
       if (selectedBatch) {
-        await loadRows(selectedBatch, rowStatus);
+        await loadRows(selectedBatch, { offset: rowOffset });
       }
       await loadBatches();
     } catch (err) {
@@ -359,6 +446,11 @@ export default function DataImportPage() {
       setSavingRow(false);
     }
   }
+
+  const rowStart = rowTotal === 0 ? 0 : rowOffset + 1;
+  const rowEnd = Math.min(rowOffset + rows.length, rowTotal);
+  const canGoPrev = rowOffset > 0 && !loadingRows;
+  const canGoNext = rowOffset + rowLimit < rowTotal && !loadingRows;
 
   return (
     <div className="space-y-6">
@@ -636,21 +728,101 @@ export default function DataImportPage() {
         <div className="rounded-xl border bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">明细预览</h2>
+              <h2 className="text-lg font-semibold text-gray-900">数据明细编辑台</h2>
               <p className="text-sm text-gray-500">
                 {selectedBatch ? `${selectedBatch.filename} · 批次 #${selectedBatch.id}` : "选择一个批次查看明细"}
               </p>
             </div>
-            <select
-              value={rowStatus}
-              onChange={(event) => handleStatusFilter(event.target.value)}
-              disabled={!selectedBatch}
-              className="rounded-lg border px-3 py-2 text-sm disabled:bg-gray-100"
-            >
-              <option value="">全部行</option>
-              <option value="valid">仅可用</option>
-              <option value="error">仅错误</option>
-            </select>
+            <div className="text-xs text-gray-500">
+              显示 {rowStart}-{rowEnd} / 共 {rowTotal} 行
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border bg-slate-50 p-3">
+            <form onSubmit={handleRowSearchSubmit} className="grid gap-3 lg:grid-cols-[1.3fr_0.8fr_0.9fr_0.6fr_auto]">
+              <label className="space-y-1 text-xs">
+                <span className="font-medium text-gray-600">搜索</span>
+                <input
+                  value={rowSearch}
+                  onChange={(event) => setRowSearch(event.target.value)}
+                  placeholder="客户、合同、VIN、车牌、车型、原始表格内容"
+                  disabled={!selectedBatch}
+                  className="w-full rounded-lg border bg-white px-3 py-2 outline-none focus:border-blue-400 disabled:bg-gray-100"
+                />
+              </label>
+              <label className="space-y-1 text-xs">
+                <span className="font-medium text-gray-600">行状态</span>
+                <select
+                  value={rowStatus}
+                  onChange={(event) => handleStatusFilter(event.target.value)}
+                  disabled={!selectedBatch}
+                  className="w-full rounded-lg border bg-white px-3 py-2 outline-none disabled:bg-gray-100"
+                >
+                  <option value="">全部行</option>
+                  <option value="valid">仅可用</option>
+                  <option value="error">仅错误</option>
+                </select>
+              </label>
+              <label className="space-y-1 text-xs">
+                <span className="font-medium text-gray-600">金额状态</span>
+                <select
+                  value={rowAmountFilter}
+                  onChange={(event) => handleAmountFilter(event.target.value as AmountFilter)}
+                  disabled={!selectedBatch}
+                  className="w-full rounded-lg border bg-white px-3 py-2 outline-none disabled:bg-gray-100"
+                >
+                  <option value="">全部金额状态</option>
+                  <option value="analyzable">可参与组合分析</option>
+                  <option value="missing_amount">缺少分析金额</option>
+                </select>
+              </label>
+              <label className="space-y-1 text-xs">
+                <span className="font-medium text-gray-600">每页</span>
+                <select
+                  value={rowLimit}
+                  onChange={(event) => handleRowLimitChange(Number(event.target.value))}
+                  disabled={!selectedBatch}
+                  className="w-full rounded-lg border bg-white px-3 py-2 outline-none disabled:bg-gray-100"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                  <option value={500}>500</option>
+                </select>
+              </label>
+              <div className="flex items-end">
+                <button
+                  type="submit"
+                  disabled={!selectedBatch || loadingRows}
+                  className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  搜索
+                </button>
+              </div>
+            </form>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs text-gray-500">
+                可搜索标准字段和原始 JSON；筛出缺少金额的行后，可逐条补录本金、逾期金额或车辆估值。
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleRowPage(rowOffset - rowLimit)}
+                  disabled={!canGoPrev}
+                  className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRowPage(rowOffset + rowLimit)}
+                  disabled={!canGoNext}
+                  className="rounded-lg border bg-white px-3 py-1.5 text-xs font-medium text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
           </div>
 
           {editingRow && (
@@ -768,6 +940,7 @@ export default function DataImportPage() {
                         </div>
                       </td>
                       <td className="px-3 py-3 text-right">
+                        <div>本金 ¥{fmt(row.loan_principal)}</div>
                         <div>逾期 ¥{fmt(row.overdue_amount)}</div>
                         <div className="text-xs text-gray-500">估值 ¥{fmt(row.vehicle_value)}</div>
                       </td>

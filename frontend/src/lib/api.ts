@@ -628,6 +628,9 @@ export interface DataImportUploadResult {
 export interface DataImportRowsPage {
   batch: DataImportBatchInfo;
   rows: DataImportRowInfo[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export type DataImportBatchUpdate = Partial<Pick<DataImportBatchInfo, "filename" | "source_system">>;
@@ -672,9 +675,22 @@ export async function listDataImportBatches() {
   return request<DataImportBatchInfo[]>("/api/data-import/batches");
 }
 
-export async function listDataImportRows(batchId: number, status?: string) {
+export async function listDataImportRows(
+  batchId: number,
+  params?: {
+    status?: string;
+    q?: string;
+    amount_filter?: "analyzable" | "missing_amount" | "";
+    limit?: number;
+    offset?: number;
+  },
+) {
   const query = new URLSearchParams();
-  if (status) query.set("status", status);
+  if (params?.status) query.set("status", params.status);
+  if (params?.q) query.set("q", params.q);
+  if (params?.amount_filter) query.set("amount_filter", params.amount_filter);
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.offset) query.set("offset", String(params.offset));
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return request<DataImportRowsPage>(`/api/data-import/batches/${batchId}/rows${suffix}`);
 }

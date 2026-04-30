@@ -2,7 +2,7 @@
 
 from typing import Any, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from db.models.data_import import DataImportBatch, DataImportRow
@@ -226,6 +226,76 @@ def mark_batch_deleted(session: Session, batch: DataImportBatch) -> DataImportBa
     return batch
 
 
+def _row_list_conditions(
+    *,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    amount_filter: Optional[str] = None,
+) -> list:
+    conditions = []
+    if status:
+        conditions.append(DataImportRow.row_status == status)
+    if q:
+        needle = f"%{q.strip()}%"
+        conditions.append(
+            or_(
+                DataImportRow.asset_identifier.ilike(needle),
+                DataImportRow.contract_number.ilike(needle),
+                DataImportRow.debtor_name.ilike(needle),
+                DataImportRow.car_description.ilike(needle),
+                DataImportRow.vin.ilike(needle),
+                DataImportRow.license_plate.ilike(needle),
+                DataImportRow.province.ilike(needle),
+                DataImportRow.city.ilike(needle),
+                DataImportRow.raw_json.ilike(needle),
+                DataImportRow.normalized_json.ilike(needle),
+            )
+        )
+    analyzable_condition = or_(
+        func.coalesce(DataImportRow.loan_principal, 0) > 0,
+        func.coalesce(DataImportRow.overdue_amount, 0) > 0,
+        func.coalesce(DataImportRow.vehicle_value, 0) > 0,
+    )
+    if amount_filter == "analyzable":
+        conditions.append(analyzable_condition)
+    elif amount_filter == "missing_amount":
+        conditions.append(~analyzable_condition)
+    return conditions
+
+
+def list_rows_page(
+    session: Session,
+    *,
+    batch_id: int,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    amount_filter: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> tuple[list[DataImportRow], int]:
+    conditions = _row_list_conditions(
+        status=status,
+        q=q,
+        amount_filter=amount_filter,
+    )
+    count_stmt = (
+        select(func.count())
+        .select_from(DataImportRow)
+        .where(DataImportRow.batch_id == batch_id)
+        .where(*conditions)
+    )
+    total = int(session.scalar(count_stmt) or 0)
+    stmt = (
+        select(DataImportRow)
+        .where(DataImportRow.batch_id == batch_id)
+        .where(*conditions)
+        .order_by(DataImportRow.row_number.asc(), DataImportRow.id.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(session.scalars(stmt).all()), total
+
+
 def list_rows(
     session: Session,
     *,
@@ -233,15 +303,13 @@ def list_rows(
     status: Optional[str] = None,
     limit: int = 200,
 ) -> list[DataImportRow]:
-    stmt = (
-        select(DataImportRow)
-        .where(DataImportRow.batch_id == batch_id)
-        .order_by(DataImportRow.row_number.asc(), DataImportRow.id.asc())
-        .limit(limit)
+    rows, _ = list_rows_page(
+        session,
+        batch_id=batch_id,
+        status=status,
+        limit=limit,
     )
-    if status:
-        stmt = stmt.where(DataImportRow.row_status == status)
-    return list(session.scalars(stmt).all())
+    return rows
 
 
 def get_row_by_id(

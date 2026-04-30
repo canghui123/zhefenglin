@@ -61,6 +61,9 @@ class DataImportUploadResult(BaseModel):
 class DataImportRowsPage(BaseModel):
     batch: DataImportBatchOut
     rows: list[DataImportRowOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class DataImportBatchUpdate(BaseModel):

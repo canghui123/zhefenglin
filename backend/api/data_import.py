@@ -230,7 +230,10 @@ async def delete_batch(
 async def list_batch_rows(
     batch_id: int,
     status: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, max_length=120),
+    amount_filter: Optional[str] = Query(default=None, pattern="^(analyzable|missing_amount)$"),
     limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_db_session),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
@@ -241,15 +244,21 @@ async def list_batch_rows(
     )
     if batch is None:
         raise DataImportBatchNotFound()
-    rows = data_import_repo.list_rows(
+    rows, total = data_import_repo.list_rows_page(
         session,
         batch_id=batch_id,
         status=status,
+        q=q.strip() if q else None,
+        amount_filter=amount_filter,
         limit=limit,
+        offset=offset,
     )
     return DataImportRowsPage(
         batch=serialize_batch(batch),
         rows=[serialize_row(row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 

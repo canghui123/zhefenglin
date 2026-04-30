@@ -84,7 +84,40 @@ def test_upload_csv_imports_customer_legacy_rows(authed_client):
     rows = authed_client.get(f"/api/data-import/batches/{batch['id']}/rows")
     assert rows.status_code == 200, rows.text
     assert rows.json()["batch"]["id"] == batch["id"]
+    assert rows.json()["total"] == 2
     assert len(rows.json()["rows"]) == 2
+
+    paged_rows = authed_client.get(
+        f"/api/data-import/batches/{batch['id']}/rows",
+        params={"limit": 1, "offset": 1},
+    )
+    assert paged_rows.status_code == 200, paged_rows.text
+    assert paged_rows.json()["total"] == 2
+    assert paged_rows.json()["limit"] == 1
+    assert paged_rows.json()["offset"] == 1
+    assert paged_rows.json()["rows"][0]["row_number"] == 3
+
+    searched_rows = authed_client.get(
+        f"/api/data-import/batches/{batch['id']}/rows",
+        params={"q": "张三"},
+    )
+    assert searched_rows.status_code == 200, searched_rows.text
+    assert searched_rows.json()["total"] == 1
+    assert searched_rows.json()["rows"][0]["debtor_name"] == "张三"
+
+    analyzable_rows = authed_client.get(
+        f"/api/data-import/batches/{batch['id']}/rows",
+        params={"amount_filter": "analyzable"},
+    )
+    assert analyzable_rows.status_code == 200, analyzable_rows.text
+    assert analyzable_rows.json()["total"] == 1
+
+    missing_amount_rows = authed_client.get(
+        f"/api/data-import/batches/{batch['id']}/rows",
+        params={"amount_filter": "missing_amount"},
+    )
+    assert missing_amount_rows.status_code == 200, missing_amount_rows.text
+    assert missing_amount_rows.json()["total"] == 1
 
     error_rows = authed_client.get(
         f"/api/data-import/batches/{batch['id']}/rows",
