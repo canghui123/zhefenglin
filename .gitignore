@@ -26,7 +26,12 @@ backend/data/*.db-shm
 
 # Uploads & generated files
 backend/data/uploads/
+data/acceptance-artifacts/
+data/uploads/
 frontend/.git.bak.tar.gz
+
+# Local browser/test runner artifacts
+.playwright-cli/
 
 # IDE
 .vscode/
