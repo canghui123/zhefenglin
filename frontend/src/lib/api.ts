@@ -520,6 +520,9 @@ export async function getFeatureFlagsSnapshot() {
   return request<FeatureFlagsSnapshot>("/api/admin/feature-flags");
 }
 
+// Backward-compatible alias for older production pages that imported the singular name.
+export const getFeatureFlagSnapshot = getFeatureFlagsSnapshot;
+
 export async function updatePlanFeatureFlags(
   planCode: string,
   features: Record<string, boolean>,
