@@ -14,7 +14,10 @@ class Asset(BaseModel):
     insurance_lapsed: Optional[bool] = Field(None, description="是否脱保")
     ownership_transferred: Optional[bool] = Field(None, description="是否被过户")
     loan_principal: Optional[float] = Field(None, description="债权本金(元)")
-    buyout_price: Optional[float] = Field(None, description="买断价(元)")
+    buyout_price: Optional[float] = Field(
+        None,
+        description="历史兼容字段。当前资产包出让定价不再从Excel识别或使用买断价。",
+    )
 
 
 class AssetParseError(BaseModel):
@@ -30,9 +33,35 @@ class AssetParseResult(BaseModel):
     success_rows: int
     column_mapping: dict[str, str] = Field(default_factory=dict)  # {Excel列名: 系统字段名}
     unmapped_columns: list[str] = Field(default_factory=list)  # 未识别的列名
-    # 推荐的买断价策略：direct(已有买断价) / discount(有本金需折扣) / ai_suggest(需AI建议)
-    suggested_strategy: str = "direct"
+    # 当前定价主线为金融公司出让方视角，不再推荐买断价策略
+    suggested_strategy: str = "seller_transfer_analysis"
     strategy_message: str = ""
+
+
+class AssetFieldOverride(BaseModel):
+    car_description: Optional[str] = Field(None, description="修正后的车型描述")
+    vin: Optional[str] = Field(None, description="修正后的VIN码")
+    first_registration: Optional[date] = Field(None, description="修正后的首次登记日期")
+    mileage: Optional[float] = Field(None, description="修正后的表显里程(万公里)")
+    gps_online: Optional[bool] = Field(None, description="修正后的GPS是否在线")
+    insurance_lapsed: Optional[bool] = Field(None, description="修正后的是否脱保")
+    ownership_transferred: Optional[bool] = Field(None, description="修正后的是否被过户")
+    loan_principal: Optional[float] = Field(None, description="修正后的债权本金(元)")
+
+    @field_validator("car_description", "vin", mode="before")
+    @classmethod
+    def normalize_blank_strings(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("vin", mode="after")
+    @classmethod
+    def normalize_vin(cls, value):
+        return value.upper() if value else value
 
 
 class PricingParameters(BaseModel):
@@ -46,6 +75,10 @@ class PricingParameters(BaseModel):
     vehicle_condition: Literal["excellent", "good", "normal"] = Field(
         default="good",
         description="车况评估：excellent/good/normal",
+    )
+    asset_package_type: Literal["inventory", "non_inventory"] = Field(
+        default="inventory",
+        description="资产包类型：inventory=在库车资产包，non_inventory=非在库车资产包",
     )
     # 买断价策略：direct(Excel已有) / discount(本金×折扣) / ai_suggest(AI建议)
     buyout_strategy: Literal["direct", "discount", "ai_suggest"] = Field(
@@ -83,6 +116,10 @@ class PricingParameters(BaseModel):
         default=None,
         description="单次任务预算上限",
     )
+    asset_overrides: dict[int, AssetFieldOverride] = Field(
+        default_factory=dict,
+        description="按Excel行号补录/修正资产字段后重新计算",
+    )
 
     @model_validator(mode="after")
     def validate_strategy_fields(self):
@@ -94,8 +131,28 @@ class PricingParameters(BaseModel):
 class AssetPricingResult(BaseModel):
     row_number: int
     car_description: str
+    loan_principal: Optional[float] = None
     buyout_price: float
+    # 本行实际应用的买断价策略 — direct/discount/ai_suggest
+    # 或 missing_* 表示降级（例如 discount 策略下该行无本金）
+    applied_strategy: str = "direct"
     che300_valuation: Optional[float] = None
+    pricing_basis: str = ""
+    pricing_basis_amount: float = 0
+    recommended_transfer_price_low: float = 0
+    recommended_transfer_price_mid: float = 0
+    recommended_transfer_price_high: float = 0
+    recommended_discount_low: float = 0
+    recommended_discount_mid: float = 0
+    recommended_discount_high: float = 0
+    principal_discount_low: Optional[float] = None
+    principal_discount_mid: Optional[float] = None
+    principal_discount_high: Optional[float] = None
+    valuation_discount_low: Optional[float] = None
+    valuation_discount_mid: Optional[float] = None
+    valuation_discount_high: Optional[float] = None
+    collateral_coverage_ratio: Optional[float] = None
+    exposure_gap: Optional[float] = None
     depreciation_rate: Optional[float] = None
     towing_cost: float = 0
     parking_cost: float = 0
@@ -105,6 +162,37 @@ class AssetPricingResult(BaseModel):
     net_profit: float = 0
     profit_margin: float = 0
     risk_flags: list[str] = Field(default_factory=list)
+    valuation_confidence_score: int = 0
+    valuation_confidence_level: str = "unknown"
+    valuation_source: str = "unknown"
+    valuation_warnings: list[str] = Field(default_factory=list)
+    valuation_anomaly_tags: list[str] = Field(default_factory=list)
+
+
+class ValuationConfidenceResult(BaseModel):
+    score: int
+    level: Literal["high", "medium", "low", "very_low", "mock"]
+    source: str
+    warnings: list[str] = Field(default_factory=list)
+    anomaly_tags: list[str] = Field(default_factory=list)
+
+
+class BuyerOfferAnalysis(BaseModel):
+    buyer_offer_price: float
+    buyer_offer_note: Optional[str] = None
+    buyer_offer_discount: Optional[float] = None
+    buyer_offer_gap: float
+    buyer_offer_gap_rate: Optional[float] = None
+    buyer_offer_assessment: str
+    negotiation_suggestions: list[str] = Field(default_factory=list)
+
+
+class TradeabilityResult(BaseModel):
+    score: int
+    level: Literal["A", "B", "C", "D", "E"]
+    summary: str
+    recommendations: list[str] = Field(default_factory=list)
+    breakdown: dict[str, float] = Field(default_factory=dict)
 
 
 class PackageSummary(BaseModel):
@@ -114,8 +202,39 @@ class PackageSummary(BaseModel):
     total_net_profit: float = 0
     overall_roi: float = 0
     recommended_max_discount: float = 0
+    asset_package_type: Literal["inventory", "non_inventory"] = "inventory"
+    discount_basis: str = ""
+    total_principal: float = 0
+    total_vehicle_valuation: float = 0
+    valuation_coverage_rate: float = 0
+    recommended_transfer_price_low: float = 0
+    recommended_transfer_price_mid: float = 0
+    recommended_transfer_price_high: float = 0
+    recommended_discount_low: float = 0
+    recommended_discount_mid: float = 0
+    recommended_discount_high: float = 0
+    principal_recovery_rate_low: Optional[float] = None
+    principal_recovery_rate_mid: Optional[float] = None
+    principal_recovery_rate_high: Optional[float] = None
+    valuation_realization_rate_low: Optional[float] = None
+    valuation_realization_rate_mid: Optional[float] = None
+    valuation_realization_rate_high: Optional[float] = None
+    collateral_coverage_ratio: Optional[float] = None
+    analysis_report: str = ""
+    pricing_methodology: str = ""
     high_risk_count: int = 0
     risk_alerts: list[str] = Field(default_factory=list)
+    # 本次计算请求的买断价策略及参数（让前端一眼看清策略是否生效）
+    requested_strategy: str = "direct"
+    discount_rate_used: Optional[float] = None
+    # 各策略实际命中的行数统计
+    strategy_breakdown: dict[str, int] = Field(default_factory=dict)
+    tradeability_score: int = 0
+    tradeability_level: Literal["A", "B", "C", "D", "E"] = "E"
+    tradeability_summary: str = ""
+    tradeability_recommendations: list[str] = Field(default_factory=list)
+    tradeability_breakdown: dict[str, float] = Field(default_factory=dict)
+    buyer_offer_analysis: Optional[BuyerOfferAnalysis] = None
 
 
 class PackageCalculationResult(BaseModel):

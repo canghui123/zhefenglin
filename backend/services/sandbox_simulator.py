@@ -15,7 +15,9 @@ from models.simulation import (
     PathCResult,
     PathDResult,
     PathEResult,
+    PathDecisionScore,
 )
+from services.legal_path_assessment import assess_legal_paths
 
 
 # ============================================================
@@ -496,6 +498,97 @@ def simulate_path_e(inp: SandboxInput) -> PathEResult:
     )
 
 
+def _normalize_scores(values: dict[str, float], *, higher_is_better: bool = True) -> dict[str, float]:
+    available_values = list(values.values())
+    if not available_values:
+        return {}
+    low = min(available_values)
+    high = max(available_values)
+    if math.isclose(low, high):
+        return {key: 100.0 for key in values}
+    scores: dict[str, float] = {}
+    for key, value in values.items():
+        raw = (value - low) / (high - low) * 100
+        scores[key] = raw if higher_is_better else 100 - raw
+    return scores
+
+
+def _decision_weights(preference: str) -> dict[str, float]:
+    if preference == "accelerate_cashflow":
+        return {"net": 0.30, "time": 0.30, "legal": 0.15, "execution": 0.10, "cashflow": 0.15}
+    if preference == "reduce_legal_risk":
+        return {"net": 0.30, "time": 0.15, "legal": 0.35, "execution": 0.10, "cashflow": 0.10}
+    if preference == "reduce_execution_complexity":
+        return {"net": 0.30, "time": 0.15, "legal": 0.20, "execution": 0.25, "cashflow": 0.10}
+    return {"net": 0.40, "time": 0.20, "legal": 0.20, "execution": 0.10, "cashflow": 0.10}
+
+
+def _build_path_decision_scores(
+    inp: SandboxInput,
+    *,
+    path_values: dict[str, float],
+    path_days: dict[str, int],
+    path_available: dict[str, bool],
+    path_unavailable_reasons: dict[str, str],
+    litigation_score: int,
+    special_score: int,
+) -> list[PathDecisionScore]:
+    weights = _decision_weights(inp.strategy_preference)
+    available_values = {
+        key: value for key, value in path_values.items() if path_available.get(key, True)
+    }
+    available_days = {
+        key: value for key, value in path_days.items() if path_available.get(key, True)
+    }
+    net_scores = _normalize_scores(available_values, higher_is_better=True)
+    time_scores = _normalize_scores(available_days, higher_is_better=False)
+
+    legal_scores = {
+        "A": 70.0,
+        "B": float(litigation_score),
+        "C": 85.0 if inp.vehicle_recovered else 0.0,
+        "D": float(special_score),
+        "E": 75.0,
+    }
+    execution_scores = {
+        "A": 75.0,
+        "B": 45.0,
+        "C": 85.0 if inp.vehicle_recovered else 0.0,
+        "D": 60.0 if inp.vehicle_recovered and inp.vehicle_in_inventory else 0.0,
+        "E": 70.0,
+    }
+
+    scores: list[PathDecisionScore] = []
+    for path in ["A", "B", "C", "D", "E"]:
+        available = path_available.get(path, True)
+        net = net_scores.get(path, 0.0) if available else 0.0
+        time = time_scores.get(path, 0.0) if available else 0.0
+        legal = legal_scores[path] if available else 0.0
+        execution = execution_scores[path] if available else 0.0
+        cashflow = time
+        total = (
+            net * weights["net"]
+            + time * weights["time"]
+            + legal * weights["legal"]
+            + execution * weights["execution"]
+            + cashflow * weights["cashflow"]
+        ) if available else 0.0
+        scores.append(
+            PathDecisionScore(
+                path=path,
+                score=round(total, 2),
+                net_recovery_score=round(net, 2),
+                time_score=round(time, 2),
+                legal_feasibility_score=round(legal, 2),
+                execution_difficulty_score=round(execution, 2),
+                cashflow_urgency_score=round(cashflow, 2),
+                available=available,
+                reason=path_unavailable_reasons.get(path, ""),
+            )
+        )
+    return scores
+
+
 # ============================================================
 # 8. 综合决策
 # ============================================================
@@ -511,6 +604,9 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
     path_c = simulate_path_c(inp)
     path_d = simulate_path_d(inp)
     path_e = simulate_path_e(inp)
+    litigation_assessment, special_assessment = assess_legal_paths(inp)
+    path_b.legal_assessment = litigation_assessment
+    path_d.legal_assessment = special_assessment
 
     # ---- 决策对比 ----
     # A: 取15/30/60/90天中最优的净头寸
@@ -530,21 +626,51 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
     # E: 重组
     e_value = path_e.net_recovery
 
-    # 构建候选路径集合；不满足硬前提的路径不能进入推荐候选。
-    candidate_paths: dict[str, float] = {
-        "A": a_best,
-        "B": b_value,
-        "E": e_value,
-    }
-    if path_c.available:
-        candidate_paths["C"] = c_value
-    if path_d.available:
-        candidate_paths["D"] = d_value
-
     # 保留所有路径数值用于对比展示
     paths = {"A": a_best, "B": b_value, "C": c_value, "D": d_value, "E": e_value}
-    best_path = max(candidate_paths, key=candidate_paths.get)
-    best_value = candidate_paths[best_path]
+    path_days = {
+        "A": a_best_days,
+        "B": 270,
+        "C": path_c.expected_sale_days,
+        "D": path_d.duration_days,
+        "E": path_e.total_months * 30,
+    }
+    path_available = {
+        "A": True,
+        "B": True,
+        "C": path_c.available,
+        "D": path_d.available and special_assessment.score >= 40,
+        "E": True,
+    }
+    path_unavailable_reasons = {
+        "C": path_c.unavailable_reason if not path_c.available else "",
+        "D": (
+            path_d.unavailable_reason
+            if not path_d.available
+            else (
+                "特别程序法律材料或权属条件不足，未进入推荐候选。"
+                if special_assessment.score < 40
+                else ""
+            )
+        ),
+    }
+    path_scores = _build_path_decision_scores(
+        inp,
+        path_values=paths,
+        path_days=path_days,
+        path_available=path_available,
+        path_unavailable_reasons=path_unavailable_reasons,
+        litigation_score=litigation_assessment.score,
+        special_score=special_assessment.score,
+    )
+    available_scores = [row for row in path_scores if row.available]
+    best_score = max(available_scores, key=lambda row: row.score)
+    best_path = best_score.path
+    best_value = paths[best_path]
+    net_best_path = max(
+        {p: v for p, v in paths.items() if path_available.get(p, True)},
+        key=lambda p: paths[p],
+    )
 
     # 生成建议文本
     path_names = {
@@ -558,12 +684,21 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
     unavailable_notes = []
     if not path_c.available:
         unavailable_notes.append(f"路径 C 不可选：{path_c.unavailable_reason}")
-    if not path_d.available:
-        unavailable_notes.append(f"路径 D 不可选：{path_d.unavailable_reason}")
+    if not path_available["D"]:
+        unavailable_notes.append(f"路径 D 不可选：{path_unavailable_reasons['D']}")
     header = ""
     if unavailable_notes:
         header = "（" + "；".join(unavailable_notes) + " 已从决策候选中自动排除。）\n"
-    lines = [header + f"综合对比可用路径，推荐【{path_names[best_path]}】（预计净回收¥{best_value:,.0f}）。\n"]
+    lines = [
+        header
+        + f"综合对比可用路径，推荐【{path_names[best_path]}】"
+        + f"（综合评分{best_score.score:.1f}，预计净回收¥{best_value:,.0f}）。\n"
+    ]
+    if best_path != net_best_path:
+        lines.append(
+            f"净回收最高路径为【{path_names[net_best_path]}】，但本次综合评分同时考虑回款时间、"
+            "法律可行性、执行难度和现金流紧迫度，因此未直接选择净回收最高路径。"
+        )
 
     if best_path == "C":
         lines.append(
@@ -577,12 +712,14 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
             f"特别程序约3个月完成，预计拍卖回收¥{path_d.expected_auction_price:,.0f}，"
             f"扣除法律费用¥{path_d.legal_cost.total_legal_cost:,.0f}等成本后净回收¥{d_value:,.0f}。"
         )
+        lines.append(f"法律可行性评分{special_assessment.score}分：{special_assessment.recommendation}")
         lines.append(f"相比常规诉讼（净回收¥{b_value:,.0f}）缩短周期6个月以上。")
     elif best_path == "B":
         lines.append(
             f"常规诉讼预期情况下净回收¥{b_value:,.0f}，"
             f"但周期约9个月且不确定性较大。"
         )
+        lines.append(f"常规诉讼法律可行性评分{litigation_assessment.score}分：{litigation_assessment.recommendation}")
         if path_d.available and d_value > 0:
             lines.append(f"建议评估是否可走担保物权特别程序（净回收¥{d_value:,.0f}，仅需3个月）。")
     elif best_path == "A":
@@ -601,8 +738,10 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
     lines.append("\n各路径对比：")
     sorted_paths = sorted(paths.items(), key=lambda x: x[1], reverse=True)
     for i, (p, v) in enumerate(sorted_paths):
+        score_row = next(row for row in path_scores if row.path == p)
         marker = " <-- 推荐" if p == best_path else ""
-        lines.append(f"  {path_names[p]}：¥{v:,.0f}{marker}")
+        unavailable = "（不可选）" if not score_row.available else ""
+        lines.append(f"  {path_names[p]}：¥{v:,.0f}，综合评分{score_row.score:.1f}{unavailable}{marker}")
 
     recommendation = "\n".join(lines)
 
@@ -613,6 +752,7 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
         path_c=path_c,
         path_d=path_d,
         path_e=path_e,
+        path_scores=path_scores,
         recommendation=recommendation,
         best_path=best_path,
     )

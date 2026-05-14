@@ -7,6 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from models.simulation import SandboxResult
 from services.llm_client import chat_completion
+from services.llm_guardrails import DATA_ISOLATION_NOTICE, sanitize_user_text
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "templates")
 
@@ -77,6 +78,7 @@ async def generate_report_html(
         path_c=result.path_c,
         path_d=result.path_d,
         path_e=result.path_e,
+        path_scores=result.path_scores,
         best_path=result.best_path,
         recommendation=result.recommendation,
         analysis=analysis,
@@ -97,6 +99,7 @@ async def _generate_analysis(
         "你是一位汽车金融不良资产处置专家。请根据以下量化分析数据，"
         "撰写一份专业、有说服力的分析摘要（2-3段，约300字）。"
         "语气专业但易懂，结论明确。"
+        + DATA_ISOLATION_NOTICE
     )
 
     path_a_90 = next(
@@ -106,19 +109,43 @@ async def _generate_analysis(
         result.path_b.scenarios[1] if len(result.path_b.scenarios) > 1 else None
     )
 
-    user = f"""车辆信息：{result.input.car_description}
+    safe_car_desc = sanitize_user_text(result.input.car_description, max_length=200)
+    path_d_line = (
+        f"不可用，原因：{result.path_d.unavailable_reason}"
+        if not result.path_d.available
+        else (
+            f"净回收{result.path_d.net_recovery:.0f}元，"
+            f"法律费用{result.path_d.legal_cost.total_legal_cost:.0f}元"
+        )
+    )
+    litigation_legal = (
+        f"{result.path_b.legal_assessment.score}分/{result.path_b.legal_assessment.level}，"
+        f"材料缺口{len(result.path_b.legal_assessment.material_gaps)}项"
+        if result.path_b.legal_assessment
+        else "未评分"
+    )
+    special_legal = (
+        f"{result.path_d.legal_assessment.score}分/{result.path_d.legal_assessment.level}，"
+        f"材料缺口{len(result.path_d.legal_assessment.material_gaps)}项"
+        if result.path_d.legal_assessment
+        else "未评分"
+    )
+    user = f"""车辆信息：{safe_car_desc}
 入库日期：{result.input.entry_date}
+逾期阶段：{result.input.overdue_bucket}
 逾期金额：{result.input.overdue_amount:.0f}元
 当前车300估值：{result.input.che300_value:.0f}元
 车辆类型：{VEHICLE_TYPE_LABELS.get(result.input.vehicle_type, result.input.vehicle_type)}
 车龄：{result.input.vehicle_age_years}年
+车辆状态：{"已收回" if result.input.vehicle_recovered else "未收回"} / {"已入库" if result.input.vehicle_in_inventory else "未入库"}
 
 五条路径分析结果：
 路径A（等待赎车90天）：净头寸{path_a_90.net_position:.0f}元，资产缩水{path_a_90.total_shrinkage:.0f}元
 路径B（常规诉讼预期9个月）：净回收{path_b_exp.net_recovery:.0f}元，法律费用{path_b_exp.legal_cost.total_legal_cost:.0f}元
 路径C（立即竞拍{result.path_c.expected_sale_days}天）：净回款{result.path_c.net_recovery:.0f}元
-路径D（担保物权特别程序约3个月）：净回收{result.path_d.net_recovery:.0f}元，法律费用{result.path_d.legal_cost.total_legal_cost:.0f}元
+路径D（担保物权特别程序约3个月）：{path_d_line}
 路径E（分期重组{result.path_e.total_months}期）：净回收{result.path_e.net_recovery:.0f}元，再违约率{result.path_e.redefault_rate:.0%}
+法律可行性：常规诉讼{litigation_legal}；特别程序{special_legal}
 
 系统推荐：路径{result.best_path}
 

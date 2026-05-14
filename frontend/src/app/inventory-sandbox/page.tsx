@@ -2,7 +2,19 @@
 
 import { useState } from "react";
 import { useSession } from "@/components/auth/session-provider";
-import { simulateSandbox, generateReport, downloadReport, type SandboxResult, type TimePoint, type LitigationScenario, type AuctionRound } from "@/lib/api";
+import {
+  simulateSandbox,
+  generateReport,
+  downloadReport,
+  type SandboxResult,
+  type TimePoint,
+  type LitigationScenario,
+  type AuctionRound,
+  type LegalMaterialStatus,
+  type LegalPathAssessment,
+  type PathDecisionScore,
+  type StrategyPreference,
+} from "@/lib/api";
 import { hasFeature } from "@/lib/auth";
 import { pollJob } from "@/lib/jobs";
 
@@ -34,7 +46,36 @@ interface FormState {
   restructure_monthly_payment: number;
   restructure_months: number;
   restructure_redefault_rate: number;
+  legal_materials: LegalMaterialStatus;
+  strategy_preference: StrategyPreference;
 }
+
+const strategyPreferenceOptions: Array<{ value: StrategyPreference; label: string; desc: string }> = [
+  { value: "maximize_recovery", label: "最大化净回收", desc: "更看重最终回收金额" },
+  { value: "accelerate_cashflow", label: "加速现金回笼", desc: "更看重短周期回款" },
+  { value: "reduce_legal_risk", label: "降低法律风险", desc: "提高法律可行性权重" },
+  { value: "reduce_execution_complexity", label: "降低执行复杂度", desc: "更偏好易执行路径" },
+];
+
+const legalMaterialItems: Array<{ key: keyof LegalMaterialStatus; label: string; group: string }> = [
+  { key: "loan_contract", label: "借款合同", group: "债权材料" },
+  { key: "mortgage_contract", label: "抵押合同", group: "债权材料" },
+  { key: "mortgage_registration", label: "抵押登记", group: "担保材料" },
+  { key: "overdue_statement", label: "逾期明细", group: "债权材料" },
+  { key: "repayment_records", label: "还款流水", group: "债权材料" },
+  { key: "debtor_identity", label: "债务人身份信息", group: "债权材料" },
+  { key: "collection_records", label: "催收记录", group: "过程材料" },
+  { key: "vehicle_location_records", label: "车辆定位/收车记录", group: "车辆材料" },
+  { key: "inventory_certificate", label: "入库证明", group: "车辆材料" },
+  { key: "vehicle_photos", label: "车辆照片", group: "车辆材料" },
+  { key: "valuation_report", label: "估值报告", group: "车辆材料" },
+  { key: "debt_balance_sheet", label: "债权余额表", group: "债权材料" },
+  { key: "title_check", label: "查封/二押/过户核验", group: "担保材料" },
+  { key: "jurisdiction_clause", label: "管辖条款", group: "诉讼材料" },
+  { key: "debt_matured", label: "债权已到期", group: "事实状态" },
+  { key: "no_substantive_dispute", label: "无实质争议", group: "事实状态" },
+  { key: "no_title_abnormality", label: "无权属异常", group: "事实状态" },
+];
 
 export default function InventorySandboxPage() {
   const { user } = useSession();
@@ -68,6 +109,26 @@ export default function InventorySandboxPage() {
     restructure_monthly_payment: 0,
     restructure_months: 12,
     restructure_redefault_rate: 0.30,
+    strategy_preference: "maximize_recovery",
+    legal_materials: {
+      loan_contract: true,
+      mortgage_contract: true,
+      mortgage_registration: true,
+      overdue_statement: true,
+      repayment_records: true,
+      debtor_identity: true,
+      collection_records: false,
+      vehicle_location_records: true,
+      inventory_certificate: true,
+      vehicle_photos: true,
+      valuation_report: true,
+      debt_balance_sheet: true,
+      title_check: true,
+      jurisdiction_clause: false,
+      debt_matured: true,
+      no_substantive_dispute: true,
+      no_title_abnormality: true,
+    },
   });
 
   function upd(field: keyof FormState, value: string | number | boolean) {
@@ -80,6 +141,26 @@ export default function InventorySandboxPage() {
       return;
     }
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateLegalMaterial(field: keyof LegalMaterialStatus, value: boolean) {
+    setForm((prev) => ({
+      ...prev,
+      legal_materials: {
+        ...prev.legal_materials,
+        [field]: value,
+      },
+    }));
+  }
+
+  function setAllLegalMaterials(value: boolean) {
+    setForm((prev) => {
+      const nextMaterials: LegalMaterialStatus = {};
+      for (const item of legalMaterialItems) {
+        nextMaterials[item.key] = value;
+      }
+      return { ...prev, legal_materials: nextMaterials };
+    });
   }
 
   async function handleSimulate() {
@@ -234,6 +315,66 @@ export default function InventorySandboxPage() {
         )}
 
         <hr className="border-gray-200" />
+        <div className="space-y-4">
+          <div>
+            <h2 className="font-semibold text-gray-900">法律材料与推荐偏好</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              勾选已具备材料后，系统会为常规诉讼和担保物权特别程序生成法律可行性评分、材料缺口清单，并纳入路径推荐。
+            </p>
+          </div>
+          <Field label="策略偏好">
+            <select
+              className="inp"
+              value={form.strategy_preference}
+              onChange={(e) =>
+                upd("strategy_preference", e.target.value as StrategyPreference)
+              }
+            >
+              {strategyPreferenceOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label} — {option.desc}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="px-3 py-1.5 border rounded-lg text-xs hover:bg-gray-50"
+              onClick={() => setAllLegalMaterials(true)}
+            >
+              全部已具备
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1.5 border rounded-lg text-xs hover:bg-gray-50"
+              onClick={() => setAllLegalMaterials(false)}
+            >
+              全部清空
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {legalMaterialItems.map((item) => (
+              <label
+                key={item.key}
+                className="flex items-start gap-2 rounded-lg border bg-slate-50 p-3 text-sm"
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.legal_materials[item.key])}
+                  onChange={(e) => updateLegalMaterial(item.key, e.target.checked)}
+                  className="mt-0.5 h-4 w-4"
+                />
+                <span>
+                  <span className="font-medium text-gray-800">{item.label}</span>
+                  <span className="ml-1 text-xs text-gray-400">({item.group})</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <hr className="border-gray-200" />
         <h2 className="font-semibold text-gray-900">竞拍参数</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Field label="预计成交天数">
@@ -319,6 +460,31 @@ export default function InventorySandboxPage() {
             </div>
             <div className="text-sm text-gray-700 whitespace-pre-line">{result.recommendation}</div>
           </div>
+
+          {result.path_scores && result.path_scores.length > 0 && (
+            <div className="bg-white border rounded-xl p-5">
+              <div className="mb-3">
+                <h2 className="font-semibold text-gray-900">路径综合评分</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  默认综合净回收、回款周期、法律可行性、执行难度和现金流紧迫度；策略偏好只调整权重，不改基础测算公式。
+                </p>
+              </div>
+              <PathScoreTable scores={result.path_scores} pathNames={pathNames} />
+            </div>
+          )}
+
+          {(result.path_b.legal_assessment || result.path_d.legal_assessment) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <LegalAssessmentPanel
+                title="路径B：常规诉讼法律可行性"
+                assessment={result.path_b.legal_assessment}
+              />
+              <LegalAssessmentPanel
+                title="路径D：担保物权特别程序法律可行性"
+                assessment={result.path_d.legal_assessment}
+              />
+            </div>
+          )}
 
           {/* 五路径卡片 */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -521,6 +687,114 @@ function PathCard({
         </div>
       )}
       {children}
+    </div>
+  );
+}
+
+function PathScoreTable({
+  scores,
+  pathNames,
+}: {
+  scores: PathDecisionScore[];
+  pathNames: Record<string, string>;
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b text-xs text-gray-500">
+            <th className="py-2 text-left">路径</th>
+            <th className="py-2 text-right">综合分</th>
+            <th className="py-2 text-right">净回收</th>
+            <th className="py-2 text-right">时间</th>
+            <th className="py-2 text-right">法律</th>
+            <th className="py-2 text-right">执行</th>
+            <th className="py-2 text-right">现金流</th>
+            <th className="py-2 text-left">说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          {scores.map((score) => (
+            <tr key={score.path} className="border-b last:border-0">
+              <td className="py-2 font-medium">
+                路径{score.path} — {pathNames[score.path]}
+              </td>
+              <td className="py-2 text-right font-semibold">{score.score.toFixed(1)}</td>
+              <td className="py-2 text-right">{score.net_recovery_score.toFixed(1)}</td>
+              <td className="py-2 text-right">{score.time_score.toFixed(1)}</td>
+              <td className="py-2 text-right">{score.legal_feasibility_score.toFixed(1)}</td>
+              <td className="py-2 text-right">{score.execution_difficulty_score.toFixed(1)}</td>
+              <td className="py-2 text-right">{score.cashflow_urgency_score.toFixed(1)}</td>
+              <td className="max-w-[260px] py-2 text-xs text-gray-500">
+                {score.available ? score.reason : `未纳入推荐：${score.reason}`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LegalAssessmentPanel({
+  title,
+  assessment,
+}: {
+  title: string;
+  assessment?: LegalPathAssessment | null;
+}) {
+  if (!assessment) {
+    return (
+      <div className="bg-white border rounded-xl p-4">
+        <h3 className="font-semibold text-gray-900">{title}</h3>
+        <p className="mt-2 text-sm text-gray-500">暂无法律可行性评分。</p>
+      </div>
+    );
+  }
+
+  const strong = assessment.score >= 80;
+  const warning = assessment.score < 60;
+
+  return (
+    <div className="bg-white border rounded-xl p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-gray-900">{title}</h3>
+          <p className="mt-1 text-sm text-gray-600">{assessment.recommendation}</p>
+        </div>
+        <span
+          className={`rounded-full px-3 py-1 text-xs font-medium ${
+            strong
+              ? "bg-green-100 text-green-700"
+              : warning
+                ? "bg-red-100 text-red-700"
+                : "bg-amber-100 text-amber-700"
+          }`}
+        >
+          {assessment.score}分 · {assessment.level}
+        </span>
+      </div>
+      {assessment.material_gaps.length > 0 && (
+        <div className="rounded-lg bg-amber-50 p-3">
+          <div className="mb-2 text-sm font-medium text-amber-900">材料缺口清单</div>
+          <div className="flex flex-wrap gap-2">
+            {assessment.material_gaps.map((item) => (
+              <span key={item} className="rounded bg-white px-2 py-1 text-xs text-amber-900">
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {assessment.risk_tags.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {assessment.risk_tags.map((tag) => (
+            <span key={tag} className="rounded bg-slate-100 px-2 py-1 text-xs text-gray-600">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -41,6 +41,12 @@ def _check_cache(session: Session, cache_key: str) -> Optional[ValuationResult]:
     row = valuation_repo.get_fresh_valuation(session, cache_key)
     if row is None:
         return None
+    is_mock = False
+    try:
+        raw = json.loads(row.raw_response or "{}")
+        is_mock = bool(raw.get("mock"))
+    except (TypeError, ValueError):
+        is_mock = False
     return ValuationResult(
         model_id=cache_key,
         model_name=row.city_code or "",
@@ -50,6 +56,9 @@ def _check_cache(session: Session, cache_key: str) -> Optional[ValuationResult]:
         fair_price=row.fair_price,
         dealer_buy_price=row.dealer_buy_price,
         dealer_sell_price=row.dealer_sell_price,
+        is_mock=is_mock,
+        source="cache",
+        from_cache=True,
     )
 
 
@@ -324,6 +333,8 @@ async def _real_vin_valuation(
         fair_price=round(medium * 0.85, -2) if medium else None,
         dealer_buy_price=dealer_buy,
         dealer_sell_price=dealer_sell,
+        source="che300_vin",
+        from_cache=False,
     )
 
     _save_cache(session, cache_key, result, json.dumps(data, ensure_ascii=False), model_name)
@@ -479,6 +490,8 @@ def _mock_valuation(
         dealer_buy_price=round(medium * 0.90, -2),
         dealer_sell_price=round(medium * 1.05, -2),
         is_mock=True,
+        source="mock",
+        from_cache=False,
     )
     _save_cache(session, cache_key, result, '{"mock": true}')
     return result
@@ -573,11 +586,13 @@ async def batch_valuation(
                 model_id=vin or model_id,
                 model_name="商业化策略拦截，已降级为基础估值",
                 is_mock=True,
+                source="policy_degraded",
             )
         except Exception as e:
             results[row_num] = ValuationResult(
                 model_id=vin or model_id,
                 model_name=f"估值失败: {str(e)}",
                 is_mock=True,
+                source="valuation_error",
             )
     return results

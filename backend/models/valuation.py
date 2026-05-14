@@ -25,6 +25,8 @@ class ValuationResult(BaseModel):
     dealer_buy_price: Optional[float] = None
     dealer_sell_price: Optional[float] = None
     is_mock: bool = False
+    source: str = "unknown"
+    from_cache: bool = False
 
 
 class CarModel(BaseModel):

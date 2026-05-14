@@ -1,5 +1,47 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional
+from typing import Literal, Optional
+
+
+class LegalMaterialStatus(BaseModel):
+    loan_contract: bool = Field(default=False, description="借款合同是否完整")
+    mortgage_contract: bool = Field(default=False, description="抵押/担保合同是否完整")
+    mortgage_registration: bool = Field(default=False, description="抵押登记证明是否完整")
+    overdue_statement: bool = Field(default=False, description="逾期明细是否完整")
+    repayment_records: bool = Field(default=False, description="还款流水是否完整")
+    debtor_identity: bool = Field(default=False, description="债务人身份信息是否完整")
+    collection_records: bool = Field(default=False, description="催收记录是否完整")
+    vehicle_location_records: bool = Field(default=False, description="车辆定位记录是否完整")
+    inventory_certificate: bool = Field(default=False, description="收车/入库证明是否完整")
+    vehicle_photos: bool = Field(default=False, description="车辆照片是否完整")
+    valuation_report: bool = Field(default=False, description="车辆估值报告是否完整")
+    debt_balance_sheet: bool = Field(default=False, description="债权余额计算表是否完整")
+    guarantor_info: bool = Field(default=False, description="担保人信息是否完整")
+    title_check: bool = Field(default=False, description="查封/二押/过户核验结果是否完整")
+    jurisdiction_clause: bool = Field(default=False, description="管辖约定是否明确")
+    debt_matured: bool = Field(default=True, description="债权是否已到期")
+    no_substantive_dispute: bool = Field(default=True, description="是否无明显实质争议")
+    no_title_abnormality: bool = Field(default=True, description="是否无查封/二押/权属异常")
+
+
+class LegalPathAssessment(BaseModel):
+    path: Literal["litigation", "special_procedure"]
+    score: int
+    level: str
+    risk_tags: list[str] = Field(default_factory=list)
+    material_gaps: list[str] = Field(default_factory=list)
+    recommendation: str = ""
+
+
+class PathDecisionScore(BaseModel):
+    path: Literal["A", "B", "C", "D", "E"]
+    score: float
+    net_recovery_score: float
+    time_score: float
+    legal_feasibility_score: float
+    execution_difficulty_score: float
+    cashflow_urgency_score: float
+    available: bool = True
+    reason: str = ""
 
 
 class SandboxInput(BaseModel):
@@ -48,6 +90,13 @@ class SandboxInput(BaseModel):
     restructure_monthly_payment: float = Field(default=0, description="重组月还款额(元)")
     restructure_months: int = Field(default=12, description="重组期数(月)")
     restructure_redefault_rate: float = Field(default=0.30, description="重组后再违约率")
+    legal_materials: LegalMaterialStatus = Field(default_factory=LegalMaterialStatus)
+    strategy_preference: Literal[
+        "maximize_recovery",
+        "accelerate_cashflow",
+        "reduce_legal_risk",
+        "reduce_execution_complexity",
+    ] = Field(default="maximize_recovery")
 
     @model_validator(mode="after")
     def normalize_vehicle_inventory_state(self):
@@ -114,6 +163,7 @@ class PathBResult(BaseModel):
     legal_cost: LegalCostDetail
     scenarios: list[LitigationScenario]
     summary: str = ""
+    legal_assessment: Optional[LegalPathAssessment] = None
 
 
 # ============ 路径C：立即上架竞拍 ============
@@ -150,6 +200,7 @@ class PathDResult(BaseModel):
     # 路径可用性 — 需债权人已占有担保物、车辆已入库，且至少 M3 以上
     available: bool = True
     unavailable_reason: str = ""
+    legal_assessment: Optional[LegalPathAssessment] = None
 
 
 # ============ 路径E：分期重组/和解 ============
@@ -176,5 +227,6 @@ class SandboxResult(BaseModel):
     path_c: PathCResult
     path_d: PathDResult
     path_e: PathEResult
+    path_scores: list[PathDecisionScore] = Field(default_factory=list)
     recommendation: str = ""
     best_path: str = ""

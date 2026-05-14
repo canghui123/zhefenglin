@@ -19,6 +19,8 @@ from services.pdf_generator import generate_report_html
 from services.job_dispatcher import dispatch_inline_async
 from services.storage.factory import get_storage
 from services.tenant_context import get_current_tenant_id
+from services import rate_limit_service
+from config import settings
 
 router = APIRouter(
     prefix="/api/sandbox",
@@ -40,6 +42,11 @@ async def simulate(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """运行五路径模拟"""
+    rate_limit_service.enforce_request_limit(
+        request,
+        scope="sandbox.simulate",
+        limit=settings.rate_limit_write_max_requests,
+    )
     result = run_simulation(inp)
 
     row = sandbox_repo.create_sandbox_result(
@@ -70,7 +77,21 @@ async def simulate(
         user_id=user.id,
         resource_type="sandbox_result",
         resource_id=row.id,
-        after={"best_path": row.best_path},
+        after={
+            "best_path": row.best_path,
+            "strategy_preference": inp.strategy_preference,
+            "legal_materials_present": sum(
+                1 for value in inp.legal_materials.model_dump().values() if value is True
+            ),
+            "legal_material_gaps": {
+                "litigation": len(result.path_b.legal_assessment.material_gaps)
+                if result.path_b.legal_assessment
+                else 0,
+                "special_procedure": len(result.path_d.legal_assessment.material_gaps)
+                if result.path_d.legal_assessment
+                else 0,
+            },
+        },
     )
 
     return result
@@ -90,6 +111,9 @@ async def get_result(
     )
     if row is None:
         raise SandboxResultNotFound()
+    reconstructed = None
+    if row.input_json:
+        reconstructed = run_simulation(SandboxInput.model_validate_json(row.input_json))
 
     return {
         "id": row.id,
@@ -103,9 +127,41 @@ async def get_result(
         "path_c": json.loads(row.path_c_json) if row.path_c_json else None,
         "path_d": json.loads(row.path_d_json) if row.path_d_json else None,
         "path_e": json.loads(row.path_e_json) if row.path_e_json else None,
+        "path_scores": [item.model_dump() for item in reconstructed.path_scores]
+        if reconstructed is not None
+        else [],
         "recommendation": row.recommendation,
         "best_path": row.best_path,
         "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.get("/{result_id}/legal-assessment")
+async def get_legal_assessment(
+    result_id: int,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """Return saved legal feasibility scoring for litigation and special procedure."""
+    row = sandbox_repo.get_sandbox_result_by_id(
+        session, result_id, tenant_id=tenant_id
+    )
+    if row is None:
+        raise SandboxResultNotFound()
+    path_b = PathBResult.model_validate_json(row.path_b_json)
+    path_d = PathDResult.model_validate_json(row.path_d_json) if row.path_d_json else None
+    return {
+        "result_id": result_id,
+        "litigation": (
+            path_b.legal_assessment.model_dump()
+            if path_b.legal_assessment is not None
+            else None
+        ),
+        "special_procedure": (
+            path_d.legal_assessment.model_dump()
+            if path_d is not None and path_d.legal_assessment is not None
+            else None
+        ),
     }
 
 
@@ -122,6 +178,11 @@ async def generate_report(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """生成PDF报告（异步任务，返回 job_id）"""
+    rate_limit_service.enforce_request_limit(
+        request,
+        scope="sandbox.report",
+        limit=settings.rate_limit_write_max_requests,
+    )
     row = sandbox_repo.get_sandbox_result_by_id(
         session, result_id, tenant_id=tenant_id
     )
@@ -140,6 +201,7 @@ async def generate_report(
             daily_parking=row.daily_parking,
         )
 
+    reconstructed = run_simulation(inp)
     result = SandboxResult(
         id=row.id,
         input=inp,
@@ -148,6 +210,7 @@ async def generate_report(
         path_c=PathCResult.model_validate_json(row.path_c_json),
         path_d=PathDResult.model_validate_json(row.path_d_json) if row.path_d_json else run_simulation(inp).path_d,
         path_e=PathEResult.model_validate_json(row.path_e_json) if row.path_e_json else run_simulation(inp).path_e,
+        path_scores=reconstructed.path_scores,
         recommendation=row.recommendation,
         best_path=row.best_path or "C",
     )

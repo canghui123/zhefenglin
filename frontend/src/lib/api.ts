@@ -58,6 +58,30 @@ export async function healthCheck() {
 }
 
 // 资产包上传
+export interface ParsedAssetInfo {
+  row_number: number;
+  car_description: string;
+  vin: string | null;
+  first_registration: string | null;
+  mileage: number | null;
+  gps_online: boolean | null;
+  insurance_lapsed: boolean | null;
+  ownership_transferred: boolean | null;
+  loan_principal: number | null;
+  buyout_price: number | null;
+}
+
+export interface AssetFieldOverride {
+  car_description?: string;
+  vin?: string;
+  first_registration?: string;
+  mileage?: number;
+  gps_online?: boolean;
+  insurance_lapsed?: boolean;
+  ownership_transferred?: boolean;
+  loan_principal?: number;
+}
+
 export async function uploadExcel(file: File) {
   const form = new FormData();
   form.append("file", file);
@@ -65,39 +89,16 @@ export async function uploadExcel(file: File) {
     package_id: number;
     filename: string;
     parse_result: {
-      assets: Array<{
-        row_number: number;
-        car_description: string;
-        vin: string | null;
-        first_registration: string | null;
-        mileage: number | null;
-        gps_online: boolean | null;
-        insurance_lapsed: boolean | null;
-        ownership_transferred: boolean | null;
-        loan_principal: number | null;
-        buyout_price: number | null;
-      }>;
+      assets: ParsedAssetInfo[];
       errors: Array<{ row_number: number; field: string; message: string }>;
       total_rows: number;
       success_rows: number;
       column_mapping: Record<string, string>;
       unmapped_columns: string[];
-      suggested_strategy: "direct" | "discount" | "ai_suggest";
+      suggested_strategy: "seller_transfer_analysis";
       strategy_message: string;
     };
   }>("/api/asset-package/upload", { method: "POST", body: form });
-}
-
-// AI 买断价建议
-export interface BuyoutSuggestion {
-  row_number: number;
-  car_description: string;
-  first_registration: string | null;
-  mileage: number | null;
-  che300_valuation: number | null;
-  suggested_buyout_low: number;
-  suggested_buyout_mid: number;
-  suggested_buyout_high: number;
 }
 
 export interface ApprovalContext {
@@ -108,37 +109,6 @@ export interface ApprovalContext {
   related_object_id: string | null;
   estimated_cost: number;
   metadata: Record<string, unknown>;
-}
-
-export interface SuggestBuyoutOptions {
-  advanced_condition_pricing?: boolean;
-  manual_selected?: boolean;
-  approval_mode?: boolean;
-  approval_request_id?: number | null;
-  strict_policy?: boolean;
-  single_task_budget?: number | null;
-}
-
-export async function suggestBuyout(
-  packageId: number,
-  vehicleCondition: string,
-  options: SuggestBuyoutOptions = {},
-) {
-  return request<{
-    package_id: number;
-    vehicle_condition: string;
-    total_suggested_buyout: number;
-    suggestions: BuyoutSuggestion[];
-    ai_comment: string;
-  }>("/api/asset-package/suggest-buyout", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      package_id: packageId,
-      vehicle_condition: vehicleCondition,
-      ...options,
-    }),
-  });
 }
 
 // 运行定价计算 (returns 202 with job reference)
@@ -163,8 +133,38 @@ export async function calculatePackage(
 
 // 获取资产包结果
 export async function getPackage(packageId: number) {
-  return request<{ id: number; name: string; results: PackageCalculationResult | null }>(
+  return request<{
+    id: number;
+    name: string;
+    parameters: PricingParameters | null;
+    results: PackageCalculationResult | null;
+  }>(
     `/api/asset-package/${packageId}`
+  );
+}
+
+// 下载资产包出让分析PDF
+export async function downloadAssetPackageReportPdf(packageId: number): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/api/asset-package/${packageId}/report.pdf`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw await buildApiError(res, "PDF下载失败");
+  }
+  return res.blob();
+}
+
+export async function analyzeBuyerOffer(
+  packageId: number,
+  input: { buyer_offer_price: number; buyer_offer_note?: string | null },
+) {
+  return request<BuyerOfferAnalysis>(
+    `/api/asset-package/${packageId}/buyer-offer-analysis`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
   );
 }
 
@@ -629,6 +629,7 @@ export interface PricingParameters {
   capital_rate: number;
   disposal_period: number;
   vehicle_condition?: "excellent" | "good" | "normal";
+  asset_package_type?: "inventory" | "non_inventory";
   buyout_strategy?: "direct" | "discount" | "ai_suggest";
   discount_rate?: number | null;
   advanced_condition_pricing?: boolean;
@@ -637,13 +638,32 @@ export interface PricingParameters {
   approval_request_id?: number | null;
   strict_policy?: boolean;
   single_task_budget?: number | null;
+  asset_overrides?: Record<number, AssetFieldOverride>;
 }
 
 export interface AssetPricingResult {
   row_number: number;
   car_description: string;
+  loan_principal: number | null;
   buyout_price: number;
+  applied_strategy?: string;
   che300_valuation: number | null;
+  pricing_basis: string;
+  pricing_basis_amount: number;
+  recommended_transfer_price_low: number;
+  recommended_transfer_price_mid: number;
+  recommended_transfer_price_high: number;
+  recommended_discount_low: number;
+  recommended_discount_mid: number;
+  recommended_discount_high: number;
+  principal_discount_low: number | null;
+  principal_discount_mid: number | null;
+  principal_discount_high: number | null;
+  valuation_discount_low: number | null;
+  valuation_discount_mid: number | null;
+  valuation_discount_high: number | null;
+  collateral_coverage_ratio: number | null;
+  exposure_gap: number | null;
   depreciation_rate: number | null;
   towing_cost: number;
   parking_cost: number;
@@ -653,6 +673,21 @@ export interface AssetPricingResult {
   net_profit: number;
   profit_margin: number;
   risk_flags: string[];
+  valuation_confidence_score?: number;
+  valuation_confidence_level?: "high" | "medium" | "low" | "very_low" | "mock" | "unknown";
+  valuation_source?: string;
+  valuation_warnings?: string[];
+  valuation_anomaly_tags?: string[];
+}
+
+export interface BuyerOfferAnalysis {
+  buyer_offer_price: number;
+  buyer_offer_note: string | null;
+  buyer_offer_discount: number | null;
+  buyer_offer_gap: number;
+  buyer_offer_gap_rate: number | null;
+  buyer_offer_assessment: string;
+  negotiation_suggestions: string[];
 }
 
 export interface PackageSummary {
@@ -662,8 +697,37 @@ export interface PackageSummary {
   total_net_profit: number;
   overall_roi: number;
   recommended_max_discount: number;
+  asset_package_type: "inventory" | "non_inventory";
+  discount_basis: string;
+  total_principal: number;
+  total_vehicle_valuation: number;
+  valuation_coverage_rate: number;
+  recommended_transfer_price_low: number;
+  recommended_transfer_price_mid: number;
+  recommended_transfer_price_high: number;
+  recommended_discount_low: number;
+  recommended_discount_mid: number;
+  recommended_discount_high: number;
+  principal_recovery_rate_low: number | null;
+  principal_recovery_rate_mid: number | null;
+  principal_recovery_rate_high: number | null;
+  valuation_realization_rate_low: number | null;
+  valuation_realization_rate_mid: number | null;
+  valuation_realization_rate_high: number | null;
+  collateral_coverage_ratio: number | null;
+  analysis_report: string;
+  pricing_methodology: string;
   high_risk_count: number;
   risk_alerts: string[];
+  requested_strategy?: string;
+  discount_rate_used?: number | null;
+  strategy_breakdown?: Record<string, number>;
+  tradeability_score?: number;
+  tradeability_level?: "A" | "B" | "C" | "D" | "E";
+  tradeability_summary?: string;
+  tradeability_recommendations?: string[];
+  tradeability_breakdown?: Record<string, number>;
+  buyer_offer_analysis?: BuyerOfferAnalysis | null;
 }
 
 export interface PackageCalculationResult {
@@ -696,6 +760,56 @@ export interface SandboxInput {
   restructure_monthly_payment?: number;
   restructure_months?: number;
   restructure_redefault_rate?: number;
+  legal_materials?: LegalMaterialStatus;
+  strategy_preference?: StrategyPreference;
+}
+
+export type StrategyPreference =
+  | "maximize_recovery"
+  | "accelerate_cashflow"
+  | "reduce_legal_risk"
+  | "reduce_execution_complexity";
+
+export interface LegalMaterialStatus {
+  loan_contract?: boolean;
+  mortgage_contract?: boolean;
+  mortgage_registration?: boolean;
+  overdue_statement?: boolean;
+  repayment_records?: boolean;
+  debtor_identity?: boolean;
+  collection_records?: boolean;
+  vehicle_location_records?: boolean;
+  inventory_certificate?: boolean;
+  vehicle_photos?: boolean;
+  valuation_report?: boolean;
+  debt_balance_sheet?: boolean;
+  guarantor_info?: boolean;
+  title_check?: boolean;
+  jurisdiction_clause?: boolean;
+  debt_matured?: boolean;
+  no_substantive_dispute?: boolean;
+  no_title_abnormality?: boolean;
+}
+
+export interface LegalPathAssessment {
+  path: "litigation" | "special_procedure";
+  score: number;
+  level: string;
+  risk_tags: string[];
+  material_gaps: string[];
+  recommendation: string;
+}
+
+export interface PathDecisionScore {
+  path: "A" | "B" | "C" | "D" | "E";
+  score: number;
+  net_recovery_score: number;
+  time_score: number;
+  legal_feasibility_score: number;
+  execution_difficulty_score: number;
+  cashflow_urgency_score: number;
+  available: boolean;
+  reason: string;
 }
 
 export interface LegalCostDetail {
@@ -752,6 +866,7 @@ export interface SandboxResult {
     legal_cost: LegalCostDetail;
     scenarios: LitigationScenario[];
     summary: string;
+    legal_assessment?: LegalPathAssessment | null;
   };
   path_c: {
     name: string;
@@ -780,6 +895,7 @@ export interface SandboxResult {
     summary: string;
     available?: boolean;
     unavailable_reason?: string;
+    legal_assessment?: LegalPathAssessment | null;
   };
   path_e: {
     name: string;
@@ -792,6 +908,7 @@ export interface SandboxResult {
     net_recovery: number;
     summary: string;
   };
+  path_scores?: PathDecisionScore[];
   recommendation: string;
   best_path: string;
 }
@@ -863,6 +980,10 @@ export interface StrategyData {
   segment_ead: number;
   segment_count: number;
   strategies: StrategyComparisonItem[];
+  /**
+   * @deprecated 2026-04-22 起系统不再做路径推荐，后端固定返回 null。
+   *             保留字段仅为兼容旧前端，不要在新代码中读取。
+   */
   recommended_strategy: string | null;
   total_segments: number;
   segment_list: Array<{ index: number; name: string }>;
