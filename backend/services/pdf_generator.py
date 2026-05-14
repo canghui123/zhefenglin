@@ -21,6 +21,16 @@ VEHICLE_TYPE_LABELS = {
 }
 
 
+def _get_path_c_auction_discount_rate(result: SandboxResult) -> float:
+    """Return a safe auction discount for report templates across schema versions."""
+    explicit_rate = getattr(result.path_c, "auction_discount_rate", None)
+    if isinstance(explicit_rate, (int, float)) and explicit_rate > 0:
+        return float(explicit_rate)
+    if result.input.che300_value <= 0:
+        return 0
+    return max(result.path_c.sale_price / result.input.che300_value, 0)
+
+
 def _get_template_env():
     return Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
 
@@ -71,6 +81,7 @@ async def generate_report_html(
         vehicle_inventory_status="已入库" if result.input.vehicle_in_inventory else "未入库",
         recovery_cost=f"{result.input.recovery_cost:,.0f}",
         commission_rate=result.input.commission_rate,
+        auction_discount_rate=_get_path_c_auction_discount_rate(result),
         path_a=result.path_a,
         path_a_best_value=path_a_best_value,
         path_b=result.path_b,

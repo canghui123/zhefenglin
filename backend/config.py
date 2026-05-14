@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     storage_backend: str = "local"  # "local" | "s3"
     upload_dir: str = os.path.join(_THIS_DIR, "data", "uploads")
     s3_endpoint: str = ""
+    s3_public_base_url: str = ""
     s3_bucket: str = "auto-finance"
     s3_access_key: str = ""
     s3_secret_key: str = ""

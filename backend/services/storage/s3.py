@@ -6,6 +6,7 @@ of the codebase can boot without it when ``storage_backend = "local"``.
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 from config import settings
 from services.storage.base import StorageBackend, StoredObject
@@ -51,8 +52,23 @@ class S3Storage(StorageBackend):
         self._client.delete_object(Bucket=self._bucket, Key=key)
 
     def build_download_url(self, key: str, expires_in: int = 300) -> Optional[str]:
-        return self._client.generate_presigned_url(
+        public_base = (settings.s3_public_base_url or "").strip()
+        if not public_base:
+            return None
+
+        presigned = self._client.generate_presigned_url(
             "get_object",
             Params={"Bucket": self._bucket, "Key": key},
             ExpiresIn=expires_in,
+        )
+        source = urlsplit(presigned)
+        target = urlsplit(public_base.rstrip("/"))
+        return urlunsplit(
+            (
+                target.scheme,
+                target.netloc,
+                f"{target.path.rstrip('/')}{source.path}",
+                source.query,
+                source.fragment,
+            )
         )
