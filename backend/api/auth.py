@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
+from config import settings
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import SESSION_COOKIE_NAME, get_current_user
@@ -14,6 +15,9 @@ from services import audit_service  # noqa: F401
 from services import entitlement_service
 from services.auth_service import AuthError, authenticate, revoke
 from services.password_service import hash_password
+from services.password_policy import WeakPasswordError, validate_password_strength
+from services import rate_limit_service
+from services.runtime_security import is_production_like
 
 
 router = APIRouter(prefix="/api/auth", tags=["认证"])
@@ -28,6 +32,8 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     display_name: Optional[str] = None
+    # 用户必须勾选"同意服务条款与隐私须知"；后端强制校验，防止绕过前端
+    agreed_to_terms: bool = False
 
     @field_validator("email")
     @classmethod
@@ -40,7 +46,8 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
-        if len(v) < 6:
+        # 粗校验（长度下限）；强度由 register 入口调用 password_policy 精校
+        if not isinstance(v, str) or len(v) < 6:
             raise ValueError("密码长度不能少于6位")
         return v
 
@@ -81,6 +88,34 @@ def register(
     response: Response,
     session: Session = Depends(get_db_session),
 ):
+    # 生产期建议关闭公开注册，引导走 /api/auth/access-request 申请制
+    if not settings.allow_public_registration:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="当前仅支持邀请注册，请先提交申请",
+        )
+
+    rate_limit_service.enforce_request_limit(
+        request,
+        scope="auth.register",
+        limit=settings.rate_limit_register_max_requests,
+    )
+    if not req.agreed_to_terms:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请先阅读并同意《服务使用须知》",
+        )
+    # 强度校验：长度 ≥ 10，三类字符，非常见弱密，不含邮箱名
+    try:
+        validate_password_strength(
+            req.password, email=req.email, display_name=req.display_name
+        )
+    except WeakPasswordError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
     existing = user_repo.get_user_by_email(session, email=req.email)
     if existing:
         raise HTTPException(
@@ -95,10 +130,15 @@ def register(
         role="viewer",
         display_name=req.display_name or req.email.split("@")[0],
     )
+    # 记录用户同意服务条款的时间 + 版本，留存合规证据
+    new_user.terms_accepted_at = datetime.now(timezone.utc)
+    new_user.terms_version = settings.terms_version
 
-    # 分配默认租户
+    # 分配注册默认租户，生产可通过环境变量切换到正式承租方或 POC 租户。
     default_tenant = tenant_repo.get_or_create_tenant(
-        session, code="default", name="默认租户"
+        session,
+        code=settings.default_registration_tenant_code.strip() or "default",
+        name=settings.default_registration_tenant_name.strip() or "默认租户",
     )
     user_repo.set_default_tenant(session, new_user.id, default_tenant.id)
     tenant_repo.create_membership(
@@ -124,7 +164,7 @@ def register(
         max_age=max_age,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=is_production_like(),
         path="/",
     )
 
@@ -142,6 +182,15 @@ def login(
     response: Response,
     session: Session = Depends(get_db_session),
 ):
+    rate_limit_service.enforce_request_limit(
+        request,
+        scope="auth.login",
+        limit=settings.rate_limit_login_max_requests,
+    )
+    # 账号粒度锁定：如果连续失败超过阈值，直接拒绝，哪怕密码这次正确
+    # —— 防止 IP 轮换的凭据填充攻击绕过 IP 级限流
+    rate_limit_service.check_and_raise_if_locked("auth.login", req.email)
+
     try:
         issued = authenticate(
             session,
@@ -151,6 +200,7 @@ def login(
             ip_address=request.client.host if request.client else None,
         )
     except AuthError:
+        fails = rate_limit_service.record_login_failure("auth.login", req.email)
         # Best-effort failure audit so brute-force shows up in the log.
         try:
             audit_service.record(
@@ -162,7 +212,7 @@ def login(
                 resource_type="user",
                 resource_id=None,
                 status="failure",
-                after={"email": req.email},
+                after={"email": req.email, "fails": fails},
             )
         except Exception:
             pass
@@ -170,6 +220,9 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="邮箱或密码错误",
         )
+
+    # 登录成功：清零失败计数
+    rate_limit_service.record_login_success("auth.login", req.email)
 
     audit_service.record(
         session,
@@ -193,7 +246,7 @@ def login(
         max_age=max_age,
         httponly=True,
         samesite="lax",
-        secure=False,  # set to True behind HTTPS in production
+        secure=is_production_like(),
         path="/",
     )
 

@@ -135,3 +135,12 @@ class HighCostActionBlocked(BusinessError):
         details: Optional[Dict[str, Any]] = None,
     ):
         super().__init__("HIGH_COST_ACTION_BLOCKED", detail, 409, details)
+
+
+class RateLimitExceeded(BusinessError):
+    def __init__(
+        self,
+        detail: str = "请求过于频繁，请稍后再试",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__("RATE_LIMIT_EXCEEDED", detail, 429, details)

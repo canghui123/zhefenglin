@@ -12,6 +12,7 @@ from errors import BusinessError
 from logging_config import setup_logging
 from schemas.error import ErrorEnvelope  # noqa: F401 — used in OpenAPI
 from api.auth import router as auth_router
+from api.access_request import router as access_request_router
 from api.car_valuation import router as valuation_router
 from api.asset_package import router as asset_router
 from api.inventory_sandbox import router as sandbox_router
@@ -27,6 +28,7 @@ from api.admin_valuation_rules import router as admin_valuation_rules_router
 from api.admin_approval_requests import router as admin_approval_requests_router
 from middleware.request_context import RequestContextMiddleware
 from middleware.metrics import MetricsMiddleware
+from services.runtime_security import validate_runtime_security
 
 
 setup_logging(json=os.environ.get("LOG_FORMAT") != "console")
@@ -36,6 +38,7 @@ setup_logging(json=os.environ.get("LOG_FORMAT") != "console")
 async def lifespan(app: FastAPI):
     # Runtime schema management is externalized to Alembic.
     # The app no longer bootstraps legacy SQLite tables at startup.
+    validate_runtime_security()
     yield
 
 
@@ -119,8 +122,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=[m.strip().upper() for m in settings.cors_allow_methods.split(",") if m.strip()],
+    # 显式白名单，避免 allow_headers=["*"] 暴露不必要头
+    allow_headers=[
+        "Accept",
+        "Accept-Language",
+        "Content-Language",
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-Tenant-Code",
+        "X-Request-Id",
+    ],
 )
 # Stamps request_id / client_ip / user_agent on `request.state` so audit
 # rows recorded later in the request can pull them out without re-parsing
@@ -129,6 +142,7 @@ app.add_middleware(RequestContextMiddleware)
 app.add_middleware(MetricsMiddleware)
 
 app.include_router(auth_router)
+app.include_router(access_request_router)
 app.include_router(valuation_router)
 app.include_router(asset_router)
 app.include_router(sandbox_router)

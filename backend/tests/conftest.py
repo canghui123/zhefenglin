@@ -24,10 +24,15 @@ def isolated_backend_env(monkeypatch):
 
         # Reset storage singleton so it picks up the test upload dir
         from services.storage.factory import reset_storage
+        from services.rate_limit_service import reset_rate_limits, reset_lockouts
         reset_storage()
+        reset_rate_limits()
+        reset_lockouts()
 
         yield
 
+        reset_lockouts()
+        reset_rate_limits()
         reset_storage()
         reset_engine()
 
@@ -35,7 +40,7 @@ def isolated_backend_env(monkeypatch):
 def _seed_user(
     email: str,
     role: str,
-    password: str = "Passw0rd!",
+    password: str = "Passw0rd!1",
     *,
     tenant_code: str = "default",
 ) -> int:
@@ -89,7 +94,7 @@ def authed_client():
     client = TestClient(app)
     response = client.post(
         "/api/auth/login",
-        json={"email": "test-operator@example.com", "password": "Passw0rd!"},
+        json={"email": "test-operator@example.com", "password": "Passw0rd!1"},
     )
     assert response.status_code == 200, response.text
     # The login endpoint sets the session cookie on the client; the same

@@ -29,7 +29,12 @@ interface SessionState {
 
 const SessionContext = createContext<SessionState | null>(null);
 
-const PUBLIC_PATHS = new Set(["/login", "/register"]);
+const PUBLIC_PATHS = new Set([
+  "/login",
+  "/register",
+  "/legal/notice",
+  "/legal/terms",
+]);
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);

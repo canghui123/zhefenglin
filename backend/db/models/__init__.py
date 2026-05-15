@@ -27,3 +27,4 @@ from db.models.valuation_control import (  # noqa: F401
     ApprovalRequest,
 )
 from db.models.deployment_profile import TenantDeploymentProfile  # noqa: F401
+from db.models.access_request import AccessRequest  # noqa: F401

@@ -6,7 +6,7 @@ We persist sessions so admins can revoke active logins and so the
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import String, Integer, DateTime, ForeignKey, func
+from sqlalchemy import String, Integer, DateTime, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base
@@ -14,6 +14,9 @@ from db.base import Base
 
 class UserSession(Base):
     __tablename__ = "user_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_jti", name="uq_user_sessions_token_jti"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -23,7 +26,7 @@ class UserSession(Base):
         index=True,
     )
     token_jti: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True, index=True
+        String(64), nullable=False, index=True
     )
     issued_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False

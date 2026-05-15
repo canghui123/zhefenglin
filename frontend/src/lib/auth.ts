@@ -65,6 +65,31 @@ export async function logout(): Promise<void> {
   });
 }
 
+export interface AccessRequestPayload {
+  email: string;
+  company: string;
+  contact_name: string;
+  phone?: string;
+  scenario?: string;
+  source?: string;
+  agreed_to_terms: boolean;
+}
+
+export async function submitAccessRequest(payload: AccessRequestPayload): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/auth/access-request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: "提交失败" }));
+    throw new ApiError(
+      body?.error?.message || body?.detail || "提交失败",
+      res.status,
+    );
+  }
+}
+
 export async function fetchCurrentUser(): Promise<CurrentUser | null> {
   const res = await fetch(`${API_BASE}/api/auth/me`, {
     credentials: "include",

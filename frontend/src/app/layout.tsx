@@ -3,6 +3,7 @@ import { Geist } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "@/components/auth/session-provider";
 import { AppSidebar } from "@/components/navigation/app-sidebar";
+import { SiteFooter } from "@/components/layout/site-footer";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -26,8 +27,9 @@ export default function RootLayout({
           <AppSidebar />
 
           {/* Main content */}
-          <main className="flex-1 overflow-auto">
-            <div className="p-8">{children}</div>
+          <main className="flex-1 overflow-auto flex flex-col">
+            <div className="p-8 flex-1">{children}</div>
+            <SiteFooter />
           </main>
         </SessionProvider>
       </body>
