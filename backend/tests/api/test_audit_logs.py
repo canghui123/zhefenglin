@@ -34,7 +34,7 @@ def _seed_user_with_tenant(email: str, role: str = "operator") -> int:
         user = user_repo.create_user(
             session,
             email=email,
-            password_hash=hash_password("Passw0rd!"),
+            password_hash=hash_password("Passw0rd!1"),
             role=role,
             display_name=email,
         )
@@ -70,7 +70,7 @@ def test_login_writes_audit_log():
     client = TestClient(app)
     r = client.post(
         "/api/auth/login",
-        json={"email": "audit-login@example.com", "password": "Passw0rd!"},
+        json={"email": "audit-login@example.com", "password": "Passw0rd!1"},
         headers={"User-Agent": "pytest-ua/1.0"},
     )
     assert r.status_code == 200, r.text
@@ -93,7 +93,7 @@ def test_upload_calculate_simulate_report_write_audit_logs():
     client.headers.update({"User-Agent": "pytest-flow/1.0"})
     login = client.post(
         "/api/auth/login",
-        json={"email": "audit-flow@example.com", "password": "Passw0rd!"},
+        json={"email": "audit-flow@example.com", "password": "Passw0rd!1"},
     )
     assert login.status_code == 200, login.text
 

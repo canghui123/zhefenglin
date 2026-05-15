@@ -21,7 +21,7 @@ def _seed_and_login(client: TestClient) -> int:
         user = user_repo.create_user(
             session,
             email="async-rpt@example.com",
-            password_hash=hash_password("Passw0rd!"),
+            password_hash=hash_password("Passw0rd!1"),
             role="operator",
             display_name="async-rpt",
         )
@@ -41,7 +41,7 @@ def test_report_generation_returns_job_reference():
     _seed_and_login(client)
     client.post(
         "/api/auth/login",
-        json={"email": "async-rpt@example.com", "password": "Passw0rd!"},
+        json={"email": "async-rpt@example.com", "password": "Passw0rd!1"},
     )
 
     sim = client.post(

@@ -17,7 +17,6 @@ COLUMN_KEYWORDS = {
     "insurance_lapsed": ["脱保", "保险", "交强险"],
     "ownership_transferred": ["过户", "转移"],
     "loan_principal": ["本金", "债权", "贷款金额", "剩余本金", "贷款余额", "欠款", "欠息"],
-    "buyout_price": ["买断", "折扣价", "收购价", "转让价"],
     "mileage": ["里程", "公里", "表显", "行驶里程", "km", "KM", "万公里"],
 }
 
@@ -162,8 +161,6 @@ def parse_excel(
                 errors.append(AssetParseError(row_number=row_num, field="vin", message=f"VIN码格式不正确: {vin_val}"))
 
         principal = _parse_float(row.get(field_to_col.get("loan_principal", ""), None)) if "loan_principal" in field_to_col else None
-        buyout = _parse_float(row.get(field_to_col.get("buyout_price", ""), None)) if "buyout_price" in field_to_col else None
-
         # 里程数：智能识别单位
         mileage = None
         if "mileage" in field_to_col:
@@ -182,20 +179,17 @@ def parse_excel(
             insurance_lapsed=insurance,
             ownership_transferred=transferred,
             loan_principal=principal,
-            buyout_price=buyout,
+            buyout_price=None,
         ))
 
-    # 推断买断价策略
+    # 当前资产包定价以金融公司出让方视角为主，不再识别或推荐买断价策略。
     mapped_fields = set(column_mapping.values())
-    if "buyout_price" in mapped_fields:
-        strategy = "direct"
-        msg = "已识别到买断价/收购价/转让价列，直接使用该列数据作为买断价"
-    elif "loan_principal" in mapped_fields:
-        strategy = "discount"
-        msg = "已识别到本金/债权列但没有买断价，请输入买断折扣率（如 0.3 表示按本金的30%买断）"
+    if "loan_principal" in mapped_fields:
+        strategy = "seller_transfer_analysis"
+        msg = "已识别到本金/债权列。请先确认资产包是否为在库车，系统将调用车300估值并生成出让方定价分析。"
     else:
-        strategy = "ai_suggest"
-        msg = "未识别到买断价或本金列，可使用AI根据车300估值自动建议每台车的买断价"
+        strategy = "seller_transfer_analysis"
+        msg = "未识别到本金/债权列。仍可基于车型/VIN/上牌/里程调用车300估值，但出让折扣需人工复核。"
 
     return AssetParseResult(
         assets=assets,

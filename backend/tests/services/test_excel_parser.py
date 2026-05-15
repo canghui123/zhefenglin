@@ -34,9 +34,9 @@ def test_parse_excel_supports_common_chinese_unit_formats():
     assert result.success_rows == 1
     asset = result.assets[0]
     assert asset.loan_principal == 123000
-    assert asset.buyout_price == 50000
+    assert asset.buyout_price is None
     assert asset.mileage == 8.6
-    assert result.suggested_strategy == "direct"
+    assert result.suggested_strategy == "seller_transfer_analysis"
 
 
 def test_parse_excel_does_not_treat_sale_price_columns_as_buyout_price():
@@ -57,4 +57,28 @@ def test_parse_excel_does_not_treat_sale_price_columns_as_buyout_price():
 
     assert result.success_rows == 1
     assert result.assets[0].buyout_price is None
-    assert result.suggested_strategy == "ai_suggest"
+    assert result.suggested_strategy == "seller_transfer_analysis"
+
+
+def test_parse_excel_ignores_legacy_buyout_price_columns():
+    path = _write_excel(
+        pd.DataFrame(
+            [
+                {
+                    "车型": "2021 宝马3系 325Li",
+                    "债权本金": 180000,
+                    "买断价": 76000,
+                    "转让价": 82000,
+                }
+            ]
+        )
+    )
+    try:
+        result = parse_excel(path)
+    finally:
+        os.remove(path)
+
+    assert result.success_rows == 1
+    assert "buyout_price" not in set(result.column_mapping.values())
+    assert result.assets[0].loan_principal == 180000
+    assert result.assets[0].buyout_price is None

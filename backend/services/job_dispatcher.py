@@ -8,7 +8,7 @@ established though, so a real queue can be plugged in later by replacing
 from __future__ import annotations
 
 import json
-import traceback
+import logging
 from datetime import datetime
 from typing import Any, Callable, Optional
 
@@ -16,6 +16,23 @@ from sqlalchemy.orm import Session
 
 from db.models.job_run import JobRun
 from services.metrics import JOBS_TOTAL
+
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_error_message(exc: BaseException, *, limit: int = 200) -> str:
+    """Return a short, user-facing error message without stack traces or paths.
+
+    完整 traceback 由 logger.exception 记录到服务端日志；面向租户的
+    ``job_runs.error_message`` 只保留异常类名 + 首行 str，且去掉路径。"""
+    name = type(exc).__name__
+    raw = (str(exc) or "").strip().splitlines()
+    first_line = raw[0] if raw else ""
+    # 去掉可能的绝对路径/长字符串
+    if len(first_line) > limit:
+        first_line = first_line[:limit] + "..."
+    return f"{name}: {first_line}" if first_line else name
 
 
 # ---------- repo helpers (kept inline, tiny) ----------
@@ -111,11 +128,15 @@ def dispatch_inline(
         _mark_succeeded(session, job, result=result)
         JOBS_TOTAL.labels(job_type=job_type, status="succeeded").inc()
     except Exception as exc:
+        logger.exception(
+            "job_dispatch failed",
+            extra={"job_id": job.id, "tenant_id": tenant_id, "job_type": job_type},
+        )
         _mark_failed(
             session,
             job,
             code=type(exc).__name__,
-            message=f"{exc}\n{traceback.format_exc()[-500:]}",
+            message=_safe_error_message(exc),
         )
         JOBS_TOTAL.labels(job_type=job_type, status="failed").inc()
     return job
@@ -151,11 +172,15 @@ async def dispatch_inline_async(
         _mark_succeeded(session, job, result=result)
         JOBS_TOTAL.labels(job_type=job_type, status="succeeded").inc()
     except Exception as exc:
+        logger.exception(
+            "job_dispatch failed",
+            extra={"job_id": job.id, "tenant_id": tenant_id, "job_type": job_type},
+        )
         _mark_failed(
             session,
             job,
             code=type(exc).__name__,
-            message=f"{exc}\n{traceback.format_exc()[-500:]}",
+            message=_safe_error_message(exc),
         )
         JOBS_TOTAL.labels(job_type=job_type, status="failed").inc()
     return job

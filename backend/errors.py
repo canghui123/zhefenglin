@@ -60,6 +60,11 @@ class ParseError(BusinessError):
         super().__init__("PARSE_ERROR", detail, 400)
 
 
+class FileTooLarge(BusinessError):
+    def __init__(self, detail: str = "文件过大，请检查后重试"):
+        super().__init__("FILE_TOO_LARGE", detail, 413)
+
+
 class Unauthorized(BusinessError):
     def __init__(self, detail: str = "未登录或会话已过期"):
         super().__init__("UNAUTHORIZED", detail, 401)

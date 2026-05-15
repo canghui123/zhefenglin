@@ -28,7 +28,7 @@ def _seed_and_login(client: TestClient) -> int:
         user = user_repo.create_user(
             session,
             email="job@example.com",
-            password_hash=hash_password("Passw0rd!"),
+            password_hash=hash_password("Passw0rd!1"),
             role="operator",
             display_name="job",
         )
@@ -48,7 +48,7 @@ def test_calculate_returns_202_with_job_id():
     _seed_and_login(client)
     r = client.post(
         "/api/auth/login",
-        json={"email": "job@example.com", "password": "Passw0rd!"},
+        json={"email": "job@example.com", "password": "Passw0rd!1"},
     )
     assert r.status_code == 200
 
@@ -88,7 +88,7 @@ def test_job_list_returns_user_jobs():
     _seed_and_login(client)
     r = client.post(
         "/api/auth/login",
-        json={"email": "job@example.com", "password": "Passw0rd!"},
+        json={"email": "job@example.com", "password": "Passw0rd!1"},
     )
     assert r.status_code == 200
 

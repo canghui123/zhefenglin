@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # ---------- File Storage ----------
     storage_backend: str = "local"  # "local" | "s3"
     upload_dir: str = os.path.join(_THIS_DIR, "data", "uploads")
+    # 单次上传 Excel 的最大字节数（默认 10 MiB）
+    upload_excel_max_bytes: int = 10 * 1024 * 1024
     s3_endpoint: str = ""
     s3_public_base_url: str = ""
     s3_bucket: str = "auto-finance"

@@ -29,7 +29,7 @@ def _seed_and_login(client: TestClient):
         user = user_repo.create_user(
             session,
             email="err@example.com",
-            password_hash=hash_password("Passw0rd!"),
+            password_hash=hash_password("Passw0rd!1"),
             role="operator",
             display_name="err",
         )
@@ -44,7 +44,7 @@ def _seed_and_login(client: TestClient):
 
     client.post(
         "/api/auth/login",
-        json={"email": "err@example.com", "password": "Passw0rd!"},
+        json={"email": "err@example.com", "password": "Passw0rd!1"},
     )
 
 
