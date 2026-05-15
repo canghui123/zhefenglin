@@ -1,5 +1,7 @@
 """车300估值相关API"""
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,8 @@ from models.valuation import ValuationRequest, ValuationResult
 from services import approval_service, audit_service
 from services.che300_client import get_valuation, batch_valuation
 from services.tenant_context import get_current_tenant_id
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/valuation",
@@ -84,8 +88,17 @@ async def single_valuation(
         return result
     except BusinessError:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"估值失败: {str(e)}")
+    except Exception:
+        logger.exception(
+            "single_valuation failed",
+            extra={
+                "tenant_id": tenant_id,
+                "user_id": user.id,
+                "model_id": req.model_id,
+                "request_id": getattr(request.state, "request_id", None),
+            },
+        )
+        raise HTTPException(status_code=500, detail="估值失败，请稍后重试")
 
 
 @router.post("/batch", dependencies=[Depends(require_role("operator"))])
@@ -109,5 +122,14 @@ async def batch_valuation_api(
         return {"results": {str(k): v.model_dump() for k, v in results.items()}}
     except BusinessError:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"批量估值失败: {str(e)}")
+    except Exception:
+        logger.exception(
+            "batch_valuation failed",
+            extra={
+                "tenant_id": tenant_id,
+                "user_id": user.id,
+                "item_count": len(items) if isinstance(items, list) else 0,
+                "request_id": getattr(request.state, "request_id", None),
+            },
+        )
+        raise HTTPException(status_code=500, detail="批量估值失败，请稍后重试")

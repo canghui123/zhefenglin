@@ -23,13 +23,13 @@ def seed_user_and_login(email: str, *, role: str = "admin", tenant_code: str = "
             user = user_repo.create_user(
                 session,
                 email=email,
-                password_hash=hash_password("Passw0rd!"),
+                password_hash=hash_password("Passw0rd!1"),
                 role=role,
                 display_name=email,
             )
         else:
             user.role = role
-            user.password_hash = hash_password("Passw0rd!")
+            user.password_hash = hash_password("Passw0rd!1")
         tenant_repo.create_membership(session, user_id=user.id, tenant_id=tenant.id, role=role)
         user_repo.set_default_tenant(session, user.id, tenant.id)
         session.commit()
@@ -42,7 +42,7 @@ def seed_user_and_login(email: str, *, role: str = "admin", tenant_code: str = "
     client = TestClient(app)
     response = client.post(
         "/api/auth/login",
-        json={"email": email, "password": "Passw0rd!"},
+        json={"email": email, "password": "Passw0rd!1"},
     )
     assert response.status_code == 200, response.text
     return client

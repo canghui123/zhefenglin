@@ -43,7 +43,26 @@ def get_active_rule(
 
 
 def list_rules(session: Session) -> List[ModelRoutingRule]:
+    """所有租户可见的规则集合（仅供平台级脚本使用，勿在租户 API 直接暴露）。"""
     stmt = select(ModelRoutingRule).order_by(ModelRoutingRule.id.desc())
+    return list(session.scalars(stmt).all())
+
+
+def list_visible_rules(
+    session: Session, *, tenant_id: int
+) -> List[ModelRoutingRule]:
+    """当前租户可见的规则：global + 自己的 tenant 规则。"""
+    stmt = (
+        select(ModelRoutingRule)
+        .where(
+            (ModelRoutingRule.scope == "global")
+            | (
+                (ModelRoutingRule.scope == "tenant")
+                & (ModelRoutingRule.tenant_id == tenant_id)
+            )
+        )
+        .order_by(ModelRoutingRule.id.desc())
+    )
     return list(session.scalars(stmt).all())
 
 

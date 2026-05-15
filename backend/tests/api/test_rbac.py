@@ -13,7 +13,7 @@ from repositories import user_repo
 from services.password_service import hash_password
 
 
-def _seed(email, role, password="Passw0rd!"):
+def _seed(email, role, password="Passw0rd!1"):
     gen = get_db_session()
     session = next(gen)
     try:
@@ -32,7 +32,7 @@ def _seed(email, role, password="Passw0rd!"):
             pass
 
 
-def _login(client: TestClient, email: str, password: str = "Passw0rd!"):
+def _login(client: TestClient, email: str, password: str = "Passw0rd!1"):
     r = client.post("/api/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, r.text
     return r.json()["access_token"]

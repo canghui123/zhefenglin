@@ -2,17 +2,23 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from db.models.user import User
 from db.session import get_db_session
 from dependencies.auth import get_current_user, require_role
-from repositories import plan_repo, subscription_repo, tenant_repo
-from services import audit_service
+from repositories import (
+    deployment_profile_repo,
+    plan_repo,
+    subscription_repo,
+    tenant_repo,
+    user_repo,
+)
+from services import audit_service, entitlement_service
 
 
 router = APIRouter(prefix="/api/admin/settings", tags=["商业化设置"])
@@ -94,6 +100,41 @@ class SubscriptionUpdateRequest(BaseModel):
     alert_threshold_percent: float = 80
 
 
+class DeploymentProfileUpsertRequest(BaseModel):
+    deployment_mode: Optional[Literal["saas_dedicated", "private_vpc", "on_premise"]] = None
+    delivery_status: Optional[Literal["planning", "provisioning", "active", "paused"]] = None
+    access_domain: Optional[str] = None
+    sso_enabled: Optional[bool] = None
+    sso_provider: Optional[str] = None
+    sso_login_url: Optional[str] = None
+    storage_mode: Optional[Literal["platform_managed", "customer_s3", "hybrid"]] = None
+    backup_level: Optional[Literal["standard", "enhanced", "regulated"]] = None
+    environment_notes: Optional[str] = None
+    handover_notes: Optional[str] = None
+
+
+class DeploymentProfileOut(BaseModel):
+    tenant_id: int
+    tenant_code: Optional[str] = None
+    tenant_name: Optional[str] = None
+    plan_code: Optional[str] = None
+    plan_name: Optional[str] = None
+    private_config_enabled: bool
+    private_config_source: Optional[str] = None
+    deployment_mode: Optional[str] = None
+    delivery_status: Optional[str] = None
+    access_domain: Optional[str] = None
+    sso_enabled: Optional[bool] = None
+    sso_provider: Optional[str] = None
+    sso_login_url: Optional[str] = None
+    storage_mode: Optional[str] = None
+    backup_level: Optional[str] = None
+    environment_notes: Optional[str] = None
+    handover_notes: Optional[str] = None
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+
+
 def _plan_out(plan) -> PlanOut:
     return PlanOut(
         id=plan.id,
@@ -115,6 +156,82 @@ def _plan_out(plan) -> PlanOut:
         feature_flags=_json_loads(plan.feature_flags_json),
         is_active=plan.is_active,
     )
+
+
+def _user_label(user_id: Optional[int], *, session: Session) -> Optional[str]:
+    if user_id is None:
+        return None
+    user = user_repo.get_user_by_id(session, user_id)
+    if user is None:
+        return None
+    return user.display_name or user.email
+
+
+def _deployment_profile_out(
+    *,
+    session: Session,
+    tenant,
+    plan,
+    feature_state: dict[str, Any],
+    profile,
+) -> DeploymentProfileOut:
+    return DeploymentProfileOut(
+        tenant_id=tenant.id,
+        tenant_code=tenant.code,
+        tenant_name=tenant.name,
+        plan_code=plan.code if plan is not None else None,
+        plan_name=plan.name if plan is not None else None,
+        private_config_enabled=bool(feature_state.get("enabled")),
+        private_config_source=feature_state.get("source"),
+        deployment_mode=profile.deployment_mode if profile is not None else None,
+        delivery_status=profile.delivery_status if profile is not None else None,
+        access_domain=profile.access_domain if profile is not None else None,
+        sso_enabled=profile.sso_enabled if profile is not None else None,
+        sso_provider=profile.sso_provider if profile is not None else None,
+        sso_login_url=profile.sso_login_url if profile is not None else None,
+        storage_mode=profile.storage_mode if profile is not None else None,
+        backup_level=profile.backup_level if profile is not None else None,
+        environment_notes=profile.environment_notes if profile is not None else None,
+        handover_notes=profile.handover_notes if profile is not None else None,
+        updated_at=profile.updated_at.isoformat() if profile is not None and profile.updated_at else None,
+        updated_by=_user_label(profile.updated_by if profile is not None else None, session=session),
+    )
+
+
+def _list_deployment_profile_rows(session: Session) -> list[DeploymentProfileOut]:
+    plans = {plan.id: plan for plan in plan_repo.list_plans(session)}
+    tenants = {tenant.id: tenant for tenant in tenant_repo.list_tenants(session)}
+    profiles = {
+        profile.tenant_id: profile for profile in deployment_profile_repo.list_profiles(session)
+    }
+    rows: list[DeploymentProfileOut] = []
+    for subscription in subscription_repo.list_current_subscriptions(session):
+        tenant = tenants.get(subscription.tenant_id)
+        if tenant is None:
+            continue
+        plan = plans.get(subscription.plan_id)
+        feature_state = entitlement_service.get_effective_feature(
+            session,
+            tenant_id=tenant.id,
+            feature_key="deployment.private_config",
+        )
+        rows.append(
+            _deployment_profile_out(
+                session=session,
+                tenant=tenant,
+                plan=plan,
+                feature_state=feature_state,
+                profile=profiles.get(tenant.id),
+            )
+        )
+    return rows
+
+
+def _get_deployment_profile_row(session: Session, *, tenant_id: int) -> DeploymentProfileOut:
+    for row in _list_deployment_profile_rows(session):
+        if row.tenant_id == tenant_id:
+            return row
+    raise HTTPException(status_code=404, detail="租户当前无有效订阅")
 
 
 @router.get("/plans", response_model=list[PlanOut])
@@ -255,3 +372,59 @@ def upsert_subscription(
         "monthly_budget_limit": row.monthly_budget_limit,
         "alert_threshold_percent": row.alert_threshold_percent,
     }
+
+
+@router.get("/deployment-profiles", response_model=list[DeploymentProfileOut])
+def list_deployment_profiles(
+    session: Session = Depends(get_db_session),
+    _user: User = Depends(require_role("manager")),
+):
+    return _list_deployment_profile_rows(session)
+
+
+@router.put("/deployment-profiles/{tenant_id}", response_model=DeploymentProfileOut)
+def upsert_deployment_profile(
+    tenant_id: int,
+    req: DeploymentProfileUpsertRequest,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(require_role("admin")),
+):
+    tenant = tenant_repo.get_tenant_by_id(session, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="租户不存在")
+
+    entitlement_service.ensure_feature_enabled(
+        session,
+        tenant_id=tenant_id,
+        feature_key="deployment.private_config",
+    )
+    before = None
+    existing = deployment_profile_repo.get_profile_by_tenant_id(session, tenant_id=tenant_id)
+    if existing is not None:
+        before = _get_deployment_profile_row(session, tenant_id=tenant_id).model_dump()
+
+    fields = req.model_dump(exclude_none=True)
+    if existing is None:
+        fields.setdefault("created_by", user.id)
+    fields["updated_by"] = user.id
+
+    row = deployment_profile_repo.upsert_profile(
+        session,
+        tenant_id=tenant_id,
+        **fields,
+    )
+
+    after = _get_deployment_profile_row(session, tenant_id=tenant_id).model_dump()
+    audit_service.record(
+        session,
+        request,
+        action="deployment_profile_upsert",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="tenant_deployment_profile",
+        resource_id=row.id,
+        before=before,
+        after=after,
+    )
+    return DeploymentProfileOut.model_validate(after)

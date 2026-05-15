@@ -64,4 +64,6 @@ class ApprovalRequest(Base):
     )
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     consumed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    consumed_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    consumed_request_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True
+    )

@@ -3,7 +3,7 @@ import os
 import pytest
 from sqlalchemy import create_engine, inspect, text
 from alembic.config import Config
-from alembic.command import upgrade
+from alembic.command import check, upgrade
 
 
 REQUIRED_TABLES = sorted([
@@ -38,6 +38,13 @@ REQUIRED_TABLES = sorted([
 ])
 
 
+def _alembic_config() -> Config:
+    base_dir = os.path.join(os.path.dirname(__file__), "..", "..")
+    alembic_cfg = Config(os.path.join(base_dir, "alembic.ini"))
+    alembic_cfg.set_main_option("script_location", os.path.join(base_dir, "alembic"))
+    return alembic_cfg
+
+
 @pytest.fixture()
 def test_db_url():
     """Use the test PostgreSQL database, creating a clean schema."""
@@ -61,9 +68,7 @@ def test_db_url():
 def test_alembic_can_upgrade_to_head(test_db_url, monkeypatch):
     """Running alembic upgrade head on a blank schema creates all tables."""
     monkeypatch.setenv("DATABASE_URL", test_db_url)
-    alembic_cfg = Config(
-        os.path.join(os.path.dirname(__file__), "..", "..", "alembic.ini")
-    )
+    alembic_cfg = _alembic_config()
 
     upgrade(alembic_cfg, "head")
 
@@ -79,9 +84,7 @@ def test_alembic_can_upgrade_to_head(test_db_url, monkeypatch):
 def test_tenant_deployment_profile_constraints_and_foreign_keys(test_db_url, monkeypatch):
     """The deployment profile table should enforce its tenant and user links."""
     monkeypatch.setenv("DATABASE_URL", test_db_url)
-    alembic_cfg = Config(
-        os.path.join(os.path.dirname(__file__), "..", "..", "alembic.ini")
-    )
+    alembic_cfg = _alembic_config()
 
     upgrade(alembic_cfg, "head")
 
@@ -104,3 +107,12 @@ def test_tenant_deployment_profile_constraints_and_foreign_keys(test_db_url, mon
     assert fk_map[("updated_by",)] == "users"
 
     engine.dispose()
+
+
+def test_alembic_autogenerate_has_no_metadata_drift(test_db_url, monkeypatch):
+    """A schema upgraded to head should be in sync with ORM metadata."""
+    monkeypatch.setenv("DATABASE_URL", test_db_url)
+    alembic_cfg = _alembic_config()
+
+    upgrade(alembic_cfg, "head")
+    check(alembic_cfg)

@@ -28,7 +28,7 @@ def _seed_tenant_and_user(*, tenant_code: str, email: str, role: str = "operator
         user = user_repo.create_user(
             session,
             email=email,
-            password_hash=hash_password("Passw0rd!"),
+            password_hash=hash_password("Passw0rd!1"),
             role=role,
             display_name=email,
         )
@@ -44,7 +44,7 @@ def _seed_tenant_and_user(*, tenant_code: str, email: str, role: str = "operator
 
 def _login(client: TestClient, email: str) -> None:
     r = client.post(
-        "/api/auth/login", json={"email": email, "password": "Passw0rd!"}
+        "/api/auth/login", json={"email": email, "password": "Passw0rd!1"}
     )
     assert r.status_code == 200, r.text
 
@@ -113,6 +113,9 @@ def test_user_cannot_read_other_tenant_sandbox_result():
     _login(beta, "beta@example.com")
     foreign = beta.get(f"/api/sandbox/{result_id}")
     assert foreign.status_code in (403, 404)
+
+    foreign_legal = beta.get(f"/api/sandbox/{result_id}/legal-assessment")
+    assert foreign_legal.status_code in (403, 404)
 
     listed = beta.get("/api/sandbox/list/all")
     assert listed.status_code == 200

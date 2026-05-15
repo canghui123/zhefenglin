@@ -258,7 +258,7 @@ def test_condition_pricing_allows_execution_with_approved_request_and_consumes_i
     assert metadata["approval_granted"] is True
 
 
-def test_asset_package_suggest_buyout_returns_package_level_approval_context(
+def test_asset_package_transfer_analysis_returns_package_level_approval_context(
     authed_client, monkeypatch
 ):
     monkeypatch.setattr(che300_client.settings, "che300_access_key", "")
@@ -267,12 +267,15 @@ def test_asset_package_suggest_buyout_returns_package_level_approval_context(
     package_id = _upload_sample_package(authed_client)
 
     response = authed_client.post(
-        "/api/asset-package/suggest-buyout",
+        "/api/asset-package/calculate",
         json={
             "package_id": package_id,
-            "vehicle_condition": "good",
-            "advanced_condition_pricing": True,
-            "strict_policy": True,
+            "parameters": {
+                "asset_package_type": "inventory",
+                "vehicle_condition": "good",
+                "advanced_condition_pricing": True,
+                "strict_policy": True,
+            },
         },
     )
 

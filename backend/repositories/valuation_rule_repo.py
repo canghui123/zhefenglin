@@ -24,7 +24,26 @@ def list_active_rules(session: Session, *, tenant_id: int) -> List[ValuationTrig
 
 
 def list_rules(session: Session) -> List[ValuationTriggerRule]:
+    """所有租户可见的规则集合（仅供平台级脚本/后台使用，勿在租户 API 直接暴露）。"""
     stmt = select(ValuationTriggerRule).order_by(ValuationTriggerRule.id.desc())
+    return list(session.scalars(stmt).all())
+
+
+def list_visible_rules(
+    session: Session, *, tenant_id: int
+) -> List[ValuationTriggerRule]:
+    """当前租户可见的规则：global + 自己的 tenant 规则。"""
+    stmt = (
+        select(ValuationTriggerRule)
+        .where(
+            (ValuationTriggerRule.scope == "global")
+            | (
+                (ValuationTriggerRule.scope == "tenant")
+                & (ValuationTriggerRule.tenant_id == tenant_id)
+            )
+        )
+        .order_by(ValuationTriggerRule.id.desc())
+    )
     return list(session.scalars(stmt).all())
 
 
