@@ -35,6 +35,15 @@ REQUIRED_TABLES = sorted([
     "valuation_trigger_rules",
     "approval_requests",
     "tenant_deployment_profiles",
+    "brand_retention_profiles",
+    "region_disposal_coefficients",
+    "work_orders",
+    "disposal_outcomes",
+    "model_learning_runs",
+    "data_import_batches",
+    "data_import_rows",
+    "sandbox_simulation_batches",
+    "sandbox_simulation_batch_items",
 ])
 
 
