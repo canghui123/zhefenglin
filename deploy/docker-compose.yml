@@ -38,18 +38,24 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${BACKEND_PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${BACKEND_PIP_TRUSTED_HOST:-}
     container_name: af_backend
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
+      APP_ENV: production
       DATABASE_URL: postgresql+psycopg://${DB_USER:-app}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-auto_finance}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      CORS_ORIGINS: https://${DOMAIN},http://${DOMAIN}
+      # 仅允许 HTTPS 主域名；HTTP 流量由 Nginx 做 301 跳转，不进入后端 CORS 判定
+      CORS_ORIGINS: https://${DOMAIN},https://www.${DOMAIN}
       STORAGE_BACKEND: s3
       S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_BASE_URL: ${S3_PUBLIC_BASE_URL:-}
       S3_BUCKET: ${S3_BUCKET:-auto-finance}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
@@ -60,6 +66,11 @@ services:
       DEFAULT_CITY_NAME: ${DEFAULT_CITY_NAME:-南京}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      # 内测期默认关闭公开注册；通过 /api/auth/access-request 收 lead，admin 手工审批
+      ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
+      TERMS_VERSION: ${TERMS_VERSION:-2026.04.21}
+      DEFAULT_REGISTRATION_TENANT_CODE: ${DEFAULT_REGISTRATION_TENANT_CODE:-default}
+      DEFAULT_REGISTRATION_TENANT_NAME: ${DEFAULT_REGISTRATION_TENANT_NAME:-默认租户}
       LOG_FORMAT: json
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
@@ -104,8 +115,35 @@ services:
       - certbot_www:/var/www/certbot
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew --quiet; done'"
 
+  # ──────────── 数据库自动备份（pg_dump + 保留策略） ────────────
+  # 默认每天凌晨 3 点做一次全量 dump，gzip 压缩后写入 postgres_backup 卷
+  # 保留：每日 14 份、每周 8 份、每月 6 份、每年 2 份
+  # 手动恢复：见 deploy/README.md "数据库备份与恢复"
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: af_postgres_backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${DB_NAME:-auto_finance}
+      POSTGRES_USER: ${DB_USER:-app}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_EXTRA_OPTS: "-Z9 --schema=public --blobs"
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: "14"
+      BACKUP_KEEP_WEEKS: "8"
+      BACKUP_KEEP_MONTHS: "6"
+      BACKUP_KEEP_YEARS: "2"
+      HEALTHCHECK_PORT: "8080"
+    volumes:
+      - postgres_backup:/backups
+
 volumes:
   postgres_data:
+  postgres_backup:
   minio_data:
   certbot_data:
   certbot_www:

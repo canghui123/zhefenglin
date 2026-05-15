@@ -41,17 +41,58 @@ fi
 
 source .env
 
+WWW_DOMAIN="${WWW_DOMAIN:-www.$DOMAIN}"
+APP_CONF_PATH="nginx/conf.d/app.conf"
+HTTP_TEMPLATE_PATH="nginx/templates/app.http.conf.template"
+HTTPS_TEMPLATE_PATH="nginx/templates/app.https.conf.template"
+
 # 检查关键变量
 [ "${DOMAIN:-}" = "your-domain.com" ] && error "请在 .env 中设置真实域名 DOMAIN"
-[[ "${DB_PASSWORD:-}" == *"CHANGE_ME"* ]] && error "请在 .env 中设置数据库密码 DB_PASSWORD"
-[[ "${JWT_SECRET:-}" == *"CHANGE_ME"* ]] && error "请在 .env 中设置 JWT_SECRET（用 openssl rand -hex 32 生成）"
-[[ "${S3_ACCESS_KEY:-}" == *"CHANGE_ME"* ]] && error "请在 .env 中设置 S3_ACCESS_KEY"
+
+# ── 占位符检查 ──
+check_placeholder() {
+    local name="$1"; local val="${2:-}"
+    [ -z "$val" ] && error "$name 未配置"
+    case "$(echo "$val" | tr '[:upper:]' '[:lower:]')" in
+        *change_me*|*change-me*|*changeme*|*your-*|*your_*|*placeholder*|*example*|*xxx*|*todo*)
+            error "$name 仍是占位符，请修改"
+            ;;
+    esac
+}
+
+check_placeholder "DB_PASSWORD" "${DB_PASSWORD:-}"
+check_placeholder "JWT_SECRET" "${JWT_SECRET:-}"
+check_placeholder "JWT_REFRESH_SECRET" "${JWT_REFRESH_SECRET:-}"
+check_placeholder "S3_ACCESS_KEY" "${S3_ACCESS_KEY:-}"
+check_placeholder "S3_SECRET_KEY" "${S3_SECRET_KEY:-}"
+
+# ── 长度检查（与 runtime_security 对齐） ──
+if [ "${#JWT_SECRET}" -lt 64 ]; then
+    error "JWT_SECRET 长度 ${#JWT_SECRET} 不足 64 字符，请用 openssl rand -hex 48 重新生成"
+fi
+if [ "${#JWT_REFRESH_SECRET}" -lt 64 ]; then
+    error "JWT_REFRESH_SECRET 长度 ${#JWT_REFRESH_SECRET} 不足 64 字符，请用 openssl rand -hex 48 重新生成"
+fi
+if [ "$JWT_SECRET" = "$JWT_REFRESH_SECRET" ]; then
+    error "JWT_SECRET 与 JWT_REFRESH_SECRET 不能相同"
+fi
+if [ "${#DB_PASSWORD}" -lt 16 ]; then
+    error "DB_PASSWORD 长度 ${#DB_PASSWORD} 不足 16 字符，请用 openssl rand -base64 24 重新生成"
+fi
 
 info "配置检查通过 — 域名: $DOMAIN"
 
-# ── Step 2: 替换 Nginx 域名占位符 ──
-sed -i "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" nginx/conf.d/app.conf
-info "Nginx 配置已更新: $DOMAIN"
+render_nginx_conf() {
+    local template_path="$1"
+    sed \
+        -e "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" \
+        -e "s/WWW_DOMAIN_PLACEHOLDER/$WWW_DOMAIN/g" \
+        "$template_path" > "$APP_CONF_PATH"
+}
+
+# ── Step 2: 生成 HTTP 引导配置 ──
+render_nginx_conf "$HTTP_TEMPLATE_PATH"
+info "Nginx HTTP 引导配置已生成: $DOMAIN + $WWW_DOMAIN"
 
 # ── Step 3: 先启动不需要 SSL 的服务 ──
 info "启动 PostgreSQL + MinIO + 后端 + 前端 ..."
@@ -72,28 +113,20 @@ info "存储桶就绪"
 
 # ── Step 6: 申请 SSL 证书 ──
 info "启动 Nginx (HTTP only) 用于证书验证 ..."
-
-# 先用临时自签名证书让 nginx 能启动
-mkdir -p nginx/tmp-cert
-openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-    -keyout nginx/tmp-cert/privkey.pem \
-    -out nginx/tmp-cert/fullchain.pem \
-    -subj "/CN=$DOMAIN" 2>/dev/null
-
-# 临时挂载自签名证书启动 nginx
 docker compose up -d nginx
 
-info "申请 Let's Encrypt SSL 证书 ..."
+info "申请 Let's Encrypt SSL 证书（裸域 + www）..."
 docker compose run --rm certbot certonly \
     --webroot \
     --webroot-path=/var/www/certbot \
     --email "admin@$DOMAIN" \
     --agree-tos \
     --no-eff-email \
-    -d "$DOMAIN"
+    -d "$DOMAIN" \
+    -d "$WWW_DOMAIN"
 
-# 删除临时证书
-rm -rf nginx/tmp-cert
+render_nginx_conf "$HTTPS_TEMPLATE_PATH"
+info "HTTPS 主站配置已生成：裸域主站，www 自动回跳"
 info "SSL 证书申请成功"
 
 # ── Step 7: 全部启动 ──
@@ -103,11 +136,20 @@ docker compose up -d --build
 # ── Step 8: 创建管理员账号 ──
 echo ""
 warn "正在创建管理员账号 ..."
-docker compose exec backend python3 scripts/create_admin.py \
+
+# 生成随机初始密码（16 字节 base64，保证大小写+数字+符号熵足够）
+ADMIN_INIT_PASSWORD="$(openssl rand -base64 18 | tr -d '=+/' | cut -c1-20)Aa1!"
+ADMIN_CREATED=false
+
+if docker compose exec -T backend python3 scripts/create_admin.py \
     --email "admin@$DOMAIN" \
-    --password "Admin123!" \
+    --password "$ADMIN_INIT_PASSWORD" \
     --role admin \
-    --tenant-code default 2>/dev/null || warn "管理员可能已存在，跳过"
+    --tenant-code default >/dev/null 2>&1; then
+    ADMIN_CREATED=true
+else
+    warn "管理员账号可能已存在，未覆盖；如需重置请手动运行 scripts/create_admin.py"
+fi
 
 # ── 完成 ──
 echo ""
@@ -120,7 +162,16 @@ echo "  API 文档:  https://$DOMAIN/docs"
 echo "  监控指标:  https://$DOMAIN/api/metrics"
 echo ""
 echo "  管理员账号: admin@$DOMAIN"
-echo "  初始密码:   Admin123!  ← 请立即修改！"
+if [ "$ADMIN_CREATED" = "true" ]; then
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────────────────┐"
+    echo "  │ 初始密码（仅本次显示，请立即记录并首次登录后修改）             │"
+    echo "  │ $ADMIN_INIT_PASSWORD"
+    echo "  └──────────────────────────────────────────────────────────────┘"
+    echo ""
+else
+    echo "  初始密码:   （管理员已存在，未重置）"
+fi
 echo ""
 echo "  常用命令:"
 echo "    查看日志:    docker compose logs -f backend"

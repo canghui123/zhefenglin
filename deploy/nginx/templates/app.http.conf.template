@@ -1,0 +1,13 @@
+# ── HTTP only: ACME 验证 + 裸域跳转 ──
+server {
+    listen 80;
+    server_name DOMAIN_PLACEHOLDER WWW_DOMAIN_PLACEHOLDER;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://DOMAIN_PLACEHOLDER$request_uri;
+    }
+}

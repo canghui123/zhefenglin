@@ -21,6 +21,12 @@ COPY . .
 # Create upload dir (used when STORAGE_BACKEND=local as fallback)
 RUN mkdir -p /app/data/uploads
 
+# ── 最小权限：以非 root 用户运行，减少容器逃逸后的攻击面 ──
+RUN groupadd --system --gid 1001 app && \
+    useradd --system --uid 1001 --gid app --no-create-home --shell /usr/sbin/nologin app && \
+    chown -R app:app /app
+USER app
+
 EXPOSE 8000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

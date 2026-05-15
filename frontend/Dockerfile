@@ -18,10 +18,13 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Copy only the necessary files
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+# Copy only the necessary files and give ownership to the built-in `node` user
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+COPY --from=builder --chown=node:node /app/public ./public
+
+# ── 最小权限：以非 root 用户 node 运行 ──
+USER node
 
 EXPOSE 3000
 

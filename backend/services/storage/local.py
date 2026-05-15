@@ -20,9 +20,21 @@ class LocalStorage(StorageBackend):
         os.makedirs(self._root, exist_ok=True)
 
     def _path(self, key: str) -> str:
-        # Prevent path traversal: only the basename of the key is used.
+        # 防路径穿越三重保险：
+        # 1) key 不能含空字节、回车等异常字符
+        if not key or "\x00" in key or "\r" in key or "\n" in key:
+            raise ValueError("invalid storage key")
+        # 2) 只取 basename，彻底剥离目录分量（../、绝对路径、盘符等）
         safe = os.path.basename(key)
-        return os.path.join(self._root, safe)
+        if not safe or safe in (".", ".."):
+            raise ValueError("invalid storage key")
+        full = os.path.join(self._root, safe)
+        # 3) 规范化后必须仍在 root 内（防止符号链接/规范化异常）
+        real_root = os.path.realpath(self._root)
+        real_full = os.path.realpath(full)
+        if not (real_full == real_root or real_full.startswith(real_root + os.sep)):
+            raise ValueError("resolved path escapes storage root")
+        return full
 
     def put_bytes(
         self,
