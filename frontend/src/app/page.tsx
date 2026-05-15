@@ -31,15 +31,15 @@ export default function HomePage() {
         <Link href="/asset-pricing">
           <Card className="hover:shadow-lg transition-shadow cursor-pointer h-full">
             <CardHeader>
-              <CardTitle>资产包买断AI定价</CardTitle>
-              <CardDescription>上传甲方Excel资产包，一键计算利润与风险</CardDescription>
+              <CardTitle>资产包出让定价分析</CardTitle>
+              <CardDescription>上传资产包台账，生成出让折扣区间与分析报告</CardDescription>
             </CardHeader>
             <CardContent>
               <ul className="text-sm text-gray-600 space-y-2">
                 <li>- 批量车300估值查询</li>
-                <li>- 多维成本自动测算</li>
-                <li>- AI贬值趋势预测</li>
-                <li>- 风险预警与建议买断折扣</li>
+                <li>- 在库/非在库资产包区分定价</li>
+                <li>- 千问大模型生成出让分析报告</li>
+                <li>- 风险预警与推荐出让折扣区间</li>
               </ul>
             </CardContent>
           </Card>
