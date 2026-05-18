@@ -108,6 +108,43 @@ def _asset_package_type_label(asset_package_type: str) -> str:
     return "在库车资产包" if asset_package_type == "inventory" else "非在库车资产包"
 
 
+def _build_report_summary_payload(result: PackageCalculationResult) -> dict:
+    """Build an LLM-safe summary payload with unambiguous coverage definitions."""
+    summary = result.summary
+    payload = summary.model_dump(
+        exclude={
+            "analysis_report",
+            # This field means data coverage, not collateral value coverage.
+            "valuation_coverage_rate",
+            "collateral_coverage_ratio",
+        }
+    )
+    payload.update(
+        {
+            "valuation_data_coverage_rate_percent": summary.valuation_coverage_rate,
+            "valuation_data_coverage_formula": "成功取得车300估值的车辆数 / 资产包车辆总数",
+            "collateral_value_coverage_ratio": summary.collateral_coverage_ratio,
+            "collateral_value_coverage_rate_percent": (
+                round(summary.collateral_coverage_ratio * 100, 2)
+                if summary.collateral_coverage_ratio is not None
+                else None
+            ),
+            "collateral_value_coverage_formula": "车300估值合计 / 贷款本金合计",
+            "principal_exceeds_collateral_value": (
+                summary.total_principal > summary.total_vehicle_valuation
+                if summary.total_principal > 0 and summary.total_vehicle_valuation > 0
+                else None
+            ),
+            "uncovered_principal_gap": (
+                round(summary.total_principal - summary.total_vehicle_valuation, 2)
+                if summary.total_principal > 0 and summary.total_vehicle_valuation > 0
+                else None
+            ),
+        }
+    )
+    return payload
+
+
 def _apply_asset_overrides(
     assets: list[Asset],
     overrides: dict[int, AssetFieldOverride],
@@ -167,14 +204,11 @@ async def _generate_transfer_analysis_report(
         )
         for row in result.assets[:12]
     ]
-    summary_payload = sanitize_user_dict(
-        summary.model_dump(exclude={"analysis_report"}),
-        text_fields=set(),
-    )
+    summary_payload = sanitize_user_dict(_build_report_summary_payload(result), text_fields=set())
     if summary.asset_package_type == "inventory":
         basis_instruction = (
             "这是在库车资产包。请以车300车辆评估价作为主要定价锚点，解释为什么出让方可以围绕车辆可处置价值报价，"
-            "同时结合本金覆盖率判断谈判上限和瑕疵披露。"
+            "同时结合抵押物价值覆盖率（车300估值合计/贷款本金合计）判断谈判上限和瑕疵披露。"
         )
     else:
         basis_instruction = (
@@ -186,11 +220,15 @@ async def _generate_transfer_analysis_report(
         f"资产包类型：{_asset_package_type_label(summary.asset_package_type)}。\n"
         f"{basis_instruction}\n\n"
         "报告必须详细、合理、可直接对合作伙伴展示，并包含以下结构：\n"
-        "1. 资产包概览；2. 估值与本金覆盖；3. 推荐出让折扣区间和价格区间；"
+        "1. 资产包概览；2. 估值数据完整度与抵押物价值覆盖；3. 推荐出让折扣区间和价格区间；"
         "4. 估值可信度与交易适配度；5. 买方可能压价点与出让方反驳依据；"
         "6. 风险披露；7. 谈判策略与底线建议。\n\n"
         f"汇总数据：\n{wrap_as_data(summary_payload, tag='package_summary')}\n\n"
         f"样本车辆数据（最多前12台）：\n{wrap_as_data(sample_assets, tag='asset_sample')}\n\n"
+        "关键口径：valuation_data_coverage_rate_percent 只表示估值数据覆盖完整度，不能称为本金覆盖率；"
+        "抵押物价值覆盖率必须使用 collateral_value_coverage_rate_percent，公式为车300估值合计/贷款本金合计。"
+        "如果 principal_exceeds_collateral_value 为 true，应说明债权本金高于抵押物估值，诉讼/清收回报可能高于车辆处置，"
+        "但仍需结合司法诉讼可行性和执行成本判断。\n"
         "要求：使用人民币金额，给出明确区间，不要声称系统替代人工审批，不要编造未提供的事实。"
     )
     report = await chat_completion(

@@ -109,7 +109,7 @@ def calculate_single_asset(
 ) -> AssetPricingResult:
     """计算单台资产的出让价格区间。
 
-    在库车资产包：以车300估值为主锚，辅以本金覆盖率判断议价空间。
+    在库车资产包：以车300估值为主锚，辅以抵押物价值覆盖率判断议价空间。
     非在库车资产包：以债权本金为主锚，辅以车辆估值判断可回收性。
     """
     inventory = params.asset_package_type == "inventory"
@@ -309,7 +309,7 @@ def calculate_package(
 
     if inventory:
         methodology = (
-            "在库车资产包以车300车辆评估价为主锚，结合本金覆盖率、权属/GPS/保险等瑕疵给出"
+            "在库车资产包以车300车辆评估价为主锚，结合抵押物价值覆盖率、权属/GPS/保险等瑕疵给出"
             "出让折扣区间；该口径适合已控制车辆、可验证车况、买方可快速处置的资产。"
         )
     else:
@@ -389,19 +389,23 @@ def build_transfer_report_fallback(result: PackageCalculationResult) -> str:
 
     lines = [
         f"一、资产包定位：本次资产包被识别为{package_label}，共{summary.total_assets}台车。",
-        f"二、核心规模：债权本金合计约{summary.total_principal:,.0f}元，车300评估价合计约{summary.total_vehicle_valuation:,.0f}元，估值覆盖率{summary.valuation_coverage_rate:.1f}%。",
+        f"二、核心规模：债权本金合计约{summary.total_principal:,.0f}元，车300评估价合计约{summary.total_vehicle_valuation:,.0f}元，估值数据覆盖率{summary.valuation_coverage_rate:.1f}%。",
         f"三、推荐出让价：建议挂牌/谈判区间为{summary.recommended_transfer_price_low:,.0f}元至{summary.recommended_transfer_price_high:,.0f}元，中位建议{summary.recommended_transfer_price_mid:,.0f}元。",
         f"四、折扣口径：本次以{summary.discount_basis}为主锚，中位折扣约{discount_mid:.1f}%。",
         f"五、交易适配度：{summary.tradeability_level}级/{summary.tradeability_score}分，{summary.tradeability_summary}",
     ]
+    if summary.collateral_coverage_ratio is not None:
+        lines.append(
+            f"六、抵押物价值覆盖：车300估值合计/债权本金合计约为{summary.collateral_coverage_ratio * 100:.1f}%。"
+        )
     if principal_mid is not None:
-        lines.append(f"六、本金回收：中位出让价相当于本金回收率约{principal_mid:.1f}%。")
+        lines.append(f"七、本金回收：中位出让价相当于本金回收率约{principal_mid:.1f}%。")
     if valuation_mid is not None:
-        lines.append(f"七、车辆价值实现：中位出让价相当于车辆评估价实现率约{valuation_mid:.1f}%。")
+        lines.append(f"八、车辆价值实现：中位出让价相当于车辆评估价实现率约{valuation_mid:.1f}%。")
     if summary.risk_alerts:
-        lines.append("八、主要风险：" + "；".join(summary.risk_alerts) + "。")
+        lines.append("九、主要风险：" + "；".join(summary.risk_alerts) + "。")
     lines.append(
-        "九、谈判建议：金融公司作为出让方，应以中位价作为内部底线参考，以上沿价格作为首轮报价，"
+        "十、谈判建议：金融公司作为出让方，应以中位价作为内部底线参考，以上沿价格作为首轮报价，"
         "对缺少VIN、估值缺失、权属瑕疵或非在库资产的不确定性单独披露，避免被买方整体压价。"
     )
     return "\n".join(lines)

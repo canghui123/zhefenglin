@@ -793,7 +793,7 @@ export default function AssetPricingPage() {
                 </span>
                 <span className="text-sm text-gray-600">定价基准：{result.summary.discount_basis}</span>
                 <span className="text-sm text-gray-600">
-                  估值覆盖率：{formatPercentPoint(result.summary.valuation_coverage_rate)}
+                  估值数据覆盖率：{formatPercentPoint(result.summary.valuation_coverage_rate)}
                 </span>
               </div>
             </AlertDescription>

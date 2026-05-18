@@ -106,7 +106,7 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
     summary_rows = [
         ["资产数量", str(summary.total_assets), "资产包类型", summary.asset_package_type],
         ["本金合计", _money(summary.total_principal), "车300估值合计", _money(summary.total_vehicle_valuation)],
-        ["交易适配度", f"{summary.tradeability_level} / {summary.tradeability_score}分", "估值覆盖率", _percent(summary.valuation_coverage_rate, already_percent=True)],
+        ["交易适配度", f"{summary.tradeability_level} / {summary.tradeability_score}分", "估值数据覆盖率", _percent(summary.valuation_coverage_rate, already_percent=True)],
         [
             "推荐出让价",
             f"{_money(summary.recommended_transfer_price_low)} - {_money(summary.recommended_transfer_price_high)}",
@@ -116,7 +116,7 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
         [
             "本金中位回收率",
             _percent(summary.principal_recovery_rate_mid),
-            "抵押物覆盖率",
+            "抵押物价值覆盖率",
             _percent(summary.collateral_coverage_ratio),
         ],
     ]
