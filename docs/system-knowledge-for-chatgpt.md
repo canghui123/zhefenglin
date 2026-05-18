@@ -577,7 +577,7 @@ risk = 基础字段完整，可进入买方询价
 - 推荐折扣低、中、高。
 - 本金折扣低、中、高。
 - 估值折扣低、中、高。
-- 抵押物覆盖率。
+- 抵押物价值覆盖率。
 - 本金缺口。
 - 风险标签。
 
@@ -628,11 +628,21 @@ principal_recovery_rate = recommended_transfer_price / total_principal
 valuation_realization_rate = recommended_transfer_price / total_vehicle_valuation
 ```
 
-抵押物覆盖率：
+估值数据覆盖率：
+
+```text
+valuation_coverage_rate = 成功取得车300估值的车辆数 / 资产包车辆总数 * 100
+```
+
+说明：`valuation_coverage_rate` 只表示估值数据完整度，不能称为本金覆盖率，也不能用来判断车辆估值是否覆盖贷款本金。
+
+抵押物价值覆盖率：
 
 ```text
 collateral_coverage_ratio = total_vehicle_valuation / total_principal
 ```
+
+说明：在库车资产包分析应使用抵押物价值覆盖率判断车辆评估价值对债权本金的覆盖程度。如果该比例低于 100%，表示债权本金高于抵押物评估价值，司法诉讼/清收路径可能存在更高名义回收空间，但仍需结合诉讼可行性、执行成本和回款周期判断。
 
 历史兼容指标：
 
@@ -647,9 +657,9 @@ overall_roi = recommended_transfer_price_mid / total_principal * 100
 
 - 存在本金缺失资产。
 - 存在估值缺失资产。
-- 整体抵押物覆盖率低于 35%。
+- 整体抵押物价值覆盖率低于 35%。
 - 存在权属瑕疵或过户风险。
-- 估值覆盖率不足。
+- 估值数据覆盖率不足。
 
 高风险数量：
 
@@ -671,7 +681,7 @@ high_risk_count = low_coverage_asset_count + title_risk_asset_count
 PDF 内容：
 
 - 报告标题：资产包出让定价分析报告。
-- 摘要表：资产数量、资产包类型、本金合计、车300估值合计、推荐出让价、中位折扣、本金中位回收率、估值覆盖率。
+- 摘要表：资产数量、资产包类型、本金合计、车300估值合计、推荐出让价、中位折扣、本金中位回收率、估值数据覆盖率、抵押物价值覆盖率。
 - 风险预警。
 - 分析报告正文。
 - 逐车定价明细。
@@ -1670,12 +1680,12 @@ mark_consumed(approval_request_id, consumed_request_id)
 - 总资产数。
 - 本金合计。
 - 车辆估值合计。
-- 估值覆盖率。
+- 估值数据覆盖率。
 - 推荐出让价区间。
 - 推荐折扣。
 - 本金回收率。
 - 估值变现率。
-- 抵押物覆盖率。
+- 抵押物价值覆盖率。
 - 分析报告。
 - 定价方法说明。
 - 高风险数量。
@@ -1792,7 +1802,7 @@ mark_consumed(approval_request_id, consumed_request_id)
 
 资产包出让定价核心：
 
-> 在库车以车300估值为锚，非在库车以债权本金为锚，再根据抵押物覆盖率、GPS、脱保、过户等风险因素调整折扣，生成推荐出让价区间和分析报告。
+> 在库车以车300估值为锚，非在库车以债权本金为锚，再根据抵押物价值覆盖率、GPS、脱保、过户等风险因素调整折扣，生成推荐出让价区间和分析报告。
 
 库存沙盘核心：
 
