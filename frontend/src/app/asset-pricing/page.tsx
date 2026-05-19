@@ -22,7 +22,9 @@ import {
   createApprovalRequest,
   downloadAssetPackageReportPdf,
   getPackage,
+  getTransferCompliance,
   listApprovalRequests,
+  updateTransferCompliance,
   uploadExcel,
   type ApprovalContext,
   type ApprovalRequestInfo,
@@ -30,6 +32,8 @@ import {
   type PackageCalculationResult,
   type ParsedAssetInfo,
   type PricingParameters,
+  type TransferComplianceChecklist,
+  type TransferComplianceResult,
 } from "@/lib/api";
 import { pollJob } from "@/lib/jobs";
 
@@ -75,6 +79,39 @@ const TRADEABILITY_LABELS: Record<string, string> = {
   C: "需补强",
   D: "交易阻力高",
   E: "暂不适配",
+};
+
+const LIQUIDITY_LABELS: Record<string, string> = {
+  high: "高流动",
+  medium: "中流动",
+  low: "低流动",
+  very_low: "极低流动",
+};
+
+const COMPLIANCE_LABELS: Record<keyof TransferComplianceChecklist, string> = {
+  asset_scope_confirmed: "符合本机构可转让资产范围",
+  internal_approval_completed: "内部审批已完成",
+  asset_authenticity_verified: "资产真实性已核验",
+  transfer_restriction_checked: "限制转让情形已核验",
+  pricing_basis_archived: "估值和定价依据已归档",
+  inquiry_process_recorded: "询价/竞价过程已留痕",
+  debtor_notification_arranged: "债务人通知已安排",
+  no_hidden_repurchase_commitment: "无抽屉协议/回购兜底",
+  archive_completed: "资料归档已完成",
+  watermark_export_completed: "导出和报告水印已完成",
+};
+
+const DEFAULT_COMPLIANCE_CHECKLIST: TransferComplianceChecklist = {
+  asset_scope_confirmed: false,
+  internal_approval_completed: false,
+  asset_authenticity_verified: false,
+  transfer_restriction_checked: false,
+  pricing_basis_archived: false,
+  inquiry_process_recorded: false,
+  debtor_notification_arranged: false,
+  no_hidden_repurchase_commitment: false,
+  archive_completed: false,
+  watermark_export_completed: false,
 };
 
 function formatMoney(value: number | null | undefined) {
@@ -174,11 +211,16 @@ export default function AssetPricingPage() {
   const [refreshingApproval, setRefreshingApproval] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [analyzingBuyerOffer, setAnalyzingBuyerOffer] = useState(false);
+  const [savingCompliance, setSavingCompliance] = useState(false);
   const [fieldOverrides, setFieldOverrides] = useState<Record<number, AssetFieldOverride>>({});
   const [batchTarget, setBatchTarget] = useState<BatchCorrectionTarget>("risk");
   const [batchPatch, setBatchPatch] = useState<AssetFieldOverride>({});
   const [buyerOfferPrice, setBuyerOfferPrice] = useState("");
   const [buyerOfferNote, setBuyerOfferNote] = useState("");
+  const [complianceForm, setComplianceForm] = useState<TransferComplianceChecklist>(
+    DEFAULT_COMPLIANCE_CHECKLIST,
+  );
+  const [complianceResult, setComplianceResult] = useState<TransferComplianceResult | null>(null);
   const [params, setParams] = useState<PricingParameters>({
     towing_cost: 1500,
     daily_parking: 30,
@@ -260,6 +302,28 @@ export default function AssetPricingPage() {
     return () => window.clearInterval(timer);
   }, [approvalRequest]);
 
+  useEffect(() => {
+    if (!packageId || !result) {
+      setComplianceResult(null);
+      setComplianceForm(DEFAULT_COMPLIANCE_CHECKLIST);
+      return;
+    }
+    const embedded = result.summary.compliance_checklist;
+    if (embedded) {
+      setComplianceResult(embedded);
+      setComplianceForm({ ...DEFAULT_COMPLIANCE_CHECKLIST, ...embedded.checklist });
+      return;
+    }
+    void getTransferCompliance(packageId)
+      .then((next) => {
+        setComplianceResult(next);
+        setComplianceForm({ ...DEFAULT_COMPLIANCE_CHECKLIST, ...next.checklist });
+      })
+      .catch(() => {
+        setComplianceResult(null);
+      });
+  }, [packageId, result]);
+
   function clearApprovalFlow() {
     setApprovalContext(null);
     setApprovalRequest(null);
@@ -276,6 +340,8 @@ export default function AssetPricingPage() {
     setBatchTarget("risk");
     setBuyerOfferPrice("");
     setBuyerOfferNote("");
+    setComplianceForm(DEFAULT_COMPLIANCE_CHECKLIST);
+    setComplianceResult(null);
     setParams({
       towing_cost: 1500,
       daily_parking: 30,
@@ -402,6 +468,31 @@ export default function AssetPricingPage() {
       setError(err instanceof Error ? err.message : "买方报价分析失败");
     } finally {
       setAnalyzingBuyerOffer(false);
+    }
+  }
+
+  async function handleSaveCompliance() {
+    if (!packageId || !result) return;
+    setSavingCompliance(true);
+    setError("");
+    try {
+      const saved = await updateTransferCompliance(packageId, complianceForm);
+      setComplianceResult(saved);
+      setResult((current) =>
+        current
+          ? {
+              ...current,
+              summary: {
+                ...current.summary,
+                compliance_checklist: saved,
+              },
+            }
+          : current,
+      );
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "合规清单保存失败");
+    } finally {
+      setSavingCompliance(false);
     }
   }
 
@@ -896,6 +987,37 @@ export default function AssetPricingPage() {
             </CardContent>
           </Card>
 
+          {(result.summary.market_liquidity_summary ||
+            result.summary.avg_market_liquidity_score !== undefined) && (
+            <Card>
+              <CardHeader>
+                <CardTitle>市场流动性与新能源专项风险</CardTitle>
+                <CardDescription>
+                  将车型流通难度、运营属性、事故风险和新能源电池/质保信息纳入出让折扣与预计变现周期。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-xs text-gray-500">平均流动性评分</div>
+                  <div className="mt-1 text-lg font-semibold">
+                    {result.summary.avg_market_liquidity_score?.toFixed(1) ?? "-"}分
+                  </div>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-xs text-gray-500">低流动性车辆</div>
+                  <div className="mt-1 text-lg font-semibold">{result.summary.low_liquidity_count ?? 0}台</div>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="text-xs text-gray-500">新能源专项资产</div>
+                  <div className="mt-1 text-lg font-semibold">{result.summary.new_energy_asset_count ?? 0}台</div>
+                </div>
+                {result.summary.market_liquidity_summary && (
+                  <p className="text-sm text-gray-700 md:col-span-3">{result.summary.market_liquidity_summary}</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {result.summary.pricing_methodology && (
             <Alert>
               <AlertDescription>{result.summary.pricing_methodology}</AlertDescription>
@@ -1321,6 +1443,69 @@ export default function AssetPricingPage() {
           <Card>
             <CardHeader className="gap-3 md:flex md:flex-row md:items-start md:justify-between">
               <div>
+                <CardTitle>出让合规检查清单</CardTitle>
+                <CardDescription>
+                  用于正式出让前的材料归档、审批留痕和报告水印确认；保存后会同步写入当前资产包结果和PDF。
+                </CardDescription>
+              </div>
+              <Badge
+                variant={
+                  complianceResult?.compliance_level === "A" || complianceResult?.compliance_level === "B"
+                    ? "default"
+                    : complianceResult?.compliance_level === "C"
+                      ? "secondary"
+                      : "destructive"
+                }
+              >
+                {complianceResult?.compliance_level || "D"}级 · {complianceResult?.compliance_score ?? 0}分
+              </Badge>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2 md:grid-cols-2">
+                {(Object.keys(COMPLIANCE_LABELS) as Array<keyof TransferComplianceChecklist>).map((key) => (
+                  <label
+                    key={key}
+                    className="flex items-center gap-2 rounded-lg border bg-white p-3 text-sm"
+                  >
+                    <Input
+                      type="checkbox"
+                      checked={Boolean(complianceForm[key])}
+                      onChange={(event) =>
+                        setComplianceForm((current) => ({
+                          ...current,
+                          [key]: event.target.checked,
+                        }))
+                      }
+                      className="size-4"
+                    />
+                    <span>{COMPLIANCE_LABELS[key]}</span>
+                  </label>
+                ))}
+              </div>
+              {complianceResult && (
+                <div className="rounded-lg bg-slate-50 p-3 text-sm text-gray-700">
+                  <div className="font-medium text-gray-900">{complianceResult.summary}</div>
+                  {complianceResult.missing_items.length > 0 && (
+                    <div className="mt-2">
+                      未完成项：{complianceResult.missing_items.join("、")}
+                    </div>
+                  )}
+                  {complianceResult.risk_warnings.length > 0 && (
+                    <div className="mt-2 text-amber-800">
+                      风险提示：{complianceResult.risk_warnings.join("；")}
+                    </div>
+                  )}
+                </div>
+              )}
+              <Button type="button" onClick={handleSaveCompliance} disabled={savingCompliance}>
+                {savingCompliance ? "保存中..." : "保存合规清单"}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="gap-3 md:flex md:flex-row md:items-start md:justify-between">
+              <div>
                 <CardTitle>资产包出让分析报告</CardTitle>
                 <CardDescription>由系统结合车300估值、本金和资产包类型生成，可作为对外沟通底稿。</CardDescription>
               </div>
@@ -1348,6 +1533,7 @@ export default function AssetPricingPage() {
                     <TableHead className="text-right">本金</TableHead>
                     <TableHead className="text-right">车300估值</TableHead>
                     <TableHead>估值可信度</TableHead>
+                    <TableHead>市场流动性</TableHead>
                     <TableHead>定价基准</TableHead>
                     <TableHead className="text-right">推荐出让价区间</TableHead>
                     <TableHead className="text-right">基准折扣</TableHead>
@@ -1383,6 +1569,37 @@ export default function AssetPricingPage() {
                           {(asset.valuation_anomaly_tags || []).length > 0 && (
                             <div className="flex flex-wrap gap-1">
                               {(asset.valuation_anomaly_tags || []).map((tag) => (
+                                <Badge key={tag} variant="outline" className="text-xs">
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex min-w-[130px] flex-col gap-1">
+                          <Badge
+                            variant={
+                              asset.market_liquidity_level === "high"
+                                ? "default"
+                                : asset.market_liquidity_level === "medium"
+                                  ? "secondary"
+                                  : "destructive"
+                            }
+                            className="w-fit"
+                          >
+                            {LIQUIDITY_LABELS[asset.market_liquidity_level || "medium"] || "中流动"} ·{" "}
+                            {asset.market_liquidity_score ?? 0}
+                          </Badge>
+                          <span className="text-xs text-gray-500">
+                            预计{asset.expected_sale_days_adjusted ?? "-"}天 · 调整
+                            {formatPercent(asset.market_liquidity_adjustment)}
+                          </span>
+                          {((asset.liquidity_risk_tags || []).length > 0 ||
+                            (asset.new_energy_risk_tags || []).length > 0) && (
+                            <div className="flex flex-wrap gap-1">
+                              {[...(asset.liquidity_risk_tags || []), ...(asset.new_energy_risk_tags || [])].map((tag) => (
                                 <Badge key={tag} variant="outline" className="text-xs">
                                   {tag}
                                 </Badge>

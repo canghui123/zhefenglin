@@ -29,12 +29,16 @@
   .summary-table th, .summary-table td { padding: 10px 12px; border: 1px solid #e2e8f0; text-align: center; }
   .summary-table th { background: #2d3748; color: white; }
   .footer { text-align: center; font-size: 11px; color: #999; margin-top: 40px; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+  .watermark { position: fixed; right: 2cm; bottom: 1cm; font-size: 10px; color: #9ca3af; }
   .amount { font-family: "Courier New", monospace; }
   .positive { color: #276749; }
   .negative { color: #c53030; }
 </style>
 </head>
 <body>
+{% if watermark_text %}
+<div class="watermark">导出水印：{{ watermark_text }}</div>
+{% endif %}
 
 <!-- 封面 -->
 <div class="cover">
@@ -278,6 +282,7 @@
 
 <div class="footer">
   本报告由汽车金融资产处置经营决策系统自动生成，仅供决策参考。报告日期：{{ report_date }}
+  {% if watermark_text %}<br>导出水印：{{ watermark_text }}{% endif %}
 </div>
 
 </body>

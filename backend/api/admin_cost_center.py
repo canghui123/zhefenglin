@@ -1,4 +1,6 @@
 """Admin APIs for cost center analytics."""
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -47,12 +49,16 @@ def tenants(
 def export_csv(
     session: Session = Depends(get_db_session),
     tenant_id: int = Depends(get_current_tenant_id),
-    _user: User = Depends(require_role("manager")),
+    user: User = Depends(require_role("manager")),
 ):
     entitlement_service.ensure_feature_enabled(
         session, tenant_id=tenant_id, feature_key="audit.export"
     )
-    csv_text = export_tenant_breakdown_csv(session)
+    watermark = (
+        f"# watermark: tenant={tenant_id}; user={user.id}; "
+        f"exported_at={datetime.utcnow().isoformat()}Z\n"
+    )
+    csv_text = watermark + export_tenant_breakdown_csv(session)
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",

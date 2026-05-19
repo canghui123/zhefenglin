@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from db.models.user import User
 from db.session import get_db_session
-from dependencies.auth import get_current_user, require_role
+from dependencies.auth import require_role
+from models.portfolio import PortfolioCapacitySettings
 from repositories import (
     deployment_profile_repo,
     plan_repo,
@@ -19,9 +20,19 @@ from repositories import (
     user_repo,
 )
 from services import audit_service, entitlement_service
+from services.portfolio_capacity_planner import (
+    get_capacity_settings,
+    update_capacity_settings,
+)
 
 
 router = APIRouter(prefix="/api/admin/settings", tags=["商业化设置"])
+
+
+def _target_capacity_tenant(user: User, tenant_id: Optional[int]) -> Optional[int]:
+    if tenant_id is not None and user.role != "admin":
+        raise HTTPException(status_code=403, detail="仅管理员可查看或修改其他租户产能")
+    return tenant_id if tenant_id is not None else user.default_tenant_id
 
 
 def _json_loads(value: Optional[str]) -> dict:
@@ -428,3 +439,37 @@ def upsert_deployment_profile(
         after=after,
     )
     return DeploymentProfileOut.model_validate(after)
+
+
+@router.get("/capacity", response_model=PortfolioCapacitySettings)
+def read_capacity_settings(
+    tenant_id: Optional[int] = None,
+    user: User = Depends(require_role("manager")),
+):
+    target_tenant_id = _target_capacity_tenant(user, tenant_id)
+    return get_capacity_settings(target_tenant_id)
+
+
+@router.put("/capacity", response_model=PortfolioCapacitySettings)
+def update_capacity_settings_api(
+    req: PortfolioCapacitySettings,
+    request: Request,
+    tenant_id: Optional[int] = None,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(require_role("admin")),
+):
+    target_tenant_id = _target_capacity_tenant(user, tenant_id)
+    before = get_capacity_settings(target_tenant_id).model_dump()
+    after = update_capacity_settings(target_tenant_id, req)
+    audit_service.record(
+        session,
+        request,
+        action="capacity_settings_update",
+        tenant_id=target_tenant_id,
+        user_id=user.id,
+        resource_type="portfolio_capacity_settings",
+        resource_id=target_tenant_id or "global",
+        before=before,
+        after=after.model_dump(),
+    )
+    return after

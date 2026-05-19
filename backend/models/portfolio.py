@@ -139,3 +139,50 @@ class ExecutiveDashboard(BaseModel):
     resource_suggestions: list[str] = []
     approval_items: list[str] = []
     recommendations: list[RoleRecommendation] = []
+
+
+class PortfolioCapacitySettings(BaseModel):
+    """Monthly disposal capacity and budget constraints."""
+
+    monthly_towing_capacity: int = Field(default=80, ge=0)
+    monthly_litigation_capacity: int = Field(default=40, ge=0)
+    monthly_auction_capacity: int = Field(default=100, ge=0)
+    monthly_collection_capacity: int = Field(default=220, ge=0)
+    inventory_yard_capacity: int = Field(default=180, ge=0)
+    monthly_disposal_budget: float = Field(default=2_000_000, ge=0)
+    legal_team_capacity: int = Field(default=35, ge=0)
+    external_vendor_capacity: int = Field(default=80, ge=0)
+
+
+class CapacityPlanItem(BaseModel):
+    segment_name: str
+    strategy_type: str
+    strategy_name: str
+    task_type: str
+    asset_count: int
+    selected_count: int
+    deferred_count: int = 0
+    expected_net_recovery: float = 0
+    expected_incremental_recovery: float = 0
+    required_cost: float = 0
+    cash_return_speed: float = 0
+    execution_feasibility: float = 0
+    resource_needs: dict[str, float] = Field(default_factory=dict)
+    status: str = "selected"
+    reason: str = ""
+
+
+class PortfolioCapacityPlan(BaseModel):
+    settings: PortfolioCapacitySettings
+    current_month_execution_plan: list[CapacityPlanItem] = Field(default_factory=list)
+    next_month_deferred_pool: list[CapacityPlanItem] = Field(default_factory=list)
+    paused_pool: list[CapacityPlanItem] = Field(default_factory=list)
+    capacity_bottlenecks: list[str] = Field(default_factory=list)
+    budget_gap: float = 0
+    incremental_recovery_if_capacity_added: float = 0
+    resource_usage: dict[str, float] = Field(default_factory=dict)
+    remaining_capacity: dict[str, float] = Field(default_factory=dict)
+    total_selected_assets: int = 0
+    total_expected_net_recovery: float = 0
+    total_expected_incremental_recovery: float = 0
+    summary: str = ""

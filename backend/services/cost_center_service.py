@@ -6,7 +6,14 @@ import io
 import json
 from datetime import datetime
 
-from repositories import approval_repo, plan_repo, subscription_repo, tenant_repo, usage_repo
+from repositories import (
+    approval_repo,
+    plan_repo,
+    subscription_repo,
+    tenant_repo,
+    usage_repo,
+    work_order_repo,
+)
 
 
 def _current_month(now: datetime = None) -> str:
@@ -165,6 +172,7 @@ def build_value_dashboard(session) -> dict:
     ai_report_calls = 0
     blocked_high_cost_calls = 0
     sandbox_runs = 0
+    asset_package_uploads = 0
     for tenant in tenant_repo.list_tenants(session):
         for event in usage_repo.list_usage_events_for_period(
             session,
@@ -176,6 +184,8 @@ def build_value_dashboard(session) -> dict:
                 ai_report_calls += int(event.quantity)
             if event.resource_type == "sandbox_run":
                 sandbox_runs += int(event.quantity)
+            if event.resource_type == "asset_package_upload":
+                asset_package_uploads += int(event.quantity)
             metadata = {}
             try:
                 metadata = json.loads(event.metadata_json or "{}")
@@ -189,10 +199,64 @@ def build_value_dashboard(session) -> dict:
         1 for row in approval_rows if row.type == "condition_pricing"
     ) + condition_calls
     estimated_decisions_processed = vin_calls + condition_calls + sandbox_runs
-    estimated_hours_saved = round(vin_calls * 0.12 + ai_report_calls * 0.25 + sandbox_runs * 0.2, 1)
+    estimated_hours_saved = round(
+        vin_calls * 0.12
+        + ai_report_calls * 0.25
+        + sandbox_runs * 0.2
+        + asset_package_uploads * 1.5,
+        1,
+    )
     recommended_path_coverage = round(
         min(100.0, ((condition_calls + ai_report_calls) / max(estimated_decisions_processed, 1)) * 100),
         1,
+    )
+    tenant_value_rows = []
+    total_tasks = 0
+    done_tasks = 0
+    accelerated_cash_in = 0.0
+    estimated_extra_recovery = 0.0
+    auction_price_improvement = 0.0
+
+    for tenant in tenant_repo.list_tenants(session):
+        tenant_tasks = work_order_repo.list_work_orders_for_tenant(session, tenant_id=tenant.id)
+        tenant_done = [task for task in tenant_tasks if task.status == "done"]
+        tenant_expected = 0.0
+        tenant_actual = 0.0
+        for task in tenant_tasks:
+            payload = json.loads(task.payload_json or "{}")
+            result = json.loads(task.result_json or "{}")
+            expected = float(payload.get("expected_recovery") or 0)
+            actual = float(result.get("actual_recovery") or 0)
+            tenant_expected += expected
+            tenant_actual += actual
+            if task.status == "done":
+                accelerated_cash_in += actual
+                uplift = max(actual - expected, 0)
+                estimated_extra_recovery += uplift if actual else expected * 0.05
+                if task.order_type == "auction":
+                    auction_price_improvement += uplift
+        total_tasks += len(tenant_tasks)
+        done_tasks += len(tenant_done)
+        tenant_value_rows.append(
+            {
+                "tenant_id": tenant.id,
+                "tenant_code": tenant.code,
+                "tenant_name": tenant.name,
+                "task_count": len(tenant_tasks),
+                "completed_task_count": len(tenant_done),
+                "expected_recovery": round(tenant_expected, 2),
+                "actual_recovery": round(tenant_actual, 2),
+                "estimated_extra_recovery": round(max(tenant_actual - tenant_expected, 0), 2),
+            }
+        )
+
+    manual_valuation_cost_saved = round(vin_calls * 30 + condition_calls * 120, 2)
+    avoided_loss_amount = round(high_risk_vehicles * 3000 + blocked_high_cost_calls * 800, 2)
+    task_completion_rate = round(done_tasks / total_tasks * 100, 1) if total_tasks else 0
+    summary_text = (
+        f"本月系统处理决策{estimated_decisions_processed}次，生成报告{ai_report_calls}份，"
+        f"预计节省人工{estimated_hours_saved}小时，识别高风险资产{high_risk_vehicles}台，"
+        f"估计避免损失{avoided_loss_amount:,.0f}元，任务闭环提前回款{accelerated_cash_in:,.0f}元。"
     )
     return {
         "month": month,
@@ -201,4 +265,24 @@ def build_value_dashboard(session) -> dict:
         "blocked_high_cost_calls": blocked_high_cost_calls,
         "recommended_path_coverage": recommended_path_coverage,
         "estimated_decisions_processed": estimated_decisions_processed,
+        "estimated_extra_recovery": round(estimated_extra_recovery, 2),
+        "avoided_loss_amount": avoided_loss_amount,
+        "accelerated_cash_in": round(accelerated_cash_in, 2),
+        "manual_valuation_cost_saved": manual_valuation_cost_saved,
+        "auction_price_improvement": round(auction_price_improvement, 2),
+        "bad_asset_identification_count": high_risk_vehicles,
+        "reports_generated": ai_report_calls,
+        "hours_saved": estimated_hours_saved,
+        "task_completion_rate": task_completion_rate,
+        "tenant_value_rows": tenant_value_rows,
+        "customer_summary": summary_text,
+        "source_trace": {
+            "vin_calls": vin_calls,
+            "condition_pricing_calls": condition_calls,
+            "ai_report_calls": ai_report_calls,
+            "sandbox_runs": sandbox_runs,
+            "asset_package_uploads": asset_package_uploads,
+            "task_count": total_tasks,
+            "completed_task_count": done_tasks,
+        },
     }

@@ -1,7 +1,7 @@
 """PDF报告生成 — 使用Jinja2 HTML模板（五路径版）"""
 
 import os
-from datetime import date
+from datetime import date, datetime
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -68,6 +68,12 @@ async def generate_report_html(
 
     html = template.render(
         report_date=date.today().strftime("%Y年%m月%d日"),
+        watermark_text=(
+            f"tenant={tenant_id}; user={user_id}; "
+            f"exported_at={datetime.utcnow().isoformat(timespec='seconds')}Z"
+            if tenant_id is not None and user_id is not None
+            else None
+        ),
         car_description=result.input.car_description,
         entry_date=result.input.entry_date,
         overdue_bucket=result.input.overdue_bucket,

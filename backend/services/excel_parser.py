@@ -18,17 +18,28 @@ COLUMN_KEYWORDS = {
     "ownership_transferred": ["过户", "转移"],
     "loan_principal": ["本金", "债权", "贷款金额", "剩余本金", "贷款余额", "欠款", "欠息"],
     "mileage": ["里程", "公里", "表显", "行驶里程", "km", "KM", "万公里"],
+    "energy_type": ["能源", "燃料", "动力类型", "燃油类型", "新能源类型"],
+    "battery_health_score": ["电池健康", "电池SOH", "SOH", "电池评分"],
+    "battery_warranty_valid": ["电池质保", "三电质保", "质保"],
+    "operating_vehicle": ["运营车", "营运车", "营运"],
+    "ride_hailing_vehicle": ["网约车", "网约"],
+    "battery_replacement_history": ["换电池", "电池更换", "更换电池"],
+    "range_km": ["续航", "续航里程", "CLTC", "NEDC"],
 }
 
 
 def _match_column(header: str) -> Optional[str]:
     """将Excel列名匹配到系统字段"""
     header_clean = header.strip().lower()
+    matched_field = None
+    matched_len = -1
     for field, keywords in COLUMN_KEYWORDS.items():
         for kw in keywords:
             if kw.lower() in header_clean:
-                return field
-    return None
+                if len(kw) > matched_len:
+                    matched_field = field
+                    matched_len = len(kw)
+    return matched_field
 
 
 def _auto_detect_mapping(columns: list[str]) -> dict[str, str]:
@@ -85,7 +96,7 @@ def _parse_float(val) -> Optional[float]:
         return float(val)
     try:
         cleaned = str(val).strip().lower()
-        cleaned = re.sub(r"[,，¥￥元\s]", "", cleaned)
+        cleaned = re.sub(r"[,，¥￥元\s%％]", "", cleaned)
         cleaned = re.sub(r"(公里|km)$", "", cleaned)
 
         multiplier = 1.0
@@ -102,6 +113,33 @@ def _parse_float(val) -> Optional[float]:
         return float(cleaned) * multiplier
     except (ValueError, TypeError):
         return None
+
+
+def _parse_battery_health(val) -> Optional[int]:
+    raw = _parse_float(val)
+    if raw is None:
+        return None
+    if 0 < raw <= 1:
+        raw *= 100
+    return max(0, min(100, int(round(raw))))
+
+
+def _parse_energy_type(val, description: str = "") -> str:
+    text = f"{val if not pd.isna(val) else ''} {description}".strip()
+    if not text:
+        return "unknown"
+    lower = text.lower()
+    if any(word in text for word in ("增程", "理想", "问界")) or "erev" in lower:
+        return "erev"
+    if any(word in text for word in ("插混", "混动", "DM-i", "DM")) or "phev" in lower:
+        return "phev"
+    if any(word in text for word in ("纯电", "新能源", "特斯拉", "蔚来", "小鹏", "极氪", "哪吒")) or lower in {"ev", "bev"}:
+        return "bev"
+    if any(word in text for word in ("油电混", "HEV")) or "hev" in lower or "hybrid" in lower:
+        return "hybrid"
+    if any(word in text for word in ("燃油", "汽油", "柴油")) or lower == "fuel":
+        return "fuel"
+    return "unknown"
 
 
 def parse_excel(
@@ -161,6 +199,16 @@ def parse_excel(
                 errors.append(AssetParseError(row_number=row_num, field="vin", message=f"VIN码格式不正确: {vin_val}"))
 
         principal = _parse_float(row.get(field_to_col.get("loan_principal", ""), None)) if "loan_principal" in field_to_col else None
+        energy_type = _parse_energy_type(
+            row.get(field_to_col.get("energy_type", ""), None) if "energy_type" in field_to_col else None,
+            car_desc,
+        )
+        battery_health = _parse_battery_health(row.get(field_to_col.get("battery_health_score", ""), None)) if "battery_health_score" in field_to_col else None
+        battery_warranty = _parse_bool(row.get(field_to_col.get("battery_warranty_valid", ""), None)) if "battery_warranty_valid" in field_to_col else None
+        operating_vehicle = _parse_bool(row.get(field_to_col.get("operating_vehicle", ""), None)) if "operating_vehicle" in field_to_col else None
+        ride_hailing_vehicle = _parse_bool(row.get(field_to_col.get("ride_hailing_vehicle", ""), None)) if "ride_hailing_vehicle" in field_to_col else None
+        battery_replacement = _parse_bool(row.get(field_to_col.get("battery_replacement_history", ""), None)) if "battery_replacement_history" in field_to_col else None
+        range_km = _parse_float(row.get(field_to_col.get("range_km", ""), None)) if "range_km" in field_to_col else None
         # 里程数：智能识别单位
         mileage = None
         if "mileage" in field_to_col:
@@ -179,6 +227,13 @@ def parse_excel(
             insurance_lapsed=insurance,
             ownership_transferred=transferred,
             loan_principal=principal,
+            energy_type=energy_type,
+            battery_health_score=battery_health,
+            battery_warranty_valid=battery_warranty,
+            operating_vehicle=operating_vehicle,
+            ride_hailing_vehicle=ride_hailing_vehicle,
+            battery_replacement_history=battery_replacement,
+            range_km=range_km,
             buyout_price=None,
         ))
 

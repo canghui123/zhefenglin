@@ -8,6 +8,8 @@
 """
 
 import math
+from datetime import date, timedelta
+from models.asset import Asset
 from models.simulation import (
     SandboxInput, SandboxResult,
     PathAResult, TimePoint,
@@ -18,6 +20,7 @@ from models.simulation import (
     PathDecisionScore,
 )
 from services.legal_path_assessment import assess_legal_paths
+from services.market_liquidity import calculate_market_liquidity
 
 
 # ============================================================
@@ -111,6 +114,41 @@ def _overdue_stage_rank(overdue_bucket: str) -> int:
 
 def _is_m3_or_later(overdue_bucket: str) -> bool:
     return _overdue_stage_rank(overdue_bucket) >= 3
+
+
+def _sandbox_asset_for_liquidity(inp: SandboxInput) -> Asset:
+    first_registration = date.today() - timedelta(days=int(max(inp.vehicle_age_years, 0) * 365.25))
+    return Asset(
+        row_number=0,
+        car_description=inp.car_description,
+        first_registration=first_registration,
+        loan_principal=inp.overdue_amount,
+        energy_type=inp.energy_type,
+        battery_health_score=inp.battery_health_score,
+        battery_warranty_valid=inp.battery_warranty_valid,
+        operating_vehicle=inp.operating_vehicle,
+        ride_hailing_vehicle=inp.ride_hailing_vehicle,
+        battery_replacement_history=inp.battery_replacement_history,
+        range_km=inp.range_km,
+    )
+
+
+def _sandbox_liquidity(inp: SandboxInput):
+    return calculate_market_liquidity(
+        _sandbox_asset_for_liquidity(inp),
+        valuation_price=inp.che300_value,
+        base_expected_sale_days=inp.expected_sale_days,
+    )
+
+
+def _legal_path_duration_multiplier(level: str) -> float:
+    if level == "high":
+        return 0.95
+    if level == "low":
+        return 1.08
+    if level == "very_low":
+        return 1.15
+    return 1.0
 
 
 def _special_procedure_block_reasons(inp: SandboxInput) -> list[str]:
@@ -277,6 +315,8 @@ def simulate_path_a(inp: SandboxInput) -> PathAResult:
 
 def simulate_path_b(inp: SandboxInput) -> PathBResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    liquidity = _sandbox_liquidity(inp)
+    duration_multiplier = _legal_path_duration_multiplier(liquidity.level)
 
     # 常规诉讼时间线：立案→审理→判决→执行→拍卖
     # 最优6个月，预期9个月，最差14个月
@@ -300,14 +340,14 @@ def simulate_path_b(inp: SandboxInput) -> PathBResult:
     )
 
     for label, months, auction_discount, success_prob in scenario_configs:
-        days = months * 30
+        days = int(round(months * 30 * duration_multiplier))
         parking = inp.daily_parking * days
         interest = inp.overdue_amount * (inp.annual_interest_rate / 100) * (days / 365)
         dep_rate = estimate_depreciation(days, vtype, inp.vehicle_age_years)
         depreciated = inp.che300_value * (1 - dep_rate)
 
         # 拍卖价 = 贬值后估值 × 拍卖折扣
-        auction_price = depreciated * auction_discount
+        auction_price = depreciated * auction_discount * (1 + liquidity.adjustment)
 
         # 回款比例律师费
         recovery_lawyer_fee = auction_price * inp.litigation_recovery_fee_rate if inp.litigation_has_recovery_fee else 0
@@ -330,18 +370,18 @@ def simulate_path_b(inp: SandboxInput) -> PathBResult:
         if auction_discount >= 0.80:
             rounds.append(AuctionRound(
                 round_name="一拍", discount_rate=0.80,
-                auction_price=round(depreciated * 0.80, 2),
+                auction_price=round(depreciated * 0.80 * (1 + liquidity.adjustment), 2),
                 success_probability=0.70,
             ))
         if auction_discount <= 0.56 or months >= 9:
             rounds.append(AuctionRound(
                 round_name="一拍", discount_rate=0.80,
-                auction_price=round(depreciated * 0.80, 2),
+                auction_price=round(depreciated * 0.80 * (1 + liquidity.adjustment), 2),
                 success_probability=0.70,
             ))
             rounds.append(AuctionRound(
                 round_name="二拍", discount_rate=0.56,
-                auction_price=round(depreciated * 0.56, 2),
+                auction_price=round(depreciated * 0.56 * (1 + liquidity.adjustment), 2),
                 success_probability=0.85,
             ))
 
@@ -350,7 +390,7 @@ def simulate_path_b(inp: SandboxInput) -> PathBResult:
 
         scenarios.append(LitigationScenario(
             label=label,
-            duration_months=months,
+            duration_months=max(1, int(round(days / 30))),
             duration_days=days,
             legal_cost=legal_cost,
             parking_cost=round(parking, 2),
@@ -371,10 +411,11 @@ def simulate_path_b(inp: SandboxInput) -> PathBResult:
 
 def simulate_path_c(inp: SandboxInput) -> PathCResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    liquidity = _sandbox_liquidity(inp)
 
-    sale_days = inp.expected_sale_days
+    sale_days = liquidity.expected_sale_days_adjusted
     dep_rate = estimate_depreciation(sale_days, vtype, inp.vehicle_age_years)
-    sale_price = inp.che300_value * (1 - dep_rate) * 0.90  # 竞拍成交约市价90%
+    sale_price = inp.che300_value * (1 - dep_rate) * 0.90 * (1 + liquidity.adjustment)
     commission = sale_price * inp.commission_rate
     parking = inp.daily_parking * sale_days
     net = sale_price - commission - parking - inp.recovery_cost
@@ -386,6 +427,11 @@ def simulate_path_c(inp: SandboxInput) -> PathCResult:
         parking_during_sale=round(parking, 2),
         recovery_cost=round(inp.recovery_cost, 2),
         net_recovery=round(net, 2),
+        market_liquidity_score=liquidity.score,
+        market_liquidity_level=liquidity.level,
+        market_liquidity_adjustment=liquidity.adjustment,
+        liquidity_risk_tags=liquidity.liquidity_risk_tags,
+        new_energy_risk_tags=liquidity.new_energy_risk_tags,
     )
 
     if not inp.vehicle_recovered:
@@ -401,10 +447,12 @@ def simulate_path_c(inp: SandboxInput) -> PathCResult:
 
 def simulate_path_d(inp: SandboxInput) -> PathDResult:
     vtype = inp.vehicle_type if inp.vehicle_type != "auto" else _detect_vehicle_type(inp.car_description)
+    liquidity = _sandbox_liquidity(inp)
+    duration_multiplier = _legal_path_duration_multiplier(liquidity.level)
 
     # 特别程序：通常2-3个月完成，此处取3个月
-    duration_months = 3
-    days = duration_months * 30
+    days = int(round(3 * 30 * duration_multiplier))
+    duration_months = max(1, int(round(days / 30)))
     parking = inp.daily_parking * days
     interest = inp.overdue_amount * (inp.annual_interest_rate / 100) * (days / 365)
     dep_rate = estimate_depreciation(days, vtype, inp.vehicle_age_years)
@@ -412,8 +460,8 @@ def simulate_path_d(inp: SandboxInput) -> PathDResult:
 
     # 拍卖：同样一拍80%/二拍56%
     # 特别程序效率更高，多数一拍成交
-    round1_price = depreciated * 0.80
-    round2_price = depreciated * 0.56
+    round1_price = depreciated * 0.80 * (1 + liquidity.adjustment)
+    round2_price = depreciated * 0.56 * (1 + liquidity.adjustment)
     # 加权期望价格：一拍成交率70%，二拍成交率85%
     expected_price = round1_price * 0.70 + round2_price * (1 - 0.70) * 0.85 + 0 * (1 - 0.70) * (1 - 0.85)
 
@@ -630,7 +678,7 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
     paths = {"A": a_best, "B": b_value, "C": c_value, "D": d_value, "E": e_value}
     path_days = {
         "A": a_best_days,
-        "B": 270,
+        "B": path_b.scenarios[1].duration_days if len(path_b.scenarios) > 1 else 270,
         "C": path_c.expected_sale_days,
         "D": path_d.duration_days,
         "E": path_e.total_months * 30,
@@ -705,6 +753,10 @@ def run_simulation(inp: SandboxInput) -> SandboxResult:
             f"立即竞拍可在{path_c.expected_sale_days}天内回款，"
             f"成交价¥{path_c.sale_price:,.0f}，扣除佣金和停车费后净回收¥{c_value:,.0f}。"
         )
+        if path_c.market_liquidity_level in {"low", "very_low"}:
+            lines.append(
+                f"市场流动性评分{path_c.market_liquidity_score}分，已按低流动性拉长成交周期并下调成交价。"
+            )
         if path_d.available and d_value > b_value:
             lines.append(f"若竞拍不可行，次优选择为担保物权特别程序（净回收¥{d_value:,.0f}，约3个月）。")
     elif best_path == "D":

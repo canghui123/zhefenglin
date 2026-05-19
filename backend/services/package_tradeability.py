@@ -33,6 +33,9 @@ def calculate_package_tradeability(
     no_gps_risk = sum(1 for row in assets if not any("GPS离线" in flag for flag in row.risk_flags))
     no_title_risk = sum(1 for row in assets if not any("权属瑕疵" in flag for flag in row.risk_flags))
     no_low_coverage = sum(1 for row in assets if not any("覆盖偏低" in flag for flag in row.risk_flags))
+    no_low_liquidity = sum(
+        1 for row in assets if row.market_liquidity_level not in {"low", "very_low"}
+    )
     no_low_confidence = sum(
         1
         for row in assets
@@ -50,7 +53,10 @@ def calculate_package_tradeability(
     control_component = 15 * _ratio(no_gps_risk, total)
     title_component = 10 * _ratio(no_title_risk, total)
     timeliness_component = 10 * _ratio(no_low_confidence, total)
-    buyer_acceptance_component = 10 * _ratio(no_low_coverage, total)
+    buyer_acceptance_component = 10 * min(
+        _ratio(no_low_coverage, total),
+        _ratio(no_low_liquidity, total),
+    )
 
     breakdown = {
         "估值覆盖完整度": round(valuation_component, 2),
@@ -76,6 +82,8 @@ def calculate_package_tradeability(
         recommendations.append("整体抵押物覆盖偏低，建议拆包或先转清收/诉讼路径")
     if avg_confidence < 60:
         recommendations.append("估值可信度偏低，正式出让前建议补资料或调用高级车况定价")
+    if no_low_liquidity < total:
+        recommendations.append(f"建议对{total - no_low_liquidity}台低流动性车辆单独披露或拆包处置")
     if not recommendations:
         recommendations.append("资产包字段和估值质量较好，可进入买方询价或竞价流程")
 

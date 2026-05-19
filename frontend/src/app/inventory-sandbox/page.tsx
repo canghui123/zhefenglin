@@ -6,6 +6,7 @@ import {
   simulateSandbox,
   generateReport,
   downloadReport,
+  generateTaskFromSandbox,
   type SandboxResult,
   type TimePoint,
   type LitigationScenario,
@@ -30,6 +31,13 @@ interface FormState {
   che300_value: number;
   vehicle_type: string;
   vehicle_age_years: number;
+  energy_type: "fuel" | "bev" | "phev" | "erev" | "hybrid" | "unknown";
+  battery_health_score: number | null;
+  battery_warranty_valid: boolean | null;
+  operating_vehicle: boolean;
+  ride_hailing_vehicle: boolean;
+  battery_replacement_history: boolean;
+  range_km: number | null;
   daily_parking: number;
   recovery_cost: number;
   annual_interest_rate: number;
@@ -83,6 +91,7 @@ export default function InventorySandboxPage() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<SandboxResult | null>(null);
   const [reportHtml, setReportHtml] = useState("");
+  const [taskMessage, setTaskMessage] = useState("");
   const canExportAudit = hasFeature(user, "audit.export");
 
   const [form, setForm] = useState<FormState>({
@@ -93,6 +102,13 @@ export default function InventorySandboxPage() {
     che300_value: 0,
     vehicle_type: "auto",
     vehicle_age_years: 3,
+    energy_type: "unknown",
+    battery_health_score: null,
+    battery_warranty_valid: null,
+    operating_vehicle: false,
+    ride_hailing_vehicle: false,
+    battery_replacement_history: false,
+    range_km: null,
     daily_parking: 30,
     recovery_cost: 0,
     annual_interest_rate: 24,
@@ -131,7 +147,7 @@ export default function InventorySandboxPage() {
     },
   });
 
-  function upd(field: keyof FormState, value: string | number | boolean) {
+  function upd(field: keyof FormState, value: string | number | boolean | null) {
     if (field === "vehicle_recovered" && value === false) {
       setForm((prev) => ({ ...prev, vehicle_recovered: false, vehicle_in_inventory: false }));
       return;
@@ -171,6 +187,7 @@ export default function InventorySandboxPage() {
     setLoading(true);
     setError("");
     setReportHtml("");
+    setTaskMessage("");
     try {
       const res = await simulateSandbox(form);
       setResult(res);
@@ -193,6 +210,18 @@ export default function InventorySandboxPage() {
       setReportHtml(html);
     } catch {
       setError("报告生成失败");
+    }
+  }
+
+  async function handleGenerateTask() {
+    if (!result?.id) return;
+    setError("");
+    setTaskMessage("");
+    try {
+      const task = await generateTaskFromSandbox(result.id);
+      setTaskMessage(`已生成任务 #${task.id}：${task.title}`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "生成任务失败");
     }
   }
 
@@ -268,6 +297,69 @@ export default function InventorySandboxPage() {
           </Field>
           <Field label="车龄 (年)">
             <input className="inp" type="number" step="0.5" value={form.vehicle_age_years} onChange={(e) => upd("vehicle_age_years", +e.target.value)} />
+          </Field>
+          <Field label="能源类型">
+            <select className="inp" value={form.energy_type} onChange={(e) => upd("energy_type", e.target.value)}>
+              <option value="unknown">自动识别</option>
+              <option value="fuel">燃油</option>
+              <option value="bev">纯电 BEV</option>
+              <option value="phev">插混 PHEV</option>
+              <option value="erev">增程 EREV</option>
+              <option value="hybrid">油电混动</option>
+            </select>
+          </Field>
+          <Field label="电池健康度">
+            <input
+              className="inp"
+              type="number"
+              min="0"
+              max="100"
+              value={form.battery_health_score ?? ""}
+              onChange={(e) => upd("battery_health_score", e.target.value ? +e.target.value : null)}
+              placeholder="新能源选填"
+            />
+          </Field>
+          <Field label="电池质保">
+            <select
+              className="inp"
+              value={form.battery_warranty_valid === null ? "" : String(form.battery_warranty_valid)}
+              onChange={(e) => upd("battery_warranty_valid", e.target.value === "" ? null : e.target.value === "true")}
+            >
+              <option value="">未知</option>
+              <option value="true">有效</option>
+              <option value="false">已失效</option>
+            </select>
+          </Field>
+          <Field label="续航里程(km)">
+            <input
+              className="inp"
+              type="number"
+              value={form.range_km ?? ""}
+              onChange={(e) => upd("range_km", e.target.value ? +e.target.value : null)}
+              placeholder="新能源选填"
+            />
+          </Field>
+          <Field label="运营/网约属性">
+            <div className="flex h-10 items-center gap-4 text-sm">
+              <label className="flex items-center gap-1">
+                <input type="checkbox" checked={form.operating_vehicle} onChange={(e) => upd("operating_vehicle", e.target.checked)} />
+                运营车
+              </label>
+              <label className="flex items-center gap-1">
+                <input type="checkbox" checked={form.ride_hailing_vehicle} onChange={(e) => upd("ride_hailing_vehicle", e.target.checked)} />
+                网约车
+              </label>
+            </div>
+          </Field>
+          <Field label="电池更换历史">
+            <div className="flex h-10 items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.battery_replacement_history}
+                onChange={(e) => upd("battery_replacement_history", e.target.checked)}
+              />
+              <span>存在更换/维修记录</span>
+            </div>
           </Field>
           <Field label="收车成本 (元)">
             <input className="inp" type="number" value={form.recovery_cost || ""} onChange={(e) => upd("recovery_cost", +e.target.value)} placeholder="含拖车/GPS/人工" />
@@ -554,6 +646,20 @@ export default function InventorySandboxPage() {
               <div className="space-y-2 text-sm">
                 <Row label="预计成交天数" value={`${result.path_c.expected_sale_days}天`} />
                 <Row label="成交价" value={`¥${fmt(result.path_c.sale_price)}`} />
+                <Row
+                  label="市场流动性"
+                  value={`${result.path_c.market_liquidity_score ?? 0}分 / ${result.path_c.market_liquidity_level || "medium"}`}
+                />
+                {((result.path_c.liquidity_risk_tags || []).length > 0 ||
+                  (result.path_c.new_energy_risk_tags || []).length > 0) && (
+                  <div className="flex flex-wrap gap-1">
+                    {[...(result.path_c.liquidity_risk_tags || []), ...(result.path_c.new_energy_risk_tags || [])].map((tag) => (
+                      <span key={tag} className="rounded bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <Row label="佣金" value={`-¥${fmt(result.path_c.commission)}`} red />
                 <Row label="停车费" value={`-¥${fmt(result.path_c.parking_during_sale)}`} red />
                 {result.path_c.recovery_cost > 0 && (
@@ -607,10 +713,14 @@ export default function InventorySandboxPage() {
           </div>
 
           {/* 报告 */}
-          <div className="bg-white border rounded-xl p-5 flex items-center gap-4">
+          <div className="bg-white border rounded-xl p-5 flex flex-wrap items-center gap-4">
             <button className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-sm" onClick={handleReport}>
               生成报告预览
             </button>
+            <button className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm" onClick={handleGenerateTask}>
+              生成执行任务
+            </button>
+            {taskMessage && <span className="text-sm text-emerald-700">{taskMessage}</span>}
             {reportHtml && (
               <div className="space-y-2">
                 <button

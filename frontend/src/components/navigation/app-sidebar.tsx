@@ -51,6 +51,8 @@ const navSections: Array<{ title: string; items: NavItem[] }> = [
       },
       { href: "/portfolio/supervisor", label: "主管控制台", minRole: "operator" },
       { href: "/portfolio/actions", label: "动作中心", minRole: "operator" },
+      { href: "/portfolio/capacity-plan", label: "产能计划", minRole: "operator" },
+      { href: "/tasks", label: "任务闭环", minRole: "operator" },
     ],
   },
   {
@@ -74,12 +76,13 @@ const navSections: Array<{ title: string; items: NavItem[] }> = [
       { href: "/admin/valuation-rules", label: "估值规则", minRole: "manager" },
       { href: "/admin/approval-requests", label: "审批请求", minRole: "manager" },
       {
-        href: "/admin/value-dashboard",
-        label: "价值看板",
+        href: "/admin/value-center",
+        label: "价值中心",
         minRole: "manager",
         featureKey: "tenant.value_dashboard",
       },
       { href: "/admin/users", label: "用户管理", minRole: "admin" },
+      { href: "/admin/audit-logs", label: "审计日志", minRole: "manager" },
     ],
   },
 ];

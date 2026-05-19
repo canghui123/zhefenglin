@@ -14,6 +14,21 @@ class Asset(BaseModel):
     insurance_lapsed: Optional[bool] = Field(None, description="是否脱保")
     ownership_transferred: Optional[bool] = Field(None, description="是否被过户")
     loan_principal: Optional[float] = Field(None, description="债权本金(元)")
+    energy_type: Literal["fuel", "bev", "phev", "erev", "hybrid", "unknown"] = Field(
+        default="unknown",
+        description="能源类型：fuel/bev/phev/erev/hybrid/unknown",
+    )
+    battery_health_score: Optional[int] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="新能源电池健康度(0-100)",
+    )
+    battery_warranty_valid: Optional[bool] = Field(None, description="电池质保是否有效")
+    operating_vehicle: Optional[bool] = Field(None, description="是否运营车")
+    ride_hailing_vehicle: Optional[bool] = Field(None, description="是否网约车")
+    battery_replacement_history: Optional[bool] = Field(None, description="是否有电池更换历史")
+    range_km: Optional[float] = Field(None, description="标称或当前续航里程(km)")
     buyout_price: Optional[float] = Field(
         None,
         description="历史兼容字段。当前资产包出让定价不再从Excel识别或使用买断价。",
@@ -47,6 +62,16 @@ class AssetFieldOverride(BaseModel):
     insurance_lapsed: Optional[bool] = Field(None, description="修正后的是否脱保")
     ownership_transferred: Optional[bool] = Field(None, description="修正后的是否被过户")
     loan_principal: Optional[float] = Field(None, description="修正后的债权本金(元)")
+    energy_type: Optional[Literal["fuel", "bev", "phev", "erev", "hybrid", "unknown"]] = Field(
+        None,
+        description="修正后的能源类型",
+    )
+    battery_health_score: Optional[int] = Field(None, ge=0, le=100, description="修正后的电池健康度")
+    battery_warranty_valid: Optional[bool] = Field(None, description="修正后的电池质保是否有效")
+    operating_vehicle: Optional[bool] = Field(None, description="修正后的是否运营车")
+    ride_hailing_vehicle: Optional[bool] = Field(None, description="修正后的是否网约车")
+    battery_replacement_history: Optional[bool] = Field(None, description="修正后的电池更换历史")
+    range_km: Optional[float] = Field(None, description="修正后的续航里程(km)")
 
     @field_validator("car_description", "vin", mode="before")
     @classmethod
@@ -167,6 +192,14 @@ class AssetPricingResult(BaseModel):
     valuation_source: str = "unknown"
     valuation_warnings: list[str] = Field(default_factory=list)
     valuation_anomaly_tags: list[str] = Field(default_factory=list)
+    energy_type: str = "unknown"
+    market_liquidity_score: int = 0
+    market_liquidity_level: str = "medium"
+    market_liquidity_adjustment: float = 0
+    expected_sale_days_adjusted: int = 0
+    liquidity_risk_tags: list[str] = Field(default_factory=list)
+    new_energy_risk_tags: list[str] = Field(default_factory=list)
+    new_energy_adjustment: float = 0
 
 
 class ValuationConfidenceResult(BaseModel):
@@ -193,6 +226,40 @@ class TradeabilityResult(BaseModel):
     summary: str
     recommendations: list[str] = Field(default_factory=list)
     breakdown: dict[str, float] = Field(default_factory=dict)
+
+
+class TransferComplianceChecklist(BaseModel):
+    asset_scope_confirmed: bool = Field(default=False, description="符合可转让资产范围")
+    internal_approval_completed: bool = Field(default=False, description="内部审批已完成")
+    asset_authenticity_verified: bool = Field(default=False, description="资产真实性已核验")
+    transfer_restriction_checked: bool = Field(default=False, description="限制转让情形已核验")
+    pricing_basis_archived: bool = Field(default=False, description="估值和定价依据已归档")
+    inquiry_process_recorded: bool = Field(default=False, description="询价/竞价过程已留痕")
+    debtor_notification_arranged: bool = Field(default=False, description="债务人通知已安排")
+    no_hidden_repurchase_commitment: bool = Field(default=False, description="无抽屉协议/回购兜底")
+    archive_completed: bool = Field(default=False, description="资料归档已完成")
+    watermark_export_completed: bool = Field(default=False, description="导出和报告水印已完成")
+
+
+class TransferComplianceResult(BaseModel):
+    compliance_score: int
+    compliance_level: str
+    checklist: TransferComplianceChecklist
+    missing_items: list[str] = Field(default_factory=list)
+    risk_warnings: list[str] = Field(default_factory=list)
+    archive_requirements: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
+class MarketLiquidityResult(BaseModel):
+    score: int
+    level: Literal["high", "medium", "low", "very_low"]
+    adjustment: float = 0
+    expected_sale_days_adjusted: int
+    liquidity_risk_tags: list[str] = Field(default_factory=list)
+    energy_type: Literal["fuel", "bev", "phev", "erev", "hybrid", "unknown"] = "unknown"
+    new_energy_risk_tags: list[str] = Field(default_factory=list)
+    new_energy_adjustment: float = 0
 
 
 class PackageSummary(BaseModel):
@@ -235,6 +302,11 @@ class PackageSummary(BaseModel):
     tradeability_recommendations: list[str] = Field(default_factory=list)
     tradeability_breakdown: dict[str, float] = Field(default_factory=dict)
     buyer_offer_analysis: Optional[BuyerOfferAnalysis] = None
+    compliance_checklist: Optional[TransferComplianceResult] = None
+    avg_market_liquidity_score: Optional[float] = None
+    low_liquidity_count: int = 0
+    new_energy_asset_count: int = 0
+    market_liquidity_summary: str = ""
 
 
 class PackageCalculationResult(BaseModel):

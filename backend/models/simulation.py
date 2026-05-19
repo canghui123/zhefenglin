@@ -54,6 +54,16 @@ class SandboxInput(BaseModel):
     # 车辆信息（用于差异化贬值）
     vehicle_type: str = Field(default="domestic", description="车辆类型: luxury/japanese/german/domestic/new_energy")
     vehicle_age_years: float = Field(default=3, description="车龄(年)")
+    energy_type: Literal["fuel", "bev", "phev", "erev", "hybrid", "unknown"] = Field(
+        default="unknown",
+        description="能源类型：fuel/bev/phev/erev/hybrid/unknown",
+    )
+    battery_health_score: Optional[int] = Field(default=None, ge=0, le=100, description="电池健康度")
+    battery_warranty_valid: Optional[bool] = Field(default=None, description="电池质保是否有效")
+    operating_vehicle: Optional[bool] = Field(default=None, description="是否运营车")
+    ride_hailing_vehicle: Optional[bool] = Field(default=None, description="是否网约车")
+    battery_replacement_history: Optional[bool] = Field(default=None, description="是否有电池更换历史")
+    range_km: Optional[float] = Field(default=None, description="续航里程(km)")
 
     # 成本参数
     daily_parking: float = Field(default=30, description="日停车费(元)")
@@ -177,6 +187,11 @@ class PathCResult(BaseModel):
     recovery_cost: float = 0
     net_recovery: float
     summary: str = ""
+    market_liquidity_score: int = 0
+    market_liquidity_level: str = "medium"
+    market_liquidity_adjustment: float = 0
+    liquidity_risk_tags: list[str] = Field(default_factory=list)
+    new_energy_risk_tags: list[str] = Field(default_factory=list)
     # 路径可用性 — 车辆未回收时为 False
     available: bool = True
     unavailable_reason: str = ""

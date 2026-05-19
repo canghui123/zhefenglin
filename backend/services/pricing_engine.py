@@ -12,6 +12,7 @@ from models.asset import (
     PricingParameters,
 )
 from models.valuation import ValuationResult
+from services.market_liquidity import calculate_market_liquidity
 from services.package_tradeability import calculate_package_tradeability
 from services.valuation_confidence import calculate_valuation_confidence
 
@@ -101,6 +102,34 @@ def _discount_range(mid: float, *, inventory: bool) -> tuple[float, float, float
     return round(low, 4), round(mid, 4), round(high, 4)
 
 
+def _market_tag_label(tag: str) -> str:
+    labels = {
+        "mainstream_fuel_model": "市场流动性较好-主流燃油车型",
+        "cold_luxury_model": "市场流动性偏弱-冷门豪华车型",
+        "operating_vehicle": "运营车属性-买方通常要求额外折价",
+        "ride_hailing_usage": "网约车使用属性-残值和流动性承压",
+        "commercial_to_private_title": "营转非-处置和流通折价较高",
+        "accident_or_flood_fire_risk": "事故/水泡/火烧疑似-需重点披露",
+        "new_energy_vehicle": "新能源车辆-需关注残值波动",
+        "old_vehicle_liquidity_decay": "车龄较高-市场流动性下降",
+    }
+    return labels.get(tag, f"市场流动性标签-{tag}")
+
+
+def _new_energy_tag_label(tag: str) -> str:
+    labels = {
+        "battery_health_missing": "新能源专项-电池健康缺失",
+        "warranty_expired": "新能源专项-电池质保失效",
+        "ride_hailing_usage": "新能源专项-网约/运营使用",
+        "cold_brand_liquidity_risk": "新能源专项-冷门品牌流动性风险",
+        "high_depreciation_stage": "新能源专项-高贬值阶段",
+        "battery_health_low": "新能源专项-电池健康偏低",
+        "range_version_outdated": "新能源专项-续航版本落后",
+        "battery_replacement_history": "新能源专项-存在电池更换历史",
+    }
+    return labels.get(tag, f"新能源专项-{tag}")
+
+
 def calculate_single_asset(
     asset: Asset,
     params: PricingParameters,
@@ -124,6 +153,11 @@ def calculate_single_asset(
         inventory=inventory,
     )
     risk_adj, risk_flags = _risk_adjustment(asset, inventory=inventory)
+    liquidity = calculate_market_liquidity(
+        asset,
+        valuation_price=valuation_price or None,
+        base_expected_sale_days=params.disposal_period,
+    )
 
     if inventory:
         basis_amount = valuation_price or principal
@@ -147,7 +181,11 @@ def calculate_single_asset(
             risk_flags.append("车辆估值缺失-非在库资产缺少抵押物价值校验")
             base_discount -= 0.05
 
-    mid_discount = _clamp(base_discount + coverage_adj + risk_adj, 0.08, 0.95)
+    mid_discount = _clamp(
+        base_discount + coverage_adj + risk_adj + liquidity.adjustment,
+        0.08,
+        0.95,
+    )
     low_discount, mid_discount, high_discount = _discount_range(
         mid_discount,
         inventory=inventory,
@@ -177,6 +215,13 @@ def calculate_single_asset(
             risk_flags.append("车辆估值对本金覆盖偏低")
         elif coverage >= 0.9:
             risk_flags.append("抵押物覆盖较强-出让方议价能力较好")
+
+    if liquidity.level in {"low", "very_low"}:
+        risk_flags.append("市场流动性偏弱-建议拉长处置周期或拆包")
+    for tag in liquidity.liquidity_risk_tags:
+        risk_flags.append(_market_tag_label(tag))
+    for tag in liquidity.new_energy_risk_tags:
+        risk_flags.append(_new_energy_tag_label(tag))
 
     confidence = calculate_valuation_confidence(
         asset,
@@ -236,6 +281,14 @@ def calculate_single_asset(
         valuation_source=confidence.source,
         valuation_warnings=confidence.warnings,
         valuation_anomaly_tags=confidence.anomaly_tags,
+        energy_type=liquidity.energy_type,
+        market_liquidity_score=liquidity.score,
+        market_liquidity_level=liquidity.level,
+        market_liquidity_adjustment=liquidity.adjustment,
+        expected_sale_days_adjusted=liquidity.expected_sale_days_adjusted,
+        liquidity_risk_tags=liquidity.liquidity_risk_tags,
+        new_energy_risk_tags=liquidity.new_energy_risk_tags,
+        new_energy_adjustment=liquidity.new_energy_adjustment,
     )
 
 
@@ -297,6 +350,8 @@ def calculate_package(
         for r in results
         if any("权属瑕疵" in flag for flag in r.risk_flags)
     ]
+    low_liquidity = [r for r in results if r.market_liquidity_level in {"low", "very_low"}]
+    new_energy_assets = [r for r in results if r.energy_type in {"bev", "phev", "erev", "hybrid"}]
 
     if missing_principal:
         risk_alerts.append(f"有{len(missing_principal)}台缺少本金，出让折扣口径需人工复核")
@@ -306,6 +361,14 @@ def calculate_package(
         risk_alerts.append(f"有{len(low_coverage)}台车辆估值对本金覆盖低于35%，买方可能压价")
     if title_risks:
         risk_alerts.append(f"有{len(title_risks)}台存在权属瑕疵，建议剔除或单独披露")
+    if low_liquidity:
+        risk_alerts.append(f"有{len(low_liquidity)}台市场流动性偏弱，预计处置周期拉长")
+    if new_energy_assets:
+        risky_new_energy = [r for r in new_energy_assets if r.new_energy_risk_tags]
+        if risky_new_energy:
+            risk_alerts.append(
+                f"有{len(risky_new_energy)}台新能源车存在电池、质保、运营或品牌流动性专项风险"
+            )
 
     if inventory:
         methodology = (
@@ -356,6 +419,18 @@ def calculate_package(
         requested_strategy="seller_transfer_analysis",
         discount_rate_used=None,
         strategy_breakdown=strategy_breakdown,
+        avg_market_liquidity_score=round(
+            sum(r.market_liquidity_score for r in results) / len(results),
+            2,
+        ) if results else None,
+        low_liquidity_count=len(low_liquidity),
+        new_energy_asset_count=len(new_energy_assets),
+        market_liquidity_summary=(
+            f"平均市场流动性{round(sum(r.market_liquidity_score for r in results) / len(results), 1)}分；"
+            f"{len(low_liquidity)}台低流动性，{len(new_energy_assets)}台新能源专项资产。"
+            if results
+            else ""
+        ),
     )
     tradeability = calculate_package_tradeability(summary, results)
     summary.tradeability_score = tradeability.score
@@ -394,18 +469,20 @@ def build_transfer_report_fallback(result: PackageCalculationResult) -> str:
         f"四、折扣口径：本次以{summary.discount_basis}为主锚，中位折扣约{discount_mid:.1f}%。",
         f"五、交易适配度：{summary.tradeability_level}级/{summary.tradeability_score}分，{summary.tradeability_summary}",
     ]
+    if summary.market_liquidity_summary:
+        lines.append(f"六、市场流动性：{summary.market_liquidity_summary}")
     if summary.collateral_coverage_ratio is not None:
         lines.append(
-            f"六、抵押物价值覆盖：车300估值合计/债权本金合计约为{summary.collateral_coverage_ratio * 100:.1f}%。"
+            f"七、抵押物价值覆盖：车300估值合计/债权本金合计约为{summary.collateral_coverage_ratio * 100:.1f}%。"
         )
     if principal_mid is not None:
-        lines.append(f"七、本金回收：中位出让价相当于本金回收率约{principal_mid:.1f}%。")
+        lines.append(f"八、本金回收：中位出让价相当于本金回收率约{principal_mid:.1f}%。")
     if valuation_mid is not None:
-        lines.append(f"八、车辆价值实现：中位出让价相当于车辆评估价实现率约{valuation_mid:.1f}%。")
+        lines.append(f"九、车辆价值实现：中位出让价相当于车辆评估价实现率约{valuation_mid:.1f}%。")
     if summary.risk_alerts:
-        lines.append("九、主要风险：" + "；".join(summary.risk_alerts) + "。")
+        lines.append("十、主要风险：" + "；".join(summary.risk_alerts) + "。")
     lines.append(
-        "十、谈判建议：金融公司作为出让方，应以中位价作为内部底线参考，以上沿价格作为首轮报价，"
+        "十一、谈判建议：金融公司作为出让方，应以中位价作为内部底线参考，以上沿价格作为首轮报价，"
         "对缺少VIN、估值缺失、权属瑕疵或非在库资产的不确定性单独披露，避免被买方整体压价。"
     )
     return "\n".join(lines)

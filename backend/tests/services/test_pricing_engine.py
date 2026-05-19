@@ -93,3 +93,44 @@ def test_fallback_report_distinguishes_data_coverage_from_collateral_coverage():
     assert "抵押物价值覆盖" in report
     assert "约为50.0%" in report
     assert "本金覆盖率100" not in report
+
+
+def test_market_liquidity_adjusts_asset_discount_and_package_summary():
+    assets = [
+        Asset(
+            row_number=2,
+            car_description="2021 丰田凯美瑞 2.0G",
+            loan_principal=120000,
+        ),
+        Asset(
+            row_number=3,
+            car_description="2020 威马EX5 纯电 网约 营转非",
+            loan_principal=120000,
+            energy_type="bev",
+            battery_health_score=68,
+            battery_warranty_valid=False,
+            ride_hailing_vehicle=True,
+            range_km=320,
+        ),
+    ]
+    valuations = {
+        2: ValuationResult(model_id="mock_2", medium_price=100000, good_price=100000),
+        3: ValuationResult(model_id="mock_3", medium_price=100000, good_price=100000),
+    }
+
+    result = calculate_package(
+        assets,
+        PricingParameters(asset_package_type="inventory", vehicle_condition="good"),
+        valuations,
+    )
+
+    clean, risky = result.assets
+    assert clean.market_liquidity_level == "high"
+    assert risky.market_liquidity_level in {"low", "very_low"}
+    assert risky.recommended_discount_mid < clean.recommended_discount_mid
+    assert risky.expected_sale_days_adjusted > clean.expected_sale_days_adjusted
+    assert "cold_brand_liquidity_risk" in risky.new_energy_risk_tags
+    assert result.summary.low_liquidity_count == 1
+    assert result.summary.new_energy_asset_count == 1
+    assert "市场流动性" in result.summary.market_liquidity_summary
+    assert any("市场流动性偏弱" in item for item in result.summary.risk_alerts)

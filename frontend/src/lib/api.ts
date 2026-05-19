@@ -168,6 +168,26 @@ export async function analyzeBuyerOffer(
   );
 }
 
+export async function getTransferCompliance(packageId: number) {
+  return request<TransferComplianceResult>(
+    `/api/asset-package/${packageId}/compliance-checklist`,
+  );
+}
+
+export async function updateTransferCompliance(
+  packageId: number,
+  checklist: TransferComplianceChecklist,
+) {
+  return request<TransferComplianceResult>(
+    `/api/asset-package/${packageId}/compliance-checklist`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(checklist),
+    },
+  );
+}
+
 // 资产包列表
 export async function listPackages() {
   return request<Array<{ id: number; name: string; total_assets: number; created_at: string }>>(
@@ -247,6 +267,79 @@ export async function getSupervisorConsole() {
 
 export async function getActionCenter() {
   return request<ActionCenterData>("/api/portfolio/action-center");
+}
+
+export async function getCapacityPlan() {
+  return request<PortfolioCapacityPlan>("/api/portfolio/capacity-plan");
+}
+
+export async function getCapacitySettings() {
+  return request<PortfolioCapacitySettings>("/api/admin/settings/capacity");
+}
+
+export async function updateCapacitySettings(input: PortfolioCapacitySettings) {
+  return request<PortfolioCapacitySettings>("/api/admin/settings/capacity", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listDisposalTasks(params?: { status?: string; task_type?: string }) {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.task_type) query.set("task_type", params.task_type);
+  const qs = query.toString();
+  return request<DisposalTask[]>(`/api/tasks${qs ? `?${qs}` : ""}`);
+}
+
+export async function createDisposalTask(input: DisposalTaskCreateInput) {
+  return request<DisposalTask>("/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function assignDisposalTask(taskId: number, ownerUserId: number) {
+  return request<DisposalTask>(`/api/tasks/${taskId}/assign`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ owner_user_id: ownerUserId }),
+  });
+}
+
+export async function completeDisposalTask(taskId: number, input: DisposalTaskCompleteInput) {
+  return request<DisposalTask>(`/api/tasks/${taskId}/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function generateTasksFromPortfolio() {
+  return request<DisposalTask[]>("/api/tasks/generate-from-portfolio", { method: "POST" });
+}
+
+export async function generateTaskFromSandbox(resultId: number) {
+  return request<DisposalTask>(`/api/tasks/generate-from-sandbox/${resultId}`, { method: "POST" });
+}
+
+export async function listAuditLogs(params?: { action?: string }) {
+  const query = new URLSearchParams();
+  if (params?.action) query.set("action", params.action);
+  const qs = query.toString();
+  return request<AuditLogRow[]>(`/api/admin/audit-logs${qs ? `?${qs}` : ""}`);
+}
+
+export async function exportAuditLogsCsv(params?: { action?: string }): Promise<string> {
+  const query = new URLSearchParams();
+  if (params?.action) query.set("action", params.action);
+  const res = await fetch(`${API_BASE}/api/admin/audit-logs/export${query.toString() ? `?${query}` : ""}`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw await buildApiError(res, "审计日志导出失败");
+  return res.text();
 }
 
 // ============ 用户管理 API ============
@@ -415,6 +508,27 @@ export interface ValueDashboardData {
   blocked_high_cost_calls: number;
   recommended_path_coverage: number;
   estimated_decisions_processed: number;
+  estimated_extra_recovery: number;
+  avoided_loss_amount: number;
+  accelerated_cash_in: number;
+  manual_valuation_cost_saved: number;
+  auction_price_improvement: number;
+  bad_asset_identification_count: number;
+  reports_generated: number;
+  hours_saved: number;
+  task_completion_rate: number;
+  tenant_value_rows: Array<{
+    tenant_id: number;
+    tenant_code: string;
+    tenant_name: string;
+    task_count: number;
+    completed_task_count: number;
+    expected_recovery: number;
+    actual_recovery: number;
+    estimated_extra_recovery: number;
+  }>;
+  customer_summary: string;
+  source_trace: Record<string, number>;
 }
 
 export interface ModelRoutingRule {
@@ -681,6 +795,14 @@ export interface AssetPricingResult {
   valuation_source?: string;
   valuation_warnings?: string[];
   valuation_anomaly_tags?: string[];
+  energy_type?: "fuel" | "bev" | "phev" | "erev" | "hybrid" | "unknown";
+  market_liquidity_score?: number;
+  market_liquidity_level?: "high" | "medium" | "low" | "very_low";
+  market_liquidity_adjustment?: number;
+  expected_sale_days_adjusted?: number;
+  liquidity_risk_tags?: string[];
+  new_energy_risk_tags?: string[];
+  new_energy_adjustment?: number;
 }
 
 export interface BuyerOfferAnalysis {
@@ -691,6 +813,29 @@ export interface BuyerOfferAnalysis {
   buyer_offer_gap_rate: number | null;
   buyer_offer_assessment: string;
   negotiation_suggestions: string[];
+}
+
+export interface TransferComplianceChecklist {
+  asset_scope_confirmed?: boolean;
+  internal_approval_completed?: boolean;
+  asset_authenticity_verified?: boolean;
+  transfer_restriction_checked?: boolean;
+  pricing_basis_archived?: boolean;
+  inquiry_process_recorded?: boolean;
+  debtor_notification_arranged?: boolean;
+  no_hidden_repurchase_commitment?: boolean;
+  archive_completed?: boolean;
+  watermark_export_completed?: boolean;
+}
+
+export interface TransferComplianceResult {
+  compliance_score: number;
+  compliance_level: string;
+  checklist: TransferComplianceChecklist;
+  missing_items: string[];
+  risk_warnings: string[];
+  archive_requirements: string[];
+  summary: string;
 }
 
 export interface PackageSummary {
@@ -731,6 +876,11 @@ export interface PackageSummary {
   tradeability_recommendations?: string[];
   tradeability_breakdown?: Record<string, number>;
   buyer_offer_analysis?: BuyerOfferAnalysis | null;
+  compliance_checklist?: TransferComplianceResult | null;
+  avg_market_liquidity_score?: number | null;
+  low_liquidity_count?: number;
+  new_energy_asset_count?: number;
+  market_liquidity_summary?: string;
 }
 
 export interface PackageCalculationResult {
@@ -747,6 +897,13 @@ export interface SandboxInput {
   che300_value: number;
   vehicle_type?: string;
   vehicle_age_years?: number;
+  energy_type?: "fuel" | "bev" | "phev" | "erev" | "hybrid" | "unknown";
+  battery_health_score?: number | null;
+  battery_warranty_valid?: boolean | null;
+  operating_vehicle?: boolean | null;
+  ride_hailing_vehicle?: boolean | null;
+  battery_replacement_history?: boolean | null;
+  range_km?: number | null;
   daily_parking?: number;
   recovery_cost?: number;
   annual_interest_rate?: number;
@@ -880,6 +1037,11 @@ export interface SandboxResult {
     recovery_cost: number;
     net_recovery: number;
     summary: string;
+    market_liquidity_score?: number;
+    market_liquidity_level?: "high" | "medium" | "low" | "very_low";
+    market_liquidity_adjustment?: number;
+    liquidity_risk_tags?: string[];
+    new_energy_risk_tags?: string[];
     available?: boolean;
     unavailable_reason?: string;
   };
@@ -1087,4 +1249,110 @@ export interface ActionCenterData {
     overdue_bucket: string;
     total_ead: number;
   }>;
+}
+
+export interface PortfolioCapacitySettings {
+  monthly_towing_capacity: number;
+  monthly_litigation_capacity: number;
+  monthly_auction_capacity: number;
+  monthly_collection_capacity: number;
+  inventory_yard_capacity: number;
+  monthly_disposal_budget: number;
+  legal_team_capacity: number;
+  external_vendor_capacity: number;
+}
+
+export interface CapacityPlanItem {
+  segment_name: string;
+  strategy_type: string;
+  strategy_name: string;
+  task_type: string;
+  asset_count: number;
+  selected_count: number;
+  deferred_count: number;
+  expected_net_recovery: number;
+  expected_incremental_recovery: number;
+  required_cost: number;
+  cash_return_speed: number;
+  execution_feasibility: number;
+  resource_needs: Record<string, number>;
+  status: string;
+  reason: string;
+}
+
+export interface PortfolioCapacityPlan {
+  settings: PortfolioCapacitySettings;
+  current_month_execution_plan: CapacityPlanItem[];
+  next_month_deferred_pool: CapacityPlanItem[];
+  paused_pool: CapacityPlanItem[];
+  capacity_bottlenecks: string[];
+  budget_gap: number;
+  incremental_recovery_if_capacity_added: number;
+  resource_usage: Record<string, number>;
+  remaining_capacity: Record<string, number>;
+  total_selected_assets: number;
+  total_expected_net_recovery: number;
+  total_expected_incremental_recovery: number;
+  summary: string;
+}
+
+export interface DisposalTask {
+  id: number;
+  tenant_id: number;
+  task_type: string;
+  status: string;
+  priority: string;
+  title: string;
+  target_description: string | null;
+  source_type: string | null;
+  source_id: string | null;
+  owner_user_id: number | null;
+  expected_recovery: number | null;
+  expected_cost: number | null;
+  deadline: string | null;
+  evidence_files: string[];
+  result_note: string | null;
+  actual_recovery: number | null;
+  variance_reason: string | null;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DisposalTaskCreateInput {
+  task_type: string;
+  title: string;
+  priority?: "high" | "medium" | "low" | "normal";
+  target_description?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+  owner_user_id?: number | null;
+  expected_recovery?: number | null;
+  expected_cost?: number | null;
+  deadline?: string | null;
+  evidence_files?: string[];
+}
+
+export interface DisposalTaskCompleteInput {
+  actual_recovery?: number | null;
+  result_note?: string | null;
+  variance_reason?: string | null;
+  evidence_files?: string[];
+}
+
+export interface AuditLogRow {
+  id: number;
+  tenant_id: number | null;
+  user_id: number | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  request_id: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  status: string;
+  before_json: string | null;
+  after_json: string | null;
+  created_at: string | null;
 }

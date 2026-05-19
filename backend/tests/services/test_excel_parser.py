@@ -82,3 +82,34 @@ def test_parse_excel_ignores_legacy_buyout_price_columns():
     assert "buyout_price" not in set(result.column_mapping.values())
     assert result.assets[0].loan_principal == 180000
     assert result.assets[0].buyout_price is None
+
+
+def test_parse_excel_supports_new_energy_and_battery_fields():
+    path = _write_excel(
+        pd.DataFrame(
+            [
+                {
+                    "车型": "2021 比亚迪汉 EV",
+                    "债权本金": "16.8万",
+                    "能源类型": "纯电",
+                    "电池SOH": "86%",
+                    "三电质保": "否",
+                    "网约车": "是",
+                    "续航里程": 320,
+                }
+            ]
+        )
+    )
+    try:
+        result = parse_excel(path)
+    finally:
+        os.remove(path)
+
+    assert result.success_rows == 1
+    asset = result.assets[0]
+    assert asset.loan_principal == 168000
+    assert asset.energy_type == "bev"
+    assert asset.battery_health_score == 86
+    assert asset.battery_warranty_valid is False
+    assert asset.ride_hailing_vehicle is True
+    assert asset.range_km == 320

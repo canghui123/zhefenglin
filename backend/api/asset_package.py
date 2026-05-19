@@ -3,7 +3,7 @@
 import json
 import os
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, Depends, Request
@@ -28,11 +28,15 @@ from models.asset import (
     BuyerOfferAnalysis,
     PricingParameters,
     PackageCalculationResult,
+    TransferComplianceChecklist,
+    TransferComplianceResult,
 )
 from repositories import asset_package_repo
 from services import approval_service, audit_service, commercial_policy_service  # noqa: F401
 from services.asset_package_pdf import generate_asset_package_pdf
 from services.buyer_offer_analysis import analyze_buyer_offer
+from services.data_masking import mask_sensitive_payload
+from services.transfer_compliance import assess_transfer_compliance
 from services.excel_parser import parse_excel
 from services.che300_client import batch_valuation
 from services.pricing_engine import build_transfer_report_fallback, calculate_package
@@ -145,6 +149,11 @@ def _build_report_summary_payload(result: PackageCalculationResult) -> dict:
     return payload
 
 
+def _watermark_text(*, tenant_id: int, user_id: int) -> str:
+    exported_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    return f"tenant={tenant_id}; user={user_id}; exported_at={exported_at}"
+
+
 def _apply_asset_overrides(
     assets: list[Asset],
     overrides: dict[int, AssetFieldOverride],
@@ -198,6 +207,13 @@ async def _generate_transfer_analysis_report(
                 "valuation_confidence_level": row.valuation_confidence_level,
                 "valuation_source": row.valuation_source,
                 "valuation_anomaly_tags": row.valuation_anomaly_tags,
+                "energy_type": row.energy_type,
+                "market_liquidity_score": row.market_liquidity_score,
+                "market_liquidity_level": row.market_liquidity_level,
+                "market_liquidity_adjustment": row.market_liquidity_adjustment,
+                "expected_sale_days_adjusted": row.expected_sale_days_adjusted,
+                "liquidity_risk_tags": row.liquidity_risk_tags,
+                "new_energy_risk_tags": row.new_energy_risk_tags,
                 "risk_flags": row.risk_flags,
             },
             text_fields={"car_description"},
@@ -221,8 +237,8 @@ async def _generate_transfer_analysis_report(
         f"{basis_instruction}\n\n"
         "报告必须详细、合理、可直接对合作伙伴展示，并包含以下结构：\n"
         "1. 资产包概览；2. 估值数据完整度与抵押物价值覆盖；3. 推荐出让折扣区间和价格区间；"
-        "4. 估值可信度与交易适配度；5. 买方可能压价点与出让方反驳依据；"
-        "6. 风险披露；7. 谈判策略与底线建议。\n\n"
+        "4. 估值可信度、市场流动性与交易适配度；5. 买方可能压价点与出让方反驳依据；"
+        "6. 新能源专项风险与风险披露；7. 谈判策略与底线建议。\n\n"
         f"汇总数据：\n{wrap_as_data(summary_payload, tag='package_summary')}\n\n"
         f"样本车辆数据（最多前12台）：\n{wrap_as_data(sample_assets, tag='asset_sample')}\n\n"
         "关键口径：valuation_data_coverage_rate_percent 只表示估值数据覆盖完整度，不能称为本金覆盖率；"
@@ -619,10 +635,87 @@ async def buyer_offer_analysis(
     return analysis
 
 
+@router.get("/{package_id}/compliance-checklist", response_model=TransferComplianceResult)
+async def get_compliance_checklist(
+    package_id: int,
+    session: Session = Depends(get_db_session),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """Return the current transfer compliance checklist scoring."""
+    pkg = asset_package_repo.get_package_by_id(
+        session, package_id, tenant_id=tenant_id
+    )
+    if not pkg:
+        raise AssetPackageNotFound()
+
+    if not pkg.results_json:
+        return assess_transfer_compliance(TransferComplianceChecklist())
+
+    result = PackageCalculationResult.model_validate_json(pkg.results_json)
+    return result.summary.compliance_checklist or assess_transfer_compliance(
+        TransferComplianceChecklist()
+    )
+
+
+@router.put(
+    "/{package_id}/compliance-checklist",
+    response_model=TransferComplianceResult,
+    dependencies=[Depends(require_role("operator"))],
+)
+async def update_compliance_checklist(
+    package_id: int,
+    checklist: TransferComplianceChecklist,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """Persist compliance checklist scoring into the latest package result."""
+    rate_limit_service.enforce_request_limit(
+        request,
+        scope="asset_package.compliance",
+        limit=settings.rate_limit_write_max_requests,
+    )
+    pkg = asset_package_repo.get_package_by_id(
+        session, package_id, tenant_id=tenant_id
+    )
+    if not pkg:
+        raise AssetPackageNotFound()
+    if not pkg.results_json:
+        raise ReportNotGenerated()
+
+    result = PackageCalculationResult.model_validate_json(pkg.results_json)
+    compliance = assess_transfer_compliance(checklist)
+    result.summary.compliance_checklist = compliance
+    asset_package_repo.save_package_result(
+        session,
+        package_id,
+        tenant_id=tenant_id,
+        parameters_json=pkg.parameters_json or "{}",
+        results_json=result.model_dump_json(),
+    )
+    audit_service.record(
+        session,
+        request,
+        action="compliance_checklist_update",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="asset_package",
+        resource_id=package_id,
+        after={
+            "compliance_score": compliance.compliance_score,
+            "compliance_level": compliance.compliance_level,
+            "missing_items": len(compliance.missing_items),
+        },
+    )
+    return compliance
+
+
 @router.get("/{package_id}")
 async def get_package(
     package_id: int,
     session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     """获取资产包详情及计算结果"""
@@ -640,6 +733,10 @@ async def get_package(
     parameters_data = None
     if pkg.parameters_json:
         parameters_data = json.loads(pkg.parameters_json)
+
+    if user.role == "viewer":
+        result_data = mask_sensitive_payload(result_data)
+        parameters_data = mask_sensitive_payload(parameters_data)
 
     return {
         "id": pkg.id,
@@ -669,7 +766,10 @@ async def download_package_report_pdf(
         raise ReportNotGenerated()
 
     result = PackageCalculationResult.model_validate_json(pkg.results_json)
-    pdf_bytes = generate_asset_package_pdf(result)
+    pdf_bytes = generate_asset_package_pdf(
+        result,
+        watermark_text=_watermark_text(tenant_id=tenant_id, user_id=user.id),
+    )
     audit_service.record(
         session,
         request,

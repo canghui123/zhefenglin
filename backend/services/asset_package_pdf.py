@@ -32,7 +32,11 @@ def _paragraph_lines(text: str, *, width: int = 54) -> list[str]:
     return lines
 
 
-def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
+def generate_asset_package_pdf(
+    result: PackageCalculationResult,
+    *,
+    watermark_text: str | None = None,
+) -> bytes:
     """Render the latest asset package analysis as a real PDF byte stream.
 
     The project intentionally avoids adding browser automation to the backend.
@@ -101,6 +105,13 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
         ),
         Spacer(1, 6),
     ]
+    if watermark_text:
+        story.extend(
+            [
+                Paragraph(f"导出水印：{watermark_text}", base),
+                Spacer(1, 4),
+            ]
+        )
 
     summary = result.summary
     summary_rows = [
@@ -118,6 +129,12 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
             _percent(summary.principal_recovery_rate_mid),
             "抵押物价值覆盖率",
             _percent(summary.collateral_coverage_ratio),
+        ],
+        [
+            "平均市场流动性",
+            f"{summary.avg_market_liquidity_score:.1f}分" if summary.avg_market_liquidity_score is not None else "-",
+            "新能源专项资产",
+            f"{summary.new_energy_asset_count}台",
         ],
     ]
     table = Table(summary_rows, colWidths=[28 * mm, 55 * mm, 30 * mm, 55 * mm])
@@ -153,6 +170,16 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
         for item in summary.tradeability_recommendations:
             story.append(Paragraph(f"- {item}", base))
 
+    if summary.market_liquidity_summary:
+        story.append(Paragraph("市场流动性与新能源专项风险", heading))
+        story.append(Paragraph(summary.market_liquidity_summary, base))
+        story.append(
+            Paragraph(
+                f"低流动性车辆：{summary.low_liquidity_count}台；新能源专项资产：{summary.new_energy_asset_count}台。",
+                base,
+            )
+        )
+
     if summary.buyer_offer_analysis:
         offer = summary.buyer_offer_analysis
         story.append(Paragraph("买方报价对比与谈判建议", heading))
@@ -168,12 +195,34 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
         for suggestion in offer.negotiation_suggestions:
             story.append(Paragraph(f"- {suggestion}", base))
 
+    if summary.compliance_checklist:
+        compliance = summary.compliance_checklist
+        story.append(Paragraph("出让合规检查清单", heading))
+        story.append(
+            Paragraph(
+                f"{compliance.compliance_level}级 / {compliance.compliance_score}分：{compliance.summary}",
+                base,
+            )
+        )
+        if compliance.missing_items:
+            story.append(Paragraph("未完成项：" + "；".join(compliance.missing_items), base))
+        if compliance.risk_warnings:
+            for warning in compliance.risk_warnings:
+                story.append(Paragraph(f"- {warning}", base))
+        if compliance.archive_requirements:
+            story.append(
+                Paragraph(
+                    "归档材料：" + "；".join(compliance.archive_requirements),
+                    base,
+                )
+            )
+
     story.append(Paragraph("分析报告正文", heading))
     for line in _paragraph_lines(summary.analysis_report):
         story.append(Paragraph(line or "&nbsp;", base))
 
     story.extend([PageBreak(), Paragraph("逐车定价明细", heading)])
-    detail_rows = [["行号", "车型", "本金", "估值", "可信度", "推荐出让价区间", "风险标签"]]
+    detail_rows = [["行号", "车型", "本金", "估值", "可信度", "流动性/周期", "推荐出让价区间", "风险标签"]]
     for asset in result.assets:
         detail_rows.append(
             [
@@ -182,6 +231,7 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
                 _money(asset.loan_principal),
                 _money(asset.che300_valuation),
                 f"{asset.valuation_confidence_level}/{asset.valuation_confidence_score}",
+                f"{asset.market_liquidity_level}/{asset.market_liquidity_score}；{asset.expected_sale_days_adjusted}天",
                 f"{_money(asset.recommended_transfer_price_low)} - {_money(asset.recommended_transfer_price_high)}",
                 "；".join(asset.risk_flags)[:42],
             ]
@@ -190,7 +240,7 @@ def generate_asset_package_pdf(result: PackageCalculationResult) -> bytes:
     detail_table = Table(
         detail_rows,
         repeatRows=1,
-        colWidths=[12 * mm, 38 * mm, 23 * mm, 23 * mm, 20 * mm, 36 * mm, 34 * mm],
+        colWidths=[10 * mm, 32 * mm, 20 * mm, 20 * mm, 18 * mm, 24 * mm, 32 * mm, 30 * mm],
     )
     detail_table.setStyle(
         TableStyle(

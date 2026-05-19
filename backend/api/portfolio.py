@@ -12,6 +12,7 @@ from services.portfolio_engine import (
     compute_strategy_comparison,
     compute_cashflow_projection,
 )
+from services.portfolio_capacity_planner import build_capacity_plan, get_capacity_settings
 from services import entitlement_service
 from services.recommendation_engine import (
     get_executive_dashboard,
@@ -238,3 +239,14 @@ async def action_center():
     """动作中心"""
     data = _get_portfolio()
     return get_action_center(data["overview"], data["segments"])
+
+
+@router.get("/capacity-plan", dependencies=[Depends(require_role("operator"))])
+async def capacity_plan(
+    user: User = Depends(get_current_user),
+):
+    """处置产能约束下的本月执行计划"""
+    data = _get_portfolio()
+    tenant_id = _resolve_tenant_id_for_user(user)
+    settings = get_capacity_settings(tenant_id)
+    return build_capacity_plan(data["segments"], settings)
