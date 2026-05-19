@@ -1,14 +1,8 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
 import "./globals.css";
 import { SessionProvider } from "@/components/auth/session-provider";
 import { AppSidebar } from "@/components/navigation/app-sidebar";
 import { SiteFooter } from "@/components/layout/site-footer";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "汽车金融资产处置经营决策系统",
@@ -21,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="zh-CN" className={`${geistSans.variable} h-full`}>
+    <html lang="zh-CN" className="h-full">
       <body className="min-h-full flex bg-gray-50 antialiased">
         <SessionProvider>
           <AppSidebar />
