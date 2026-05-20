@@ -444,10 +444,11 @@ def upsert_deployment_profile(
 @router.get("/capacity", response_model=PortfolioCapacitySettings)
 def read_capacity_settings(
     tenant_id: Optional[int] = None,
+    session: Session = Depends(get_db_session),
     user: User = Depends(require_role("manager")),
 ):
     target_tenant_id = _target_capacity_tenant(user, tenant_id)
-    return get_capacity_settings(target_tenant_id)
+    return get_capacity_settings(session, target_tenant_id)
 
 
 @router.put("/capacity", response_model=PortfolioCapacitySettings)
@@ -459,8 +460,13 @@ def update_capacity_settings_api(
     user: User = Depends(require_role("admin")),
 ):
     target_tenant_id = _target_capacity_tenant(user, tenant_id)
-    before = get_capacity_settings(target_tenant_id).model_dump()
-    after = update_capacity_settings(target_tenant_id, req)
+    before = get_capacity_settings(session, target_tenant_id).model_dump()
+    after = update_capacity_settings(
+        session,
+        target_tenant_id,
+        req,
+        updated_by=user.id,
+    )
     audit_service.record(
         session,
         request,

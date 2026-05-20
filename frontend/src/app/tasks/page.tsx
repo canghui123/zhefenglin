@@ -9,6 +9,7 @@ import {
   listDisposalTasks,
   type DisposalTask,
 } from "@/lib/api";
+import { useSession } from "@/components/auth/session-provider";
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "待处理",
@@ -38,6 +39,7 @@ function fmt(n: number | null | undefined) {
 }
 
 export default function TasksPage() {
+  const { user } = useSession();
   const [tasks, setTasks] = useState<DisposalTask[]>([]);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
@@ -103,10 +105,14 @@ export default function TasksPage() {
   }
 
   async function assignToMe(taskId: number) {
+    if (!user) {
+      setError("请先登录后再分配任务");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      await assignDisposalTask(taskId, 1);
+      await assignDisposalTask(taskId, user.id);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "分配失败");

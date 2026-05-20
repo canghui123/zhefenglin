@@ -243,10 +243,11 @@ async def action_center():
 
 @router.get("/capacity-plan", dependencies=[Depends(require_role("operator"))])
 async def capacity_plan(
+    session: Session = Depends(get_db_session),
     user: User = Depends(get_current_user),
 ):
     """处置产能约束下的本月执行计划"""
     data = _get_portfolio()
     tenant_id = _resolve_tenant_id_for_user(user)
-    settings = get_capacity_settings(tenant_id)
+    settings = get_capacity_settings(session, tenant_id)
     return build_capacity_plan(data["segments"], settings)

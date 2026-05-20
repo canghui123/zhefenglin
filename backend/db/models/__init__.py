@@ -20,6 +20,7 @@ from db.models.portfolio import (  # noqa: F401
     ManagementGoal,
     RecommendedAction,
 )
+from db.models.portfolio_capacity import PortfolioCapacitySetting  # noqa: F401
 from db.models.tenant import Tenant  # noqa: F401
 from db.models.user import User  # noqa: F401
 from db.models.user_session import UserSession  # noqa: F401

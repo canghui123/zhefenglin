@@ -2,6 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+ARG APT_MIRROR_HOST=
+RUN if [ -n "$APT_MIRROR_HOST" ]; then \
+      sed -i "s|deb.debian.org|$APT_MIRROR_HOST|g; s|security.debian.org|$APT_MIRROR_HOST|g" /etc/apt/sources.list.d/debian.sources; \
+    fi
+
 # System deps for psycopg (PostgreSQL client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev gcc && \

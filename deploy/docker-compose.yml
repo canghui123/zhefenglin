@@ -39,6 +39,7 @@ services:
       context: ../backend
       dockerfile: Dockerfile
       args:
+        APT_MIRROR_HOST: ${BACKEND_APT_MIRROR_HOST:-}
         PIP_INDEX_URL: ${BACKEND_PIP_INDEX_URL:-https://pypi.org/simple}
         PIP_TRUSTED_HOST: ${BACKEND_PIP_TRUSTED_HOST:-}
     container_name: af_backend
@@ -84,6 +85,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE: https://${DOMAIN}
+        NPM_REGISTRY: ${FRONTEND_NPM_REGISTRY:-}
     container_name: af_frontend
     restart: unless-stopped
     depends_on:

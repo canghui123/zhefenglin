@@ -39,8 +39,10 @@
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
+| `BACKEND_APT_MIRROR_HOST` | 否 | — | 后端 Docker 构建时替换 Debian apt 源的 host，例如中国大陆 ECS 可设为 `mirrors.aliyun.com` |
 | `BACKEND_PIP_INDEX_URL` | 否 | `https://pypi.org/simple` | 后端 Docker 构建安装 Python 依赖时使用的 PyPI 源 |
 | `BACKEND_PIP_TRUSTED_HOST` | 否 | — | 私有源或内网镜像需要 `--trusted-host` 时填写；官方 PyPI 留空 |
+| `FRONTEND_NPM_REGISTRY` | 否 | — | 前端 Docker 构建时使用的 npm registry，例如 `https://registry.npmmirror.com` |
 
 ## 前端 (frontend/)
 

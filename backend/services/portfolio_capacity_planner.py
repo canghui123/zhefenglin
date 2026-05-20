@@ -10,11 +10,14 @@ from __future__ import annotations
 from math import floor
 from typing import Optional
 
+from sqlalchemy.orm import Session
+
 from models.portfolio import (
     CapacityPlanItem,
     PortfolioCapacityPlan,
     PortfolioCapacitySettings,
 )
+from repositories import portfolio_capacity_settings_repo
 from services.portfolio_engine import STRATEGY_TYPES, compute_strategy_comparison
 
 
@@ -41,25 +44,33 @@ STRATEGY_TO_TASK = {
 
 HARD_BLOCK_KEYWORDS = ("无法", "不可用", "需已入库", "车辆未收回")
 
-_SETTINGS_BY_TENANT: dict[int, PortfolioCapacitySettings] = {}
-
-
-def get_capacity_settings(tenant_id: Optional[int]) -> PortfolioCapacitySettings:
-    key = tenant_id or 0
-    return _SETTINGS_BY_TENANT.get(key, PortfolioCapacitySettings())
+def get_capacity_settings(
+    session: Session,
+    tenant_id: Optional[int],
+) -> PortfolioCapacitySettings:
+    row = portfolio_capacity_settings_repo.get_capacity_settings_row(
+        session,
+        tenant_id=tenant_id,
+    )
+    if row is None:
+        return PortfolioCapacitySettings()
+    return portfolio_capacity_settings_repo.to_settings(row)
 
 
 def update_capacity_settings(
+    session: Session,
     tenant_id: Optional[int],
     settings: PortfolioCapacitySettings,
+    *,
+    updated_by: Optional[int],
 ) -> PortfolioCapacitySettings:
-    key = tenant_id or 0
-    _SETTINGS_BY_TENANT[key] = settings
-    return settings
-
-
-def reset_capacity_settings() -> None:
-    _SETTINGS_BY_TENANT.clear()
+    row = portfolio_capacity_settings_repo.upsert_capacity_settings(
+        session,
+        tenant_id=tenant_id,
+        settings=settings,
+        updated_by=updated_by,
+    )
+    return portfolio_capacity_settings_repo.to_settings(row)
 
 
 def _strategy_for_segment(segment: dict) -> dict:

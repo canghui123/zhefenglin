@@ -1,6 +1,35 @@
 # Project Handoff
 
-最后更新：2026-04-17
+最后更新：2026-05-20
+
+## 2026-05-20 线上 P1/P2 状态
+
+已上线版本：
+
+- `d55cd5a Implement P1 P2 commercial readiness features`
+- `4e20b2b Remove Google font build dependency`
+
+线上验收结论：
+
+- `https://zhefenglin.com/api/health` 返回 `{"status":"ok"}`。
+- `https://zhefenglin.com/asset-pricing` 返回 `HTTP/2 200`，核心页面可以正常打开使用。
+- 本轮验收只确认线上可用性，不代表所有业务细节已经完全符合最终产品预期。
+
+本轮 P1/P2 已补上的主功能：
+
+- 资产包定价增强：市场流动性、新能源专项风险、买方报价分析、资产包可交易性、转让合规清单和 PDF 报告增强。
+- 库存沙盘增强：法律路径、市场流动性/新能源风险、策略偏好和从沙盘结果生成任务。
+- 组合管理增强：处置产能计划页和 API。
+- 任务闭环：基于 `work_orders` 的任务创建、分配、完成、回填和审计。
+- 商用化控制：价值中心、审计日志、导出水印、viewer 脱敏。
+
+2026-05-20 后续第一批补强正在推进：
+
+- 产能配置从进程内存改为数据库持久化，避免服务重启后配置丢失。
+- 任务分配增加租户成员校验，避免跨租户派单。
+- 前端任务分配去掉硬编码 `owner_user_id=1`，改为分配给当前登录用户。
+- Docker 构建源优化正式入库，支持通过 `BACKEND_APT_MIRROR_HOST`、`BACKEND_PIP_INDEX_URL`、`BACKEND_PIP_TRUSTED_HOST`、`FRONTEND_NPM_REGISTRY` 适配中国大陆 ECS。
+- 新增 `deploy/smoke-check.sh`，用于部署后检查容器、后端 import、健康检查和前端页面。
 
 ## 当前状态
 

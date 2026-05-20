@@ -19,10 +19,14 @@ def test_task_lifecycle_create_assign_complete_and_audit():
     task_id = created.json()["id"]
     assert created.json()["status"] == "pending"
 
-    assigned = client.post(f"/api/tasks/{task_id}/assign", json={"owner_user_id": 1})
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200, me.text
+    owner_user_id = me.json()["id"]
+
+    assigned = client.post(f"/api/tasks/{task_id}/assign", json={"owner_user_id": owner_user_id})
     assert assigned.status_code == 200, assigned.text
     assert assigned.json()["status"] == "assigned"
-    assert assigned.json()["owner_user_id"] == 1
+    assert assigned.json()["owner_user_id"] == owner_user_id
 
     completed = client.post(
         f"/api/tasks/{task_id}/complete",
@@ -50,6 +54,61 @@ def test_task_lifecycle_create_assign_complete_and_audit():
             next(gen)
         except StopIteration:
             pass
+
+
+def test_task_assignment_rejects_user_outside_current_tenant():
+    from db.session import get_db_session
+    from repositories import tenant_repo, user_repo
+    from services.password_service import hash_password
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    client = seed_user_and_login(
+        "task-owner@example.com",
+        role="operator",
+        tenant_code="task-owner-tenant",
+    )
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        foreign_tenant = tenant_repo.get_or_create_tenant(
+            session,
+            code="foreign-task-tenant",
+            name="FOREIGN",
+        )
+        foreign_user = user_repo.create_user(
+            session,
+            email="foreign-assignee@example.com",
+            password_hash=hash_password("Passw0rd!1"),
+            role="operator",
+            display_name="foreign",
+        )
+        tenant_repo.create_membership(
+            session,
+            user_id=foreign_user.id,
+            tenant_id=foreign_tenant.id,
+            role="operator",
+        )
+        user_repo.set_default_tenant(session, foreign_user.id, foreign_tenant.id)
+        session.commit()
+        foreign_user_id = foreign_user.id
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+    created = client.post(
+        "/api/tasks",
+        json={"task_type": "auction", "title": "跨租户分配校验"},
+    )
+    assert created.status_code == 200, created.text
+
+    assigned = client.post(
+        f"/api/tasks/{created.json()['id']}/assign",
+        json={"owner_user_id": foreign_user_id},
+    )
+    assert assigned.status_code == 400, assigned.text
+    assert "不属于当前租户" in assigned.text
 
 
 def test_generate_tasks_from_portfolio_capacity_plan_is_idempotent():

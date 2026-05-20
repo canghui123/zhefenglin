@@ -19,7 +19,7 @@ from models.tasks import (
     DisposalTaskOut,
     DisposalTaskUpdate,
 )
-from repositories import sandbox_repo, work_order_repo
+from repositories import sandbox_repo, tenant_repo, user_repo, work_order_repo
 from services import audit_service
 from services.portfolio_capacity_planner import build_capacity_plan, get_capacity_settings
 from services.portfolio_engine import generate_mock_portfolio
@@ -91,6 +91,16 @@ def _get_task_or_404(session: Session, task_id: int, tenant_id: int) -> WorkOrde
     return row
 
 
+def _validate_assignee(session: Session, *, owner_user_id: Optional[int], tenant_id: int) -> None:
+    if owner_user_id is None:
+        return
+    owner = user_repo.get_user_by_id(session, owner_user_id)
+    if owner is None or not owner.is_active:
+        raise HTTPException(status_code=400, detail="被分配用户不存在或已禁用")
+    if not tenant_repo.has_membership(session, user_id=owner_user_id, tenant_id=tenant_id):
+        raise HTTPException(status_code=400, detail="被分配用户不属于当前租户")
+
+
 @router.get("", response_model=list[DisposalTaskOut], dependencies=[Depends(require_role("operator"))])
 def list_tasks(
     status: Optional[str] = None,
@@ -117,6 +127,7 @@ def create_task(
     user: User = Depends(get_current_user),
     tenant_id: int = Depends(get_current_tenant_id),
 ):
+    _validate_assignee(session, owner_user_id=req.owner_user_id, tenant_id=tenant_id)
     row = work_order_repo.create_work_order(
         session,
         tenant_id=tenant_id,
@@ -164,6 +175,7 @@ def update_task(
 ):
     row = _get_task_or_404(session, task_id, tenant_id)
     before = _serialize(row).model_dump()
+    _validate_assignee(session, owner_user_id=req.owner_user_id, tenant_id=tenant_id)
     payload = {**_loads(row.payload_json), **_task_payload(req)}
     result = {
         **_loads(row.result_json),
@@ -209,6 +221,7 @@ def assign_task(
 ):
     row = _get_task_or_404(session, task_id, tenant_id)
     before = _serialize(row).model_dump()
+    _validate_assignee(session, owner_user_id=req.owner_user_id, tenant_id=tenant_id)
     payload = {**_loads(row.payload_json), "owner_user_id": req.owner_user_id}
     work_order_repo.update_work_order(row, status="assigned", payload=payload)
     audit_service.record(
@@ -266,7 +279,7 @@ def generate_from_portfolio(
     tenant_id: int = Depends(get_current_tenant_id),
 ):
     data = generate_mock_portfolio()
-    plan = build_capacity_plan(data["segments"], get_capacity_settings(tenant_id))
+    plan = build_capacity_plan(data["segments"], get_capacity_settings(session, tenant_id))
     created: list[WorkOrder] = []
     for item in plan.current_month_execution_plan:
         source_id = item.segment_name

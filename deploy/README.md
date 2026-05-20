@@ -62,7 +62,7 @@ nano .env
 - 系统会把 `DOMAIN` 作为唯一对外主域名，例如 `zhefenglin.com`
 - 部署脚本会自动为 `DOMAIN` 和 `www.DOMAIN` 同时申请证书
 - `https://www.DOMAIN` 会统一 301 跳转到 `https://DOMAIN`
-- 中国大陆 ECS 可保留 `BACKEND_PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/` 和 `BACKEND_PIP_TRUSTED_HOST=mirrors.aliyun.com`；海外 / CI 环境可改回官方 PyPI 并清空 trusted host
+- 中国大陆 ECS 可保留 `BACKEND_APT_MIRROR_HOST=mirrors.aliyun.com`、`BACKEND_PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/`、`BACKEND_PIP_TRUSTED_HOST=mirrors.aliyun.com` 和 `FRONTEND_NPM_REGISTRY=https://registry.npmmirror.com`；海外 / CI 环境可清空 apt/npm 镜像，并把 PyPI 改回官方源
 - `DEFAULT_REGISTRATION_TENANT_CODE` / `DEFAULT_REGISTRATION_TENANT_NAME` 控制公开注册用户进入哪个默认租户；内测期建议继续保持 `ALLOW_PUBLIC_REGISTRATION=false`
 - 后端镜像已把 `boto3` 作为正式依赖，用于 `STORAGE_BACKEND=s3` 的 MinIO / S3 存储
 
@@ -96,6 +96,9 @@ bash setup.sh
 ### 第六步：验证
 
 ```bash
+# 一键 smoke check：容器状态、后端 import、健康检查、前端页面
+bash smoke-check.sh
+
 # 检查所有服务状态
 docker compose ps
 
