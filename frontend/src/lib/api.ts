@@ -293,6 +293,14 @@ export async function listDisposalTasks(params?: { status?: string; task_type?: 
   return request<DisposalTask[]>(`/api/tasks${qs ? `?${qs}` : ""}`);
 }
 
+export async function getDisposalTask(taskId: number) {
+  return request<DisposalTask>(`/api/tasks/${taskId}`);
+}
+
+export async function listTaskAssignees() {
+  return request<TaskAssignee[]>("/api/tasks/assignees");
+}
+
 export async function createDisposalTask(input: DisposalTaskCreateInput) {
   return request<DisposalTask>("/api/tasks", {
     method: "POST",
@@ -314,6 +322,15 @@ export async function completeDisposalTask(taskId: number, input: DisposalTaskCo
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+}
+
+export async function uploadTaskEvidence(taskId: number, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return request<TaskEvidenceUpload>(`/api/tasks/${taskId}/evidence`, {
+    method: "POST",
+    body: form,
   });
 }
 
@@ -1282,6 +1299,13 @@ export interface CapacityPlanItem {
 
 export interface PortfolioCapacityPlan {
   settings: PortfolioCapacitySettings;
+  data_source?: string;
+  snapshot_id?: number | null;
+  snapshot_date?: string | null;
+  segment_count?: number;
+  asset_count?: number;
+  generated_at?: string;
+  empty_reason?: string | null;
   current_month_execution_plan: CapacityPlanItem[];
   next_month_deferred_pool: CapacityPlanItem[];
   paused_pool: CapacityPlanItem[];
@@ -1307,6 +1331,8 @@ export interface DisposalTask {
   source_type: string | null;
   source_id: string | null;
   owner_user_id: number | null;
+  owner_user_email: string | null;
+  owner_display_name: string | null;
   expected_recovery: number | null;
   expected_cost: number | null;
   deadline: string | null;
@@ -1314,6 +1340,7 @@ export interface DisposalTask {
   result_note: string | null;
   actual_recovery: number | null;
   variance_reason: string | null;
+  completed_at?: string | null;
   payload: Record<string, unknown>;
   result: Record<string, unknown>;
   created_at: string;
@@ -1339,6 +1366,20 @@ export interface DisposalTaskCompleteInput {
   result_note?: string | null;
   variance_reason?: string | null;
   evidence_files?: string[];
+}
+
+export interface TaskAssignee {
+  id: number;
+  email: string;
+  display_name: string | null;
+  role: string;
+}
+
+export interface TaskEvidenceUpload {
+  storage_key: string;
+  filename: string;
+  content_type: string;
+  size: number;
 }
 
 export interface AuditLogRow {

@@ -61,6 +61,8 @@ class DisposalTaskOut(BaseModel):
     source_type: Optional[str] = None
     source_id: Optional[str] = None
     owner_user_id: Optional[int] = None
+    owner_user_email: Optional[str] = None
+    owner_display_name: Optional[str] = None
     expected_recovery: Optional[float] = None
     expected_cost: Optional[float] = None
     deadline: Optional[str] = None
@@ -68,7 +70,15 @@ class DisposalTaskOut(BaseModel):
     result_note: Optional[str] = None
     actual_recovery: Optional[float] = None
     variance_reason: Optional[str] = None
+    completed_at: Optional[str] = None
     payload: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] = Field(default_factory=dict)
     created_at: str
     updated_at: str
+
+
+class TaskEvidenceUploadOut(BaseModel):
+    storage_key: str
+    filename: str
+    content_type: str
+    size: int

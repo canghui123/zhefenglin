@@ -1,5 +1,6 @@
 """模块3：公司级不良资产经营驾驶舱API"""
 
+from datetime import datetime
 from fastapi import APIRouter, Depends, Query
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from services.portfolio_engine import (
 )
 from services.portfolio_capacity_planner import build_capacity_plan, get_capacity_settings
 from services import entitlement_service
+from repositories import portfolio_repo
+from models.portfolio import PortfolioCapacityPlan
 from services.recommendation_engine import (
     get_executive_dashboard,
     get_manager_playbook,
@@ -39,6 +42,60 @@ def _get_portfolio():
 
 def _resolve_tenant_id_for_user(user: User) -> Optional[int]:
     return user.default_tenant_id
+
+
+def _empty_capacity_plan(settings, reason: str) -> PortfolioCapacityPlan:
+    return PortfolioCapacityPlan(
+        settings=settings,
+        data_source="empty",
+        segment_count=0,
+        asset_count=0,
+        generated_at=datetime.utcnow().isoformat(),
+        empty_reason=reason,
+        summary=reason,
+    )
+
+
+def build_real_capacity_plan(session: Session, tenant_id: Optional[int]) -> PortfolioCapacityPlan:
+    settings = get_capacity_settings(session, tenant_id)
+    if tenant_id is None:
+        return _empty_capacity_plan(settings, "暂无当前租户信息，无法生成产能计划")
+
+    snapshot = portfolio_repo.get_latest_snapshot_for_tenant(session, tenant_id)
+    if snapshot is None:
+        return _empty_capacity_plan(settings, "暂无真实组合数据，无法生成产能计划")
+
+    rows = portfolio_repo.list_snapshot_segment_metrics(
+        session,
+        snapshot_id=snapshot.id,
+        tenant_id=tenant_id,
+    )
+    segments = portfolio_repo.build_capacity_segments(rows)
+    if not segments:
+        return PortfolioCapacityPlan(
+            settings=settings,
+            data_source="empty",
+            snapshot_id=snapshot.id,
+            snapshot_date=snapshot.snapshot_date,
+            segment_count=0,
+            asset_count=0,
+            generated_at=datetime.utcnow().isoformat(),
+            empty_reason="当前组合快照暂无可用于产能计划的分层数据",
+            summary="当前组合快照暂无可用于产能计划的分层数据",
+        )
+
+    plan = build_capacity_plan(segments, settings)
+    return plan.model_copy(
+        update={
+            "data_source": "real_portfolio",
+            "snapshot_id": snapshot.id,
+            "snapshot_date": snapshot.snapshot_date,
+            "segment_count": len(segments),
+            "asset_count": sum(int(segment.get("asset_count") or 0) for segment in segments),
+            "generated_at": datetime.utcnow().isoformat(),
+            "empty_reason": None,
+        }
+    )
 
 
 @router.get("/overview")
@@ -247,7 +304,5 @@ async def capacity_plan(
     user: User = Depends(get_current_user),
 ):
     """处置产能约束下的本月执行计划"""
-    data = _get_portfolio()
     tenant_id = _resolve_tenant_id_for_user(user)
-    settings = get_capacity_settings(session, tenant_id)
-    return build_capacity_plan(data["segments"], settings)
+    return build_real_capacity_plan(session, tenant_id)

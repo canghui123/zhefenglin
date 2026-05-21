@@ -186,3 +186,10 @@ class PortfolioCapacityPlan(BaseModel):
     total_expected_net_recovery: float = 0
     total_expected_incremental_recovery: float = 0
     summary: str = ""
+    data_source: str = "unknown"
+    snapshot_id: Optional[int] = None
+    snapshot_date: Optional[str] = None
+    segment_count: int = 0
+    asset_count: int = 0
+    generated_at: Optional[str] = None
+    empty_reason: Optional[str] = None

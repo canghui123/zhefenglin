@@ -21,12 +21,35 @@ const RESOURCE_LABELS: Record<string, string> = {
   external_vendor_units: "外部供应商",
 };
 
+type CapacityPlanWithMetadata = PortfolioCapacityPlan & {
+  data_source?: string;
+  snapshot_id?: number | null;
+  snapshot_date?: string | null;
+  segment_count?: number;
+  asset_count?: number;
+  generated_at?: string | null;
+  empty_reason?: string | null;
+};
+
 function fmt(n: number) {
   return n.toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 }
 
 function money(n: number) {
   return `¥${fmt(n)}`;
+}
+
+function formatTime(value: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function PlanTable({ title, items }: { title: string; items: CapacityPlanItem[] }) {
@@ -145,6 +168,8 @@ export default function CapacityPlanPage() {
   }
 
   const canEdit = hasRole(user, "admin");
+  const planMeta = plan as CapacityPlanWithMetadata | null;
+  const isEmptyPlan = planMeta?.data_source === "empty";
 
   if (loading) return <div className="py-20 text-center text-gray-500">加载中...</div>;
   if (!plan || !settings) return <div className="py-20 text-center text-red-500">{error || "加载失败"}</div>;
@@ -154,11 +179,28 @@ export default function CapacityPlanPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">处置产能计划</h1>
         <p className="mt-1 text-sm text-gray-500">
-          基于预算、法务、竞拍、收车和场地约束，输出本月可执行组合。
+          基于真实组合分层和容量设置，输出本月可执行组合。
         </p>
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+
+      <div className={`rounded-xl border p-5 text-sm ${isEmptyPlan ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-900"}`}>
+        <div className="font-semibold">
+          数据来源：{isEmptyPlan ? "暂无真实组合数据" : "真实组合数据"}
+        </div>
+        <div className="mt-2 grid gap-2 md:grid-cols-4">
+          <div>快照时间：{planMeta?.snapshot_date || "-"}</div>
+          <div>参与分层：{fmt(planMeta?.segment_count || 0)} 个</div>
+          <div>参与资产：{fmt(planMeta?.asset_count || 0)} 台</div>
+          <div>生成时间：{formatTime(planMeta?.generated_at || null)}</div>
+        </div>
+        {isEmptyPlan && (
+          <div className="mt-3 rounded-lg bg-white/60 p-3">
+            {planMeta?.empty_reason || "暂无真实组合数据，无法生成产能计划。请先上传资产包或完成组合数据导入。"}
+          </div>
+        )}
+      </div>
 
       <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-xl border bg-white p-5">
@@ -181,7 +223,9 @@ export default function CapacityPlanPage() {
         </div>
       </div>
 
-      <div className="rounded-xl border bg-slate-50 p-5 text-sm text-slate-700">{plan.summary}</div>
+      <div className="rounded-xl border bg-slate-50 p-5 text-sm text-slate-700">
+        {plan.summary || "暂无真实组合数据，无法生成产能计划。请先上传资产包或完成组合数据导入。"}
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-xl border bg-white p-5">
@@ -238,9 +282,20 @@ export default function CapacityPlanPage() {
         </div>
       </div>
 
-      <PlanTable title="本月可执行计划" items={plan.current_month_execution_plan} />
-      <PlanTable title="下月递延池" items={plan.next_month_deferred_pool} />
-      <PlanTable title="暂缓池" items={plan.paused_pool} />
+      {isEmptyPlan ? (
+        <div className="rounded-xl border border-amber-200 bg-white p-8 text-center">
+          <h3 className="text-base font-semibold text-gray-900">暂无可计算的真实组合分层</h3>
+          <p className="mt-2 text-sm text-gray-500">
+            暂无真实组合数据，无法生成产能计划。请先上传资产包或完成组合数据导入。
+          </p>
+        </div>
+      ) : (
+        <>
+          <PlanTable title="本月可执行计划" items={plan.current_month_execution_plan} />
+          <PlanTable title="下月递延池" items={plan.next_month_deferred_pool} />
+          <PlanTable title="暂缓池" items={plan.paused_pool} />
+        </>
+      )}
     </div>
   );
 }

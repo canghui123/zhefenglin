@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from db.models.membership import Membership
 from db.models.user import User
 from db.models.user_session import UserSession
 
@@ -37,6 +38,17 @@ def get_user_by_email(session: Session, email: str) -> Optional[User]:
 
 def get_user_by_id(session: Session, user_id: int) -> Optional[User]:
     return session.get(User, user_id)
+
+
+def list_active_users_by_tenant(session: Session, tenant_id: int) -> list[User]:
+    stmt = (
+        select(User)
+        .join(Membership, Membership.user_id == User.id)
+        .where(Membership.tenant_id == tenant_id)
+        .where(User.is_active.is_(True))
+        .order_by(User.display_name, User.email, User.id)
+    )
+    return list(session.scalars(stmt).all())
 
 
 def mark_login(session: Session, user_id: int) -> None:
