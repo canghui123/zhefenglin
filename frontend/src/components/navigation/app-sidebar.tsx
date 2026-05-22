@@ -37,6 +37,7 @@ const navSections: Array<{ title: string; items: NavItem[] }> = [
   {
     title: "管理决策",
     items: [
+      { href: "/ai-command-center", label: "AI 指挥中心" },
       {
         href: "/portfolio/executive",
         label: "高管驾驶页",

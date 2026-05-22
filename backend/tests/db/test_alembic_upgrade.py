@@ -44,6 +44,10 @@ REQUIRED_TABLES = sorted([
     "data_import_rows",
     "sandbox_simulation_batches",
     "sandbox_simulation_batch_items",
+    "agent_runs",
+    "agent_tasks",
+    "agent_recommendations",
+    "decision_audit_logs",
 ])
 
 
@@ -114,6 +118,26 @@ def test_tenant_deployment_profile_constraints_and_foreign_keys(test_db_url, mon
     assert fk_map[("tenant_id",)] == "tenants"
     assert fk_map[("created_by",)] == "users"
     assert fk_map[("updated_by",)] == "users"
+
+    engine.dispose()
+
+
+def test_decision_audit_log_decision_type_is_required(test_db_url, monkeypatch):
+    """Agent audit logs separate decision type from action for reporting."""
+    monkeypatch.setenv("DATABASE_URL", test_db_url)
+    alembic_cfg = _alembic_config()
+
+    upgrade(alembic_cfg, "head")
+
+    engine = create_engine(test_db_url)
+    inspector = inspect(engine)
+    columns = {
+        column["name"]: column
+        for column in inspector.get_columns("decision_audit_logs")
+    }
+
+    assert columns["decision_type"]["nullable"] is False
+    assert columns["action"]["nullable"] is False
 
     engine.dispose()
 

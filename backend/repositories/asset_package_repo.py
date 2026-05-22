@@ -54,6 +54,24 @@ def list_packages(session: Session, *, tenant_id: int) -> List[AssetPackage]:
     return list(session.scalars(stmt).all())
 
 
+def list_assets_for_package(
+    session: Session,
+    *,
+    package_id: int,
+    tenant_id: int,
+    limit: int = 500,
+) -> list[Asset]:
+    stmt = (
+        select(Asset)
+        .join(AssetPackage, AssetPackage.id == Asset.package_id)
+        .where(Asset.package_id == package_id)
+        .where(AssetPackage.tenant_id == tenant_id)
+        .order_by(Asset.row_number, Asset.id)
+        .limit(limit)
+    )
+    return list(session.scalars(stmt).all())
+
+
 def update_package_upload(
     session: Session,
     package_id: int,

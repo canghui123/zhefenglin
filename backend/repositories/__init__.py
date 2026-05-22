@@ -19,3 +19,4 @@ from repositories import valuation_rule_repo  # noqa: F401
 from repositories import approval_repo  # noqa: F401
 from repositories import deployment_profile_repo  # noqa: F401
 from repositories import work_order_repo  # noqa: F401
+from repositories import agent_repo  # noqa: F401

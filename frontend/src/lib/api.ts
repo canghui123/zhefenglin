@@ -285,6 +285,26 @@ export async function updateCapacitySettings(input: PortfolioCapacitySettings) {
   });
 }
 
+export async function getAiCommandOverview() {
+  return request<AiCommandOverview>("/api/ai-command-center/overview");
+}
+
+export async function runAiCommandAgent(input: AgentRunCreateInput) {
+  return request<AgentRun>("/api/ai-command-center/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listAiAgentRuns(limit: number = 20) {
+  return request<AgentRun[]>(`/api/ai-command-center/runs?limit=${limit}`);
+}
+
+export async function listAiDecisionAuditLogs(limit: number = 20) {
+  return request<DecisionAuditLog[]>(`/api/ai-command-center/decision-audit-logs?limit=${limit}`);
+}
+
 export async function listDisposalTasks(params?: { status?: string; task_type?: string }) {
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
@@ -1318,6 +1338,116 @@ export interface PortfolioCapacityPlan {
   total_expected_net_recovery: number;
   total_expected_incremental_recovery: number;
   summary: string;
+}
+
+export type AiAgentType =
+  | "asset_package_diagnosis_agent"
+  | "valuation_analysis_agent"
+  | "pricing_strategy_agent"
+  | "buyer_offer_analysis_agent"
+  | "operation_planning_agent"
+  | "task_generation_agent"
+  | "report_generation_agent"
+  | "cost_control_agent";
+
+export interface AgentEvidence {
+  source: string;
+  label: string;
+  value: unknown;
+  evidence_source?: string | null;
+  related_object_type?: string | null;
+  related_object_id?: string | null;
+  calculation_basis?: string | null;
+  data_quality_notes?: string | null;
+}
+
+export interface AgentOutput {
+  summary: string;
+  key_findings: string[];
+  recommended_actions: string[];
+  risk_warnings: string[];
+  confidence_score: number;
+  evidence: AgentEvidence[];
+  requires_human_review: boolean;
+}
+
+export interface AgentRunCreateInput {
+  question?: string;
+  agent_type?: AiAgentType;
+  asset_package_id?: number;
+  buyer_offer_price?: number;
+  buyer_offer_note?: string;
+}
+
+export interface AgentRun {
+  id: number;
+  tenant_id: number;
+  agent_type: string;
+  status: string;
+  created_by: number | null;
+  started_at: string;
+  finished_at: string | null;
+  requires_human_review: boolean;
+  input: Record<string, unknown>;
+  output: AgentOutput;
+}
+
+export interface AgentTask {
+  id: number;
+  agent_run_id: number | null;
+  title: string;
+  task_type: string;
+  priority: string;
+  status: string;
+  requires_human_review: boolean;
+  created_at: string;
+}
+
+export interface AgentRecommendation {
+  id: number;
+  agent_run_id: number | null;
+  recommendation_type: string;
+  title: string;
+  summary: string;
+  confidence_score: number;
+  requires_human_review: boolean;
+  created_at: string;
+}
+
+export interface AgentWorkbenchItem {
+  agent_type: AiAgentType;
+  name: string;
+  stage: string;
+  status: string;
+  min_role: string;
+}
+
+export interface AiCommandOverview {
+  today_overview: {
+    asset_package_count?: number;
+    pending_work_orders?: number;
+    pending_approval_count?: number;
+    agent_runs_today?: number;
+    [key: string]: unknown;
+  };
+  ai_today_judgment: AgentOutput;
+  agent_workbench: AgentWorkbenchItem[];
+  pending_tasks: AgentTask[];
+  pending_approvals: AgentRecommendation[];
+  recent_runs: AgentRun[];
+  suggested_prompts: string[];
+  role_scope: string;
+}
+
+export interface DecisionAuditLog {
+  id: number;
+  agent_run_id: number | null;
+  decision_type: string;
+  action: string;
+  actor_user_id: number | null;
+  requires_human_review: boolean;
+  created_at: string;
+  after: Record<string, unknown>;
 }
 
 export interface DisposalTask {

@@ -28,6 +28,7 @@ from api.admin_valuation_rules import router as admin_valuation_rules_router
 from api.admin_approval_requests import router as admin_approval_requests_router
 from api.admin_audit_logs import router as admin_audit_logs_router
 from api.tasks import router as tasks_router
+from api.ai_command_center import router as ai_command_center_router
 from middleware.request_context import RequestContextMiddleware
 from middleware.metrics import MetricsMiddleware
 from services.runtime_security import validate_runtime_security
@@ -160,6 +161,7 @@ app.include_router(admin_valuation_rules_router)
 app.include_router(admin_approval_requests_router)
 app.include_router(admin_audit_logs_router)
 app.include_router(tasks_router)
+app.include_router(ai_command_center_router)
 
 
 @app.get("/api/health")
