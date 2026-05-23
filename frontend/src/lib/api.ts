@@ -1369,6 +1369,7 @@ export interface AgentOutput {
   confidence_score: number;
   evidence: AgentEvidence[];
   requires_human_review: boolean;
+  agent_status: string;
 }
 
 export interface AgentRunCreateInput {
@@ -1377,6 +1378,11 @@ export interface AgentRunCreateInput {
   asset_package_id?: number;
   buyer_offer_price?: number;
   buyer_offer_note?: string;
+  expected_vin_calls?: number;
+  expected_condition_pricing_calls?: number;
+  expected_ai_reports?: number;
+  single_task_budget?: number;
+  report_type?: string;
 }
 
 export interface AgentRun {
@@ -1401,6 +1407,7 @@ export interface AgentTask {
   status: string;
   requires_human_review: boolean;
   created_at: string;
+  payload: Record<string, unknown>;
 }
 
 export interface AgentRecommendation {

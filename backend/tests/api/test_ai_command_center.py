@@ -11,6 +11,7 @@ def _assert_agent_output_schema(output: dict):
     assert 0 <= output["confidence_score"] <= 1
     assert isinstance(output["evidence"], list)
     assert output["requires_human_review"] is True
+    assert output["agent_status"] in {"rules_based", "mock", "fallback", "llm_assisted"}
 
 
 def _seed_asset_package(tenant_code: str, *, with_result: bool = False) -> int:
@@ -92,6 +93,80 @@ def _seed_asset_package(tenant_code: str, *, with_result: bool = False) -> int:
             pass
 
 
+def _seed_portfolio_snapshot(tenant_code: str) -> int:
+    from repositories import portfolio_repo, tenant_repo
+    from db.session import get_db_session
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, tenant_code)
+        assert tenant is not None
+        snapshot = portfolio_repo.create_snapshot(
+            session,
+            org_id=tenant_code,
+            snapshot_date="2026-05-22",
+            tenant_id=tenant.id,
+        )
+        auction_segment = portfolio_repo.AssetSegment(
+            tenant_id=tenant.id,
+            org_id=tenant_code,
+            name="M3 已入库高价值车辆",
+            overdue_bucket="M3",
+            recovered_status="已入库",
+            inventory_bucket="30-60天",
+        )
+        legal_segment = portfolio_repo.AssetSegment(
+            tenant_id=tenant.id,
+            org_id=tenant_code,
+            name="M4+ 未收回高损失车辆",
+            overdue_bucket="M4+",
+            recovered_status="未收回",
+            inventory_bucket=None,
+        )
+        session.add_all([auction_segment, legal_segment])
+        session.flush()
+        portfolio_repo.save_segment_metric(
+            session,
+            snapshot_id=snapshot.id,
+            segment_id=auction_segment.id,
+            asset_count=12,
+            total_ead=1_200_000,
+            avg_vehicle_value=80_000,
+            avg_lgd=0.45,
+            avg_recovery_days=45,
+            expected_loss_amount=360_000,
+            expected_loss_rate=0.3,
+            expected_cash_30d=160_000,
+            expected_cash_90d=420_000,
+            expected_cash_180d=620_000,
+            recommended_strategy="retail_auction",
+        )
+        portfolio_repo.save_segment_metric(
+            session,
+            snapshot_id=snapshot.id,
+            segment_id=legal_segment.id,
+            asset_count=8,
+            total_ead=900_000,
+            avg_vehicle_value=40_000,
+            avg_lgd=0.62,
+            avg_recovery_days=120,
+            expected_loss_amount=500_000,
+            expected_loss_rate=0.55,
+            expected_cash_30d=40_000,
+            expected_cash_90d=160_000,
+            expected_cash_180d=300_000,
+            recommended_strategy="litigation",
+        )
+        session.commit()
+        return snapshot.id
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
 def test_agent_run_creation_output_format_and_human_review():
     from db.session import get_db_session
     from repositories import agent_repo
@@ -125,6 +200,7 @@ def test_agent_run_creation_output_format_and_human_review():
     assert 0 <= output["confidence_score"] <= 1
     assert output["evidence"]
     assert output["requires_human_review"] is True
+    assert output["agent_status"] == "rules_based"
 
     gen = get_db_session()
     session = next(gen)
@@ -283,24 +359,29 @@ def test_unsupported_agent_type_returns_business_error():
     assert "asset_package_diagnosis_agent" in error["details"]["supported_agent_types"]
 
 
-def test_reserved_mock_agents_return_unified_schema_and_enforce_roles():
-    from tests.api.admin_commercial_helpers import seed_user_and_login
+def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
+    from db.session import get_db_session
+    from repositories import agent_repo, tenant_repo
+    from tests.api.admin_commercial_helpers import seed_subscription, seed_user_and_login
 
     manager = seed_user_and_login(
-        "ai-mock-manager@example.com",
+        "ai-semi-manager@example.com",
         role="manager",
-        tenant_code="ai-mock",
+        tenant_code="ai-semi",
     )
     admin = seed_user_and_login(
-        "ai-mock-admin@example.com",
+        "ai-semi-admin@example.com",
         role="admin",
-        tenant_code="ai-mock",
+        tenant_code="ai-semi",
     )
     operator = seed_user_and_login(
-        "ai-mock-operator@example.com",
+        "ai-semi-operator@example.com",
         role="operator",
-        tenant_code="ai-mock",
+        tenant_code="ai-semi",
     )
+    seed_subscription(tenant_code="ai-semi", plan_code="standard", monthly_budget_limit=5000)
+    package_id = _seed_asset_package("ai-semi", with_result=True)
+    _seed_portfolio_snapshot("ai-semi")
 
     for agent_type in [
         "operation_planning_agent",
@@ -316,7 +397,7 @@ def test_reserved_mock_agents_return_unified_schema_and_enforce_roles():
 
         response = manager.post(
             "/api/ai-command-center/runs",
-            json={"agent_type": agent_type, "question": "运行预留 Agent"},
+            json={"agent_type": agent_type, "asset_package_id": package_id, "question": "运行半自动 Agent"},
         )
         assert response.status_code == 200, response.text
         body = response.json()
@@ -325,8 +406,35 @@ def test_reserved_mock_agents_return_unified_schema_and_enforce_roles():
         assert body["requires_human_review"] is True
         _assert_agent_output_schema(body["output"])
         status_evidence = next(item for item in body["output"]["evidence"] if item["label"] == "status")
-        assert status_evidence["value"] == "mock"
+        assert status_evidence["value"] == "rules_based"
         assert status_evidence["value"] != "fully_implemented"
+
+        if agent_type == "operation_planning_agent":
+            plan = next(item for item in body["output"]["evidence"] if item["label"] == "operation_plan")
+            assert "weekly_focus" in plan["value"]
+            assert "high_priority_asset_pool" in plan["value"]
+            assert "auction_pool" in plan["value"]
+            assert "data_completion_pool" in plan["value"]
+        if agent_type == "task_generation_agent":
+            drafts = next(item for item in body["output"]["evidence"] if item["label"] == "task_drafts")
+            first = drafts["value"][0]
+            assert first["status"] == "draft"
+            assert first["requires_human_review"] is True
+            assert first["task_type"] in {
+                "data_completion",
+                "valuation_review",
+                "auction_preparation",
+                "legal_material_review",
+                "collection_follow_up",
+                "buyer_offer_review",
+                "report_review",
+            }
+            assert first["suggested_owner_role"]
+            assert first["required_documents"]
+        if agent_type == "report_generation_agent":
+            draft = next(item for item in body["output"]["evidence"] if item["label"] == "report_draft")
+            assert draft["value"]["distribution"] == "draft_only"
+            assert draft["value"]["requires_human_review"] is True
 
     denied_cost = manager.post(
         "/api/ai-command-center/runs",
@@ -337,14 +445,43 @@ def test_reserved_mock_agents_return_unified_schema_and_enforce_roles():
 
     cost_response = admin.post(
         "/api/ai-command-center/runs",
-        json={"agent_type": "cost_control_agent", "question": "运行成本控制 Agent"},
+        json={
+            "agent_type": "cost_control_agent",
+            "asset_package_id": package_id,
+            "question": "运行成本控制 Agent",
+            "expected_vin_calls": 5,
+            "expected_condition_pricing_calls": 2,
+            "expected_ai_reports": 1,
+            "single_task_budget": 100,
+        },
     )
     assert cost_response.status_code == 200, cost_response.text
     cost_body = cost_response.json()
     assert cost_body["agent_type"] == "cost_control_agent"
     _assert_agent_output_schema(cost_body["output"])
     status_evidence = next(item for item in cost_body["output"]["evidence"] if item["label"] == "status")
-    assert status_evidence["value"] == "mock"
+    assert status_evidence["value"] == "rules_based"
+    cost = next(item for item in cost_body["output"]["evidence"] if item["label"] == "cost_control")
+    assert cost["value"]["estimated_cost"] > 0
+    assert "quota_remaining" in cost["value"]
+    assert "approval_required" in cost["value"]
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, "ai-semi")
+        assert tenant is not None
+        tasks = agent_repo.list_pending_tasks(session, tenant_id=tenant.id, limit=20)
+        assert tasks
+        payload = agent_repo.load_json(tasks[0].payload_json)
+        assert payload["status"] == "draft"
+        assert payload["requires_human_review"] is True
+        assert payload["suggested_owner_role"]
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
 
 
 def test_llm_unavailable_uses_fallback_evidence(monkeypatch):

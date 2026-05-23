@@ -15,15 +15,15 @@ def test_classify_intent_routes_common_command_questions():
     assert classify_intent("看看最新资产包有什么风险") == "asset_package_diagnosis_agent"
 
 
-def test_agent_catalog_keeps_phase_one_and_reserved_agents_visible():
+def test_agent_catalog_marks_semi_automated_agents_rules_based():
     assert AGENT_CATALOG["asset_package_diagnosis_agent"]["status"] == "rules_based"
     assert AGENT_CATALOG["valuation_analysis_agent"]["status"] == "rules_based"
     assert AGENT_CATALOG["pricing_strategy_agent"]["status"] == "rules_based"
     assert AGENT_CATALOG["buyer_offer_analysis_agent"]["status"] == "rules_based"
-    assert AGENT_CATALOG["operation_planning_agent"]["status"] == "mock"
-    assert AGENT_CATALOG["task_generation_agent"]["status"] == "mock"
-    assert AGENT_CATALOG["report_generation_agent"]["status"] == "mock"
-    assert AGENT_CATALOG["cost_control_agent"]["status"] == "mock"
+    assert AGENT_CATALOG["operation_planning_agent"]["status"] == "rules_based"
+    assert AGENT_CATALOG["task_generation_agent"]["status"] == "rules_based"
+    assert AGENT_CATALOG["report_generation_agent"]["status"] == "rules_based"
+    assert AGENT_CATALOG["cost_control_agent"]["status"] == "rules_based"
 
 
 def test_viewer_output_redaction_only_keeps_summary_and_review_flag():
@@ -35,6 +35,7 @@ def test_viewer_output_redaction_only_keeps_summary_and_review_flag():
         confidence_score=0.8,
         evidence=[{"source": "assets", "label": "package_id", "value": 1}],
         requires_human_review=True,
+        agent_status="rules_based",
     )
 
     redacted = redact_output_for_role(output, "viewer")
@@ -46,3 +47,4 @@ def test_viewer_output_redaction_only_keeps_summary_and_review_flag():
     assert redacted.evidence == []
     assert redacted.confidence_score == 0.8
     assert redacted.requires_human_review is True
+    assert redacted.agent_status == "rules_based"

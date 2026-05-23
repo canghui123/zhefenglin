@@ -1,7 +1,11 @@
 import { render, screen } from "@testing-library/react";
 
 import AiCommandCenterPage from "./page";
-import { getAiCommandOverview, type AiCommandOverview } from "@/lib/api";
+import {
+  getAiCommandOverview,
+  listAiDecisionAuditLogs,
+  type AiCommandOverview,
+} from "@/lib/api";
 import { useSession } from "@/components/auth/session-provider";
 
 vi.mock("@/components/auth/session-provider", () => ({
@@ -13,12 +17,14 @@ vi.mock("@/lib/api", async () => {
   return {
     ...actual,
     getAiCommandOverview: vi.fn(),
+    listAiDecisionAuditLogs: vi.fn(),
     runAiCommandAgent: vi.fn(),
   };
 });
 
 const mockUseSession = vi.mocked(useSession);
 const mockGetAiCommandOverview = vi.mocked(getAiCommandOverview);
+const mockListAiDecisionAuditLogs = vi.mocked(listAiDecisionAuditLogs);
 
 const baseOverview: AiCommandOverview = {
   today_overview: {
@@ -35,6 +41,7 @@ const baseOverview: AiCommandOverview = {
     confidence_score: 0.5,
     evidence: [],
     requires_human_review: true,
+    agent_status: "fallback",
   },
   agent_workbench: [
     {
@@ -47,8 +54,8 @@ const baseOverview: AiCommandOverview = {
     {
       agent_type: "operation_planning_agent",
       name: "运营计划 Agent",
-      stage: "reserved",
-      status: "mock",
+      stage: "phase_2",
+      status: "rules_based",
       min_role: "manager",
     },
   ],
@@ -81,6 +88,7 @@ describe("AiCommandCenterPage", () => {
     vi.clearAllMocks();
     mockSession("operator");
     mockGetAiCommandOverview.mockResolvedValue(baseOverview);
+    mockListAiDecisionAuditLogs.mockResolvedValue([]);
   });
 
   it("renders title, agent workbench and human review notice", async () => {
@@ -89,8 +97,8 @@ describe("AiCommandCenterPage", () => {
     expect(await screen.findByRole("heading", { name: "AI 指挥中心" })).toBeInTheDocument();
     expect(screen.getByText("Agent 工作台")).toBeInTheDocument();
     expect(screen.getByText("关键动作需人工复核")).toBeInTheDocument();
-    expect(screen.getByText("rules_based")).toBeInTheDocument();
-    expect(screen.getByText("mock")).toBeInTheDocument();
+    expect(screen.getAllByText("rules_based").length).toBeGreaterThan(0);
+    expect(screen.getByText("fallback")).toBeInTheDocument();
   });
 
   it("hides sensitive evidence for viewer role", async () => {
@@ -112,6 +120,7 @@ describe("AiCommandCenterPage", () => {
             data_quality_notes: "secret-data-quality-note",
           },
         ],
+        agent_status: "rules_based",
       },
     });
 
@@ -136,5 +145,27 @@ describe("AiCommandCenterPage", () => {
     expect(await screen.findByText("暂无 Agent 草拟任务")).toBeInTheDocument();
     expect(screen.getByText("暂无 Agent 建议待审批")).toBeInTheDocument();
     expect(screen.getByText("暂无 Agent 执行记录")).toBeInTheDocument();
+  });
+
+  it("shows admin audit log panel", async () => {
+    mockSession("admin");
+    mockListAiDecisionAuditLogs.mockResolvedValue([
+      {
+        id: 1,
+        agent_run_id: 10,
+        decision_type: "cost_control_agent",
+        action: "completed",
+        actor_user_id: 1,
+        requires_human_review: true,
+        created_at: "2026-05-22T10:00:00",
+        after: { agent_type: "cost_control_agent", status: "succeeded" },
+      },
+    ]);
+
+    render(<AiCommandCenterPage />);
+
+    expect(await screen.findByText("AI 审计日志")).toBeInTheDocument();
+    expect(screen.getAllByText("cost_control_agent").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/requires_human_review/).length).toBeGreaterThan(0);
   });
 });

@@ -36,6 +36,7 @@ class AgentOutput(BaseModel):
     confidence_score: float = Field(ge=0, le=1)
     evidence: list[AgentEvidence] = Field(default_factory=list)
     requires_human_review: bool = True
+    agent_status: str = "rules_based"
 
 
 class AgentRunCreate(BaseModel):
@@ -44,6 +45,11 @@ class AgentRunCreate(BaseModel):
     asset_package_id: Optional[int] = None
     buyer_offer_price: Optional[float] = None
     buyer_offer_note: Optional[str] = None
+    expected_vin_calls: Optional[int] = None
+    expected_condition_pricing_calls: Optional[int] = None
+    expected_ai_reports: Optional[int] = None
+    single_task_budget: Optional[float] = None
+    report_type: Optional[str] = None
 
 
 class AgentRunOut(BaseModel):
@@ -68,6 +74,7 @@ class AgentTaskOut(BaseModel):
     status: str
     requires_human_review: bool
     created_at: str
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentRecommendationOut(BaseModel):

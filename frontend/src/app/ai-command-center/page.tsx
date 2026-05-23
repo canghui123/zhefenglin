@@ -6,6 +6,7 @@ import {
   Bot,
   CheckCircle2,
   ClipboardList,
+  FileSearch,
   MessageSquare,
   PlayCircle,
   ShieldCheck,
@@ -16,13 +17,16 @@ import { useSession } from "@/components/auth/session-provider";
 import { hasRole } from "@/lib/auth";
 import {
   getAiCommandOverview,
+  listAiDecisionAuditLogs,
   runAiCommandAgent,
   type AgentEvidence,
   type AgentOutput,
   type AgentRun,
+  type AgentTask,
   type AgentWorkbenchItem,
   type AiAgentType,
   type AiCommandOverview,
+  type DecisionAuditLog,
 } from "@/lib/api";
 
 const AGENT_LABELS: Record<AiAgentType, string> = {
@@ -52,6 +56,13 @@ const ROLE_LABELS: Record<string, string> = {
   operator: "可发起分析",
   manager: "策略与任务",
   admin: "审计与成本",
+};
+
+const REPORT_TYPE_LABELS: Record<string, string> = {
+  executive_summary: "高管摘要",
+  asset_package_brief: "资产包简报",
+  buyer_offer_memo: "买方报价备忘录",
+  weekly_operation_report: "周运营报告",
 };
 
 function metricValue(value: unknown) {
@@ -136,6 +147,9 @@ function EvidencePanel({
                 {item.calculation_basis || `${item.label}: ${evidenceText(item.value)}`}
               </div>
             </div>
+            <div className="mt-2 max-h-24 overflow-auto rounded-md bg-gray-50 p-2 font-mono text-[11px] text-gray-500">
+              {evidenceText(item.value)}
+            </div>
             <div className="mt-2">
               <span className="font-medium text-gray-900">data_quality_notes：</span>
               {item.data_quality_notes || "-"}
@@ -152,6 +166,9 @@ function OutputBlock({ output, roleScope }: { output: AgentOutput; roleScope: st
     <div className="space-y-4">
       <p className="text-sm leading-6 text-gray-700">{output.summary}</p>
       <div className="flex flex-wrap gap-2 text-xs">
+        <span className="rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700">
+          {STATUS_LABELS[output.agent_status] || output.agent_status}
+        </span>
         <span className="rounded-full bg-blue-50 px-3 py-1 font-medium text-blue-700">
           置信度 {confidenceText(output.confidence_score)}
         </span>
@@ -235,6 +252,95 @@ function AgentCard({
   );
 }
 
+function payloadText(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key];
+  return typeof value === "string" && value.trim() ? value : "";
+}
+
+function payloadList(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function TaskDraftCard({ task }: { task: AgentTask }) {
+  const payload = task.payload || {};
+  const description = payloadText(payload, "description");
+  const ownerRole = payloadText(payload, "suggested_owner_role");
+  const deadline = payloadText(payload, "deadline_suggestion");
+  const expectedResult = payloadText(payload, "expected_result");
+  const requiredDocuments = payloadList(payload, "required_documents");
+
+  return (
+    <div className="rounded-lg border border-gray-100 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium text-gray-900">{task.title}</div>
+          <div className="mt-1 text-xs text-gray-500">
+            {task.task_type} · {task.priority} · {STATUS_LABELS[task.status] || task.status}
+          </div>
+        </div>
+        {task.requires_human_review && (
+          <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+            待人工确认
+          </span>
+        )}
+      </div>
+      {description && <p className="mt-2 text-sm leading-5 text-gray-600">{description}</p>}
+      <div className="mt-3 grid gap-2 text-xs text-gray-500 md:grid-cols-2">
+        <div>建议角色：{ownerRole || "-"}</div>
+        <div>建议截止：{deadline || "-"}</div>
+        <div className="md:col-span-2">预期结果：{expectedResult || "-"}</div>
+      </div>
+      {requiredDocuments.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {requiredDocuments.map((item) => (
+            <span key={item} className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">
+              {item}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditLogPanel({ logs }: { logs: DecisionAuditLog[] }) {
+  return (
+    <section className="rounded-lg border bg-white p-5">
+      <div className="mb-4 flex items-center gap-2">
+        <FileSearch className="h-5 w-5 text-blue-600" />
+        <h2 className="text-lg font-semibold text-gray-900">AI 审计日志</h2>
+      </div>
+      {logs.length === 0 ? (
+        <p className="text-sm text-gray-400">暂无 AI 审计日志</p>
+      ) : (
+        <div className="space-y-3">
+          {logs.map((log) => (
+            <div key={log.id} className="rounded-lg border border-gray-100 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-gray-900">{log.decision_type}</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    action={log.action} · actor={log.actor_user_id || "-"} · {formatTime(log.created_at)}
+                  </div>
+                </div>
+                {log.requires_human_review && (
+                  <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700">
+                    requires_human_review
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 max-h-20 overflow-auto rounded-md bg-gray-50 p-2 font-mono text-[11px] text-gray-500">
+                {evidenceText(log.after)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function AiCommandCenterPage() {
   const { user } = useSession();
   const [overview, setOverview] = useState<AiCommandOverview | null>(null);
@@ -245,19 +351,32 @@ export default function AiCommandCenterPage() {
   const [agentType, setAgentType] = useState<AiAgentType | "">("");
   const [assetPackageId, setAssetPackageId] = useState("");
   const [buyerOfferPrice, setBuyerOfferPrice] = useState("");
+  const [expectedVinCalls, setExpectedVinCalls] = useState("");
+  const [expectedConditionPricingCalls, setExpectedConditionPricingCalls] = useState("");
+  const [expectedAiReports, setExpectedAiReports] = useState("");
+  const [singleTaskBudget, setSingleTaskBudget] = useState("");
+  const [reportType, setReportType] = useState("executive_summary");
+  const [auditLogs, setAuditLogs] = useState<DecisionAuditLog[]>([]);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
+  const currentRole = user?.role;
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      setOverview(await getAiCommandOverview());
+      const nextOverview = await getAiCommandOverview();
+      setOverview(nextOverview);
+      if (currentRole === "admin") {
+        setAuditLogs(await listAiDecisionAuditLogs(20));
+      } else {
+        setAuditLogs([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "AI 指挥中心加载失败");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentRole]);
 
   useEffect(() => {
     void load();
@@ -279,6 +398,10 @@ export default function AiCommandCenterPage() {
 
     const packageId = Number(assetPackageId);
     const offerPrice = Number(buyerOfferPrice);
+    const vinCalls = Number(expectedVinCalls);
+    const conditionCalls = Number(expectedConditionPricingCalls);
+    const aiReports = Number(expectedAiReports);
+    const budget = Number(singleTaskBudget);
     setRunning(true);
     setError("");
     try {
@@ -287,6 +410,12 @@ export default function AiCommandCenterPage() {
         agent_type: agentType || undefined,
         asset_package_id: Number.isFinite(packageId) && packageId > 0 ? packageId : undefined,
         buyer_offer_price: Number.isFinite(offerPrice) && offerPrice > 0 ? offerPrice : undefined,
+        expected_vin_calls: Number.isFinite(vinCalls) && vinCalls >= 0 ? vinCalls : undefined,
+        expected_condition_pricing_calls:
+          Number.isFinite(conditionCalls) && conditionCalls >= 0 ? conditionCalls : undefined,
+        expected_ai_reports: Number.isFinite(aiReports) && aiReports >= 0 ? aiReports : undefined,
+        single_task_budget: Number.isFinite(budget) && budget > 0 ? budget : undefined,
+        report_type: agentType === "report_generation_agent" ? reportType : undefined,
       });
       setLatestRun(run);
       await load();
@@ -380,29 +509,30 @@ export default function AiCommandCenterPage() {
 
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-lg border bg-white p-5">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">待处理任务</h2>
+          <h2 className="mb-4 text-lg font-semibold text-gray-900">生成任务草稿</h2>
           {overview.pending_tasks.length === 0 ? (
             <p className="text-sm text-gray-400">暂无 Agent 草拟任务</p>
           ) : (
             <div className="space-y-3">
               {overview.pending_tasks.map((task) => (
-                <div key={task.id} className="rounded-lg border border-gray-100 p-3">
-                  <div className="text-sm font-medium text-gray-900">{task.title}</div>
-                  <div className="mt-1 text-xs text-gray-500">
-                    {task.task_type} · {task.priority} · {STATUS_LABELS[task.status] || task.status}
-                  </div>
-                </div>
+                <TaskDraftCard key={task.id} task={task} />
               ))}
             </div>
           )}
         </div>
 
         <div className="rounded-lg border bg-white p-5">
-          <h2 className="mb-4 text-lg font-semibold text-gray-900">待审批事项</h2>
-          {overview.pending_approvals.length === 0 ? (
+          <h2 className="mb-4 text-lg font-semibold text-gray-900">待人工确认 / 待审批事项</h2>
+          {overview.pending_tasks.length === 0 && overview.pending_approvals.length === 0 ? (
             <p className="text-sm text-gray-400">暂无 Agent 建议待审批</p>
           ) : (
             <div className="space-y-3">
+              {overview.pending_tasks.slice(0, 3).map((task) => (
+                <div key={`review-${task.id}`} className="rounded-lg border border-amber-100 bg-amber-50 p-3">
+                  <div className="text-sm font-medium text-amber-900">{task.title}</div>
+                  <p className="mt-1 text-xs text-amber-700">任务草稿需人工确认后才能派发</p>
+                </div>
+              ))}
               {overview.pending_approvals.map((item) => (
                 <div key={item.id} className="rounded-lg border border-gray-100 p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -484,6 +614,66 @@ export default function AiCommandCenterPage() {
                 />
               </label>
             </div>
+            {agentType === "cost_control_agent" && (
+              <div className="grid gap-3 md:grid-cols-4">
+                <label className="grid gap-1 text-sm text-gray-600">
+                  VIN 调用量
+                  <input
+                    value={expectedVinCalls}
+                    onChange={(event) => setExpectedVinCalls(event.target.value)}
+                    inputMode="numeric"
+                    className="h-10 rounded-lg border border-gray-200 px-3 text-sm"
+                    placeholder="默认按资产数"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-gray-600">
+                  高级车况调用量
+                  <input
+                    value={expectedConditionPricingCalls}
+                    onChange={(event) => setExpectedConditionPricingCalls(event.target.value)}
+                    inputMode="numeric"
+                    className="h-10 rounded-lg border border-gray-200 px-3 text-sm"
+                    placeholder="默认按估值缺口"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-gray-600">
+                  AI 报告数量
+                  <input
+                    value={expectedAiReports}
+                    onChange={(event) => setExpectedAiReports(event.target.value)}
+                    inputMode="numeric"
+                    className="h-10 rounded-lg border border-gray-200 px-3 text-sm"
+                    placeholder="默认 1"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-gray-600">
+                  单次预算
+                  <input
+                    value={singleTaskBudget}
+                    onChange={(event) => setSingleTaskBudget(event.target.value)}
+                    inputMode="decimal"
+                    className="h-10 rounded-lg border border-gray-200 px-3 text-sm"
+                    placeholder="可选"
+                  />
+                </label>
+              </div>
+            )}
+            {agentType === "report_generation_agent" && (
+              <label className="grid gap-1 text-sm text-gray-600 md:max-w-xs">
+                报告草稿类型
+                <select
+                  value={reportType}
+                  onChange={(event) => setReportType(event.target.value)}
+                  className="h-10 rounded-lg border border-gray-200 px-3 text-sm"
+                >
+                  {Object.entries(REPORT_TYPE_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <button
               type="button"
               onClick={submitCommand}
@@ -496,7 +686,7 @@ export default function AiCommandCenterPage() {
           </div>
 
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <div className="mb-3 text-sm font-semibold text-gray-900">最近执行</div>
+            <div className="mb-3 text-sm font-semibold text-gray-900">最近 10 次 Agent run</div>
             {latestRun ? (
               <div className="space-y-3">
                 <div className="text-xs text-gray-500">
@@ -524,6 +714,8 @@ export default function AiCommandCenterPage() {
           </div>
         </div>
       </section>
+
+      {currentRole === "admin" && <AuditLogPanel logs={auditLogs} />}
     </div>
   );
 }
