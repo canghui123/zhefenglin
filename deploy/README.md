@@ -96,7 +96,7 @@ bash setup.sh
 ### 第六步：验证
 
 ```bash
-# 一键 smoke check：容器状态、后端 import、健康检查、前端页面
+# 一键 smoke check：容器状态、后端 import、Alembic head、健康检查、前端页面
 bash smoke-check.sh
 
 # 检查所有服务状态
@@ -156,6 +156,7 @@ cd deploy
 docker compose build backend frontend
 docker compose run --rm backend alembic upgrade head
 docker compose up -d
+bash smoke-check.sh
 ```
 
 ### 数据库备份与恢复

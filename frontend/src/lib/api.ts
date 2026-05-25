@@ -305,6 +305,42 @@ export async function listAiDecisionAuditLogs(limit: number = 20) {
   return request<DecisionAuditLog[]>(`/api/ai-command-center/decision-audit-logs?limit=${limit}`);
 }
 
+export async function getAiAgentRuleSettings(params?: { agent_type?: string; scenario?: string }) {
+  const query = new URLSearchParams();
+  if (params?.agent_type) query.set("agent_type", params.agent_type);
+  if (params?.scenario) query.set("scenario", params.scenario);
+  const qs = query.toString();
+  return request<AgentRuleSettings>(`/api/ai-command-center/settings${qs ? `?${qs}` : ""}`);
+}
+
+export async function updateAiAgentRuleSettings(input: AgentRuleSettingsInput) {
+  return request<AgentRuleSettings>("/api/ai-command-center/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listAiAgentRuleProfiles() {
+  return request<AgentRuleProfileSummary[]>("/api/ai-command-center/settings/profiles");
+}
+
+export async function listAiAgentRunReviews(limit: number = 20) {
+  return request<AgentRunReview[]>(`/api/ai-command-center/run-reviews?limit=${limit}`);
+}
+
+export async function getAiAgentRunReviewInsights(limit: number = 100) {
+  return request<AgentReviewInsight>(`/api/ai-command-center/run-reviews/insights?limit=${limit}`);
+}
+
+export async function createAiAgentRunReview(runId: number, input: AgentRunReviewInput) {
+  return request<AgentRunReview>(`/api/ai-command-center/runs/${runId}/reviews`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 export async function listDisposalTasks(params?: { status?: string; task_type?: string }) {
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
@@ -1383,6 +1419,7 @@ export interface AgentRunCreateInput {
   expected_ai_reports?: number;
   single_task_budget?: number;
   report_type?: string;
+  rule_scenario?: string;
 }
 
 export interface AgentRun {
@@ -1455,6 +1492,74 @@ export interface DecisionAuditLog {
   requires_human_review: boolean;
   created_at: string;
   after: Record<string, unknown>;
+}
+
+export interface AgentRuleSettingsInput {
+  agent_type?: string;
+  scenario?: string;
+  is_active?: boolean;
+  operation_high_priority_limit: number;
+  operation_data_gap_min_count: number;
+  task_max_drafts: number;
+  task_urgent_deadline_days: number;
+  task_normal_deadline_days: number;
+  cost_budget_warning_percent: number;
+  cost_condition_call_approval_threshold: number;
+  cost_ai_report_merge_threshold: number;
+  report_confidence_floor: number;
+  report_max_sections: number;
+}
+
+export interface AgentRuleSettings extends AgentRuleSettingsInput {
+  tenant_id: number;
+  agent_type: string;
+  scenario: string;
+  version: number;
+  is_active: boolean;
+  updated_by: number | null;
+  updated_at: string | null;
+}
+
+export interface AgentRuleProfileSummary {
+  tenant_id: number;
+  agent_type: string;
+  scenario: string;
+  version: number;
+  is_active: boolean;
+  updated_by: number | null;
+  updated_at: string | null;
+}
+
+export interface AgentRunReviewInput {
+  outcome: "accepted" | "rejected" | "partial" | "needs_revision";
+  usefulness_score: number;
+  accuracy_score: number;
+  accepted_actions_count: number;
+  rejected_actions_count: number;
+  follow_up_required: boolean;
+  feedback?: string | null;
+}
+
+export interface AgentRunReview extends AgentRunReviewInput {
+  id: number;
+  tenant_id: number;
+  agent_run_id: number;
+  reviewer_user_id: number | null;
+  feedback: string | null;
+  created_at: string;
+}
+
+export interface AgentReviewInsight {
+  tenant_id: number;
+  review_count: number;
+  average_usefulness_score: number;
+  average_accuracy_score: number;
+  accepted_actions_count: number;
+  rejected_actions_count: number;
+  follow_up_required_count: number;
+  acceptance_rate: number;
+  recommendations: string[];
+  requires_human_review: boolean;
 }
 
 export interface DisposalTask {

@@ -48,6 +48,8 @@ REQUIRED_TABLES = sorted([
     "agent_tasks",
     "agent_recommendations",
     "decision_audit_logs",
+    "agent_rule_settings",
+    "agent_run_reviews",
 ])
 
 
@@ -138,6 +140,43 @@ def test_decision_audit_log_decision_type_is_required(test_db_url, monkeypatch):
 
     assert columns["decision_type"]["nullable"] is False
     assert columns["action"]["nullable"] is False
+
+    engine.dispose()
+
+
+def test_agent_governance_tables_have_tenant_boundaries(test_db_url, monkeypatch):
+    """AI Agent settings and reviews must stay tenant-scoped."""
+    monkeypatch.setenv("DATABASE_URL", test_db_url)
+    alembic_cfg = _alembic_config()
+
+    upgrade(alembic_cfg, "head")
+
+    engine = create_engine(test_db_url)
+    inspector = inspect(engine)
+
+    settings_uniques = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("agent_rule_settings")
+    }
+    assert ("tenant_id", "agent_type", "scenario", "version") in settings_uniques
+
+    settings_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("agent_rule_settings")
+    }
+    assert settings_columns["tenant_id"]["nullable"] is False
+    assert settings_columns["agent_type"]["nullable"] is False
+    assert settings_columns["scenario"]["nullable"] is False
+    assert settings_columns["version"]["nullable"] is False
+    assert settings_columns["is_active"]["nullable"] is False
+
+    review_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("agent_run_reviews")
+    }
+    assert review_columns["tenant_id"]["nullable"] is False
+    assert review_columns["agent_run_id"]["nullable"] is False
+    assert review_columns["outcome"]["nullable"] is False
 
     engine.dispose()
 

@@ -23,6 +23,7 @@ from db.models.work_order import WorkOrder
 from models.ai_command import (
     AgentEvidence,
     AgentOutput,
+    AgentRuleSettings,
     AgentRunCreate,
     AgentRunOut,
     AgentTaskOut,
@@ -495,24 +496,73 @@ def _top_segments(
     )[:limit]
 
 
-def _operation_plan_payload(portfolio: PortfolioContext, package: PackageContext) -> dict[str, Any]:
+def _rule_profile_from_row(row) -> dict[str, Any]:
+    if row is None:
+        return {
+            "agent_type": agent_repo.GLOBAL_RULE_AGENT_TYPE,
+            "scenario": agent_repo.DEFAULT_RULE_SCENARIO,
+            "version": 1,
+            "is_active": True,
+            "resolved_from": "system_default",
+        }
+    return {
+        "agent_type": row.agent_type,
+        "scenario": row.scenario,
+        "version": row.version,
+        "is_active": row.is_active,
+        "resolved_from": "tenant_profile",
+    }
+
+
+def _rule_settings_evidence(
+    rule_settings: AgentRuleSettings,
+    rule_profile: dict[str, Any],
+) -> AgentEvidence:
+    thresholds = rule_settings.model_dump()
+    return AgentEvidence(
+        source="agent_rule_settings",
+        label="rule_thresholds",
+        value={
+            **thresholds,
+            "profile": rule_profile,
+            "thresholds": thresholds,
+        },
+        evidence_source="agent_rule_settings",
+        related_object_type="tenant_agent_rules",
+        related_object_id=f"{rule_profile.get('agent_type')}:{rule_profile.get('scenario')}:v{rule_profile.get('version')}",
+        calculation_basis="租户级 Agent/场景/版本化规则阈值配置",
+        data_quality_notes="阈值只影响草稿生成和预警强度，不会自动执行业务动作",
+    )
+
+
+def _operation_plan_payload(
+    portfolio: PortfolioContext,
+    package: PackageContext,
+    rule_settings: AgentRuleSettings,
+) -> dict[str, Any]:
     segments = portfolio.segments
     capacity = portfolio.capacity_plan
-    high_priority = _top_segments(segments, "expected_loss_amount", limit=5)
+    pool_limit = rule_settings.operation_high_priority_limit
+    high_priority = _top_segments(segments, "expected_loss_amount", limit=pool_limit)
     auction_pool = [
         item.model_dump()
-        for item in ((capacity.current_month_execution_plan if capacity else [])[:5])
+        for item in ((capacity.current_month_execution_plan if capacity else [])[:pool_limit])
         if item.task_type == "auction"
     ]
     legal_pool = [
         item.model_dump()
-        for item in ((capacity.current_month_execution_plan if capacity else [])[:5])
+        for item in ((capacity.current_month_execution_plan if capacity else [])[:pool_limit])
         if item.task_type in {"litigation", "special_procedure"}
     ]
     data_pool = []
     if package.package is not None:
         counts = _asset_counts(package.assets)
-        if counts["missing_valuation_count"] or counts["gps_offline_count"] or counts["ownership_pending_count"]:
+        data_gap_count = (
+            counts["missing_valuation_count"]
+            + counts["gps_offline_count"]
+            + counts["ownership_pending_count"]
+        )
+        if data_gap_count >= rule_settings.operation_data_gap_min_count:
             data_pool.append(
                 {
                     "package_id": package.package.id,
@@ -522,8 +572,11 @@ def _operation_plan_payload(portfolio: PortfolioContext, package: PackageContext
                     "ownership_pending_count": counts["ownership_pending_count"],
                 }
             )
-    paused_pool = [item.model_dump() for item in (capacity.paused_pool if capacity else [])[:5]]
-    deferred_pool = [item.model_dump() for item in (capacity.next_month_deferred_pool if capacity else [])[:5]]
+    paused_pool = [item.model_dump() for item in (capacity.paused_pool if capacity else [])[:pool_limit]]
+    deferred_pool = [
+        item.model_dump()
+        for item in (capacity.next_month_deferred_pool if capacity else [])[:pool_limit]
+    ]
     return {
         "weekly_focus": [
             "优先处理高损失贡献分层",
@@ -551,10 +604,16 @@ def _operation_plan_payload(portfolio: PortfolioContext, package: PackageContext
             "cash_90d": sum(float(segment.get("cash_90d") or 0) for segment in segments),
             "cash_180d": sum(float(segment.get("cash_180d") or 0) for segment in segments),
         },
+        "thresholds": rule_settings.model_dump(),
     }
 
 
-def _operation_planning_agent(package: PackageContext, portfolio: PortfolioContext) -> AgentOutput:
+def _operation_planning_agent(
+    package: PackageContext,
+    portfolio: PortfolioContext,
+    rule_settings: AgentRuleSettings,
+    rule_profile: dict[str, Any],
+) -> AgentOutput:
     evidence = _base_evidence(package)
     if portfolio.empty_reason and not portfolio.segments and package.package is None:
         return AgentOutput(
@@ -563,11 +622,15 @@ def _operation_planning_agent(package: PackageContext, portfolio: PortfolioConte
             recommended_actions=["先导入组合数据或上传资产包，再生成本周作战计划"],
             risk_warnings=["无底层资产与产能数据时不得形成正式运营排期"],
             confidence_score=0.35,
-            evidence=evidence + [_agent_status_evidence("operation_planning_agent")],
+            evidence=evidence
+            + [
+                _agent_status_evidence("operation_planning_agent"),
+                _rule_settings_evidence(rule_settings, rule_profile),
+            ],
             requires_human_review=True,
         )
 
-    plan = _operation_plan_payload(portfolio, package)
+    plan = _operation_plan_payload(portfolio, package, rule_settings)
     findings = [
         f"高优先级资产池 {len(plan['high_priority_asset_pool'])} 个分层。",
         f"建议竞拍池 {len(plan['auction_pool'])} 个分层。",
@@ -597,6 +660,7 @@ def _operation_planning_agent(package: PackageContext, portfolio: PortfolioConte
         evidence=evidence
         + [
             _agent_status_evidence("operation_planning_agent"),
+            _rule_settings_evidence(rule_settings, rule_profile),
             AgentEvidence(
                 source="portfolio_capacity_plan",
                 label="operation_plan",
@@ -645,8 +709,15 @@ def _task_draft(
     }
 
 
-def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, request: AgentRunCreate) -> list[dict[str, Any]]:
+def _build_task_drafts(
+    package: PackageContext,
+    portfolio: PortfolioContext,
+    request: AgentRunCreate,
+    rule_settings: AgentRuleSettings,
+) -> list[dict[str, Any]]:
     drafts: list[dict[str, Any]] = []
+    urgent_days = rule_settings.task_urgent_deadline_days
+    normal_days = rule_settings.task_normal_deadline_days
     if package.package is not None:
         counts = _asset_counts(package.assets)
         package_id = str(package.package.id)
@@ -660,7 +731,7 @@ def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, req
                     related_object_type="asset_package",
                     related_object_id=package_id,
                     suggested_owner_role="operator",
-                    deadline_days=3,
+                    deadline_days=urgent_days,
                     required_documents=["车辆照片", "GPS 状态证明", "权属材料", "保险状态"],
                     expected_result="形成可复核的补资料清单并更新资产包风险状态",
                 )
@@ -675,7 +746,7 @@ def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, req
                     related_object_type="asset_package",
                     related_object_id=package_id,
                     suggested_owner_role="operator",
-                    deadline_days=2,
+                    deadline_days=urgent_days,
                     required_documents=["车300估值记录", "人工复核备注"],
                     expected_result="补齐估值记录并标注估值置信度",
                 )
@@ -690,7 +761,7 @@ def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, req
                     related_object_type="asset_package",
                     related_object_id=package_id,
                     suggested_owner_role="manager",
-                    deadline_days=5,
+                    deadline_days=normal_days,
                     required_documents=["定价结果", "风险提示", "竞拍底价审批记录"],
                     expected_result="形成待经理确认的竞拍准备清单",
                 )
@@ -705,7 +776,7 @@ def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, req
                         related_object_type="asset_package",
                         related_object_id=package_id,
                         suggested_owner_role="manager",
-                        deadline_days=5,
+                        deadline_days=normal_days,
                         required_documents=["贷款合同", "抵押登记", "债权余额表", "转让限制核查"],
                         expected_result="输出法务材料缺口和是否可推进出让的人工意见",
                     )
@@ -720,7 +791,7 @@ def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, req
                 related_object_type="asset_package",
                 related_object_id=str(package.package.id),
                 suggested_owner_role="manager",
-                deadline_days=1,
+                deadline_days=urgent_days,
                 required_documents=["买方报价单", "系统建议价", "谈判记录"],
                 expected_result="形成是否进入审批的买方报价复核意见",
             )
@@ -736,7 +807,7 @@ def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, req
                     related_object_type="portfolio_segment",
                     related_object_id=item.segment_name,
                     suggested_owner_role="operator",
-                    deadline_days=7,
+                    deadline_days=normal_days,
                     required_documents=["催收记录", "还款承诺", "客户联系记录"],
                     expected_result="更新催收进展和下一步处置建议",
                 )
@@ -750,17 +821,23 @@ def _build_task_drafts(package: PackageContext, portfolio: PortfolioContext, req
             related_object_type="agent_run",
             related_object_id=None,
             suggested_owner_role="manager",
-            deadline_days=7,
+            deadline_days=normal_days,
             required_documents=["Agent 输出", "证据列表", "人工复核意见"],
             expected_result="确认报告草稿是否可进入正式审批或客户演示",
         )
     )
-    return drafts[:8]
+    return drafts[:rule_settings.task_max_drafts]
 
 
-def _task_generation_agent(package: PackageContext, portfolio: PortfolioContext, request: AgentRunCreate) -> AgentOutput:
+def _task_generation_agent(
+    package: PackageContext,
+    portfolio: PortfolioContext,
+    request: AgentRunCreate,
+    rule_settings: AgentRuleSettings,
+    rule_profile: dict[str, Any],
+) -> AgentOutput:
     evidence = _base_evidence(package)
-    drafts = _build_task_drafts(package, portfolio, request)
+    drafts = _build_task_drafts(package, portfolio, request, rule_settings)
     if not drafts:
         return AgentOutput(
             summary="暂无足够数据生成任务草稿。",
@@ -768,7 +845,11 @@ def _task_generation_agent(package: PackageContext, portfolio: PortfolioContext,
             recommended_actions=["先上传资产包、生成定价结果或导入真实组合数据"],
             risk_warnings=["不得在无依据时自动派发任务"],
             confidence_score=0.35,
-            evidence=evidence + [_agent_status_evidence("task_generation_agent")],
+            evidence=evidence
+            + [
+                _agent_status_evidence("task_generation_agent"),
+                _rule_settings_evidence(rule_settings, rule_profile),
+            ],
             requires_human_review=True,
         )
     return AgentOutput(
@@ -787,6 +868,7 @@ def _task_generation_agent(package: PackageContext, portfolio: PortfolioContext,
         evidence=evidence
         + [
             _agent_status_evidence("task_generation_agent"),
+            _rule_settings_evidence(rule_settings, rule_profile),
             AgentEvidence(
                 source="agent_task_drafts",
                 label="task_drafts",
@@ -822,7 +904,14 @@ def _resource_usage(session: Session, *, tenant_id: int, resource_type: str) -> 
     )
 
 
-def _cost_control_agent(session: Session, tenant_id: int, package: PackageContext, request: AgentRunCreate) -> AgentOutput:
+def _cost_control_agent(
+    session: Session,
+    tenant_id: int,
+    package: PackageContext,
+    request: AgentRunCreate,
+    rule_settings: AgentRuleSettings,
+    rule_profile: dict[str, Any],
+) -> AgentOutput:
     evidence = _base_evidence(package)
     asset_count = len(package.assets) or int(package.package.total_assets if package.package else 0)
     vin_calls = int(request.expected_vin_calls if request.expected_vin_calls is not None else asset_count)
@@ -868,12 +957,20 @@ def _cost_control_agent(session: Session, tenant_id: int, package: PackageContex
     single_budget_exceeded = (
         request.single_task_budget is not None and estimated_cost > float(request.single_task_budget)
     )
-    budget_warning = bool(over_quota or single_budget_exceeded or (budget_limit > 0 and estimated_cost > budget_limit * 0.8))
-    approval_required = bool(budget_warning or condition_calls > 0)
+    budget_threshold = budget_limit * rule_settings.cost_budget_warning_percent
+    budget_warning = bool(
+        over_quota
+        or single_budget_exceeded
+        or (budget_limit > 0 and estimated_cost > budget_threshold)
+    )
+    condition_approval_triggered = (
+        condition_calls >= rule_settings.cost_condition_call_approval_threshold
+    )
+    approval_required = bool(budget_warning or condition_approval_triggered)
     downgrade_suggestion = []
-    if condition_calls > 0:
+    if condition_approval_triggered:
         downgrade_suggestion.append("高级车况估值可先降级为基础估值，异常车辆再补人工复核")
-    if ai_reports > 1:
+    if ai_reports >= rule_settings.cost_ai_report_merge_threshold:
         downgrade_suggestion.append("AI 报告先合并为一份经理复核版，避免重复生成")
     if over_quota:
         downgrade_suggestion.append(f"超出额度项：{'、'.join(over_quota)}，需审批或调整批量范围")
@@ -885,6 +982,7 @@ def _cost_control_agent(session: Session, tenant_id: int, package: PackageContex
         "budget_limit": budget_limit,
         "budget_warning": budget_warning,
         "approval_required": approval_required,
+        "thresholds": rule_settings.model_dump(),
         "downgrade_suggestion": downgrade_suggestion or ["当前请求可按基础模式执行，正式调用前仍需人工确认"],
         "recommended_action": "提交管理员复核" if approval_required else "可进入人工确认后的低成本执行",
     }
@@ -901,6 +999,7 @@ def _cost_control_agent(session: Session, tenant_id: int, package: PackageContex
         evidence=evidence
         + [
             _agent_status_evidence("cost_control_agent"),
+            _rule_settings_evidence(rule_settings, rule_profile),
             AgentEvidence(
                 source="quota_and_usage",
                 label="cost_control",
@@ -916,7 +1015,13 @@ def _cost_control_agent(session: Session, tenant_id: int, package: PackageContex
     )
 
 
-def _report_generation_agent(package: PackageContext, portfolio: PortfolioContext, request: AgentRunCreate) -> AgentOutput:
+def _report_generation_agent(
+    package: PackageContext,
+    portfolio: PortfolioContext,
+    request: AgentRunCreate,
+    rule_settings: AgentRuleSettings,
+    rule_profile: dict[str, Any],
+) -> AgentOutput:
     evidence = _base_evidence(package)
     report_type = request.report_type or "executive_summary"
     supported = {
@@ -927,41 +1032,48 @@ def _report_generation_agent(package: PackageContext, portfolio: PortfolioContex
     }
     if report_type not in supported:
         report_type = "executive_summary"
-    plan = _operation_plan_payload(portfolio, package)
+    plan = _operation_plan_payload(portfolio, package, rule_settings)
     summary = package.result.summary if package.result else None
+    sections = [
+        {
+            "heading": "核心判断",
+            "content": (
+                f"资产包建议中位价约 {summary.recommended_transfer_price_mid:,.0f} 元，需人工复核。"
+                if summary
+                else "当前缺少完整定价结果，报告仅作为草稿。"
+            ),
+        },
+        {
+            "heading": "运营重点",
+            "content": "；".join(plan["weekly_focus"]),
+        },
+        {
+            "heading": "风险提示",
+            "content": "Agent 不会自动下载、外发、审批或替代法律结论。",
+        },
+    ][:rule_settings.report_max_sections]
     draft = {
         "report_type": report_type,
         "title": supported[report_type],
-        "sections": [
-            {
-                "heading": "核心判断",
-                "content": (
-                    f"资产包建议中位价约 {summary.recommended_transfer_price_mid:,.0f} 元，需人工复核。"
-                    if summary
-                    else "当前缺少完整定价结果，报告仅作为草稿。"
-                ),
-            },
-            {
-                "heading": "运营重点",
-                "content": "；".join(plan["weekly_focus"]),
-            },
-            {
-                "heading": "风险提示",
-                "content": "Agent 不会自动下载、外发、审批或替代法律结论。",
-            },
-        ],
+        "sections": sections,
         "requires_human_review": True,
         "distribution": "draft_only",
+        "thresholds": rule_settings.model_dump(),
     }
+    confidence = min(
+        0.9,
+        max(rule_settings.report_confidence_floor, 0.68 if package.package or portfolio.segments else 0.4),
+    )
     return AgentOutput(
         summary=f"已生成《{supported[report_type]}》草稿，不会自动下载或对外发送。",
         key_findings=[section["heading"] for section in draft["sections"]],
         recommended_actions=["经理复核报告草稿", "补充人工意见和证据附件", "确认后再进入正式导出或客户沟通流程"],
         risk_warnings=["报告生成 Agent 只生成草稿，不自动下载、不自动发送、不替代法律结论"],
-        confidence_score=0.68 if package.package or portfolio.segments else 0.4,
+        confidence_score=confidence,
         evidence=evidence
         + [
             _agent_status_evidence("report_generation_agent"),
+            _rule_settings_evidence(rule_settings, rule_profile),
             AgentEvidence(
                 source="report_draft",
                 label="report_draft",
@@ -1016,17 +1128,25 @@ def _run_agent_logic(session: Session, *, tenant_id: int, request: AgentRunCreat
         return _analyze_pricing(context)
     if agent_type == "buyer_offer_analysis_agent":
         return _analyze_buyer_offer(context, request)
+    rule_row = agent_repo.resolve_rule_settings_row(
+        session,
+        tenant_id=tenant_id,
+        agent_type=agent_type,
+        scenario=request.rule_scenario,
+    )
+    rule_settings = agent_repo.to_rule_settings(rule_row) if rule_row else AgentRuleSettings()
+    rule_profile = _rule_profile_from_row(rule_row)
     if agent_type == "operation_planning_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
-        return _operation_planning_agent(context, portfolio)
+        return _operation_planning_agent(context, portfolio, rule_settings, rule_profile)
     if agent_type == "task_generation_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
-        return _task_generation_agent(context, portfolio, request)
+        return _task_generation_agent(context, portfolio, request, rule_settings, rule_profile)
     if agent_type == "report_generation_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
-        return _report_generation_agent(context, portfolio, request)
+        return _report_generation_agent(context, portfolio, request, rule_settings, rule_profile)
     if agent_type == "cost_control_agent":
-        return _cost_control_agent(session, tenant_id, context, request)
+        return _cost_control_agent(session, tenant_id, context, request, rule_settings, rule_profile)
     return _mock_agent(agent_type)
 
 

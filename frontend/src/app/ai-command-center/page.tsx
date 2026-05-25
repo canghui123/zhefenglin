@@ -356,6 +356,7 @@ export default function AiCommandCenterPage() {
   const [expectedAiReports, setExpectedAiReports] = useState("");
   const [singleTaskBudget, setSingleTaskBudget] = useState("");
   const [reportType, setReportType] = useState("executive_summary");
+  const [ruleScenario, setRuleScenario] = useState("default");
   const [auditLogs, setAuditLogs] = useState<DecisionAuditLog[]>([]);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const currentRole = user?.role;
@@ -416,6 +417,11 @@ export default function AiCommandCenterPage() {
         expected_ai_reports: Number.isFinite(aiReports) && aiReports >= 0 ? aiReports : undefined,
         single_task_budget: Number.isFinite(budget) && budget > 0 ? budget : undefined,
         report_type: agentType === "report_generation_agent" ? reportType : undefined,
+        rule_scenario:
+          agentType &&
+          ["operation_planning_agent", "task_generation_agent", "report_generation_agent", "cost_control_agent"].includes(agentType)
+            ? ruleScenario.trim() || "default"
+            : undefined,
       });
       setLatestRun(run);
       await load();
@@ -674,6 +680,18 @@ export default function AiCommandCenterPage() {
                 </select>
               </label>
             )}
+            {agentType &&
+              ["operation_planning_agent", "task_generation_agent", "report_generation_agent", "cost_control_agent"].includes(agentType) && (
+                <label className="grid gap-1 text-sm text-gray-600 md:max-w-xs">
+                  规则场景
+                  <input
+                    value={ruleScenario}
+                    onChange={(event) => setRuleScenario(event.target.value)}
+                    className="h-10 rounded-lg border border-gray-200 px-3 text-sm"
+                    placeholder="default"
+                  />
+                </label>
+              )}
             <button
               type="button"
               onClick={submitCommand}

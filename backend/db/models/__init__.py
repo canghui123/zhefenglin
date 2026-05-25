@@ -45,4 +45,6 @@ from db.models.agent import (  # noqa: F401
     AgentTask,
     AgentRecommendation,
     DecisionAuditLog,
+    AgentRuleSetting,
+    AgentRunReview,
 )

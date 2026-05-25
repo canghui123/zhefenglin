@@ -24,6 +24,16 @@ echo "== compose services =="
 echo "== backend import =="
 "${COMPOSE[@]}" exec -T backend python -c 'from main import app; print("backend import ok")'
 
+echo "== alembic migration =="
+CURRENT_REVISION="$("${COMPOSE[@]}" exec -T backend alembic current | awk '/^[0-9]/ {print $1}' | tail -1)"
+HEAD_REVISION="$("${COMPOSE[@]}" exec -T backend alembic heads | awk '/^[0-9]/ {print $1}' | tail -1)"
+if [ -z "$CURRENT_REVISION" ] || [ -z "$HEAD_REVISION" ] || [ "$CURRENT_REVISION" != "$HEAD_REVISION" ]; then
+  echo "alembic migration is not at head: current=${CURRENT_REVISION:-unknown}, head=${HEAD_REVISION:-unknown}" >&2
+  echo "run: docker compose run --rm backend alembic upgrade head" >&2
+  exit 1
+fi
+echo "alembic current=head (${CURRENT_REVISION})"
+
 echo "== health =="
 curl -k -fsS "${BASE_URL}/api/health"
 echo

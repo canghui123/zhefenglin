@@ -484,6 +484,315 @@ def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
             pass
 
 
+def test_agent_rule_settings_are_admin_configurable_and_audited():
+    from db.session import get_db_session
+    from repositories import agent_repo, tenant_repo
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    manager = seed_user_and_login(
+        "ai-rules-manager@example.com",
+        role="manager",
+        tenant_code="ai-rules",
+    )
+    defaults = manager.get("/api/ai-command-center/settings")
+    assert defaults.status_code == 200, defaults.text
+    assert defaults.json()["task_max_drafts"] == 8
+
+    denied = manager.put(
+        "/api/ai-command-center/settings",
+        json={**defaults.json(), "task_max_drafts": 2},
+    )
+    assert denied.status_code == 403, denied.text
+
+    admin = seed_user_and_login(
+        "ai-rules-admin@example.com",
+        role="admin",
+        tenant_code="ai-rules",
+    )
+    payload = {
+        "operation_high_priority_limit": 1,
+        "operation_data_gap_min_count": 2,
+        "task_max_drafts": 2,
+        "task_urgent_deadline_days": 2,
+        "task_normal_deadline_days": 9,
+        "cost_budget_warning_percent": 0.6,
+        "cost_condition_call_approval_threshold": 3,
+        "cost_ai_report_merge_threshold": 3,
+        "report_confidence_floor": 0.6,
+        "report_max_sections": 2,
+    }
+    updated = admin.put("/api/ai-command-center/settings", json=payload)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["task_max_drafts"] == 2
+    assert updated.json()["operation_high_priority_limit"] == 1
+    assert updated.json()["agent_type"] == "global"
+    assert updated.json()["scenario"] == "default"
+    assert updated.json()["version"] == 1
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, "ai-rules")
+        assert tenant is not None
+        settings = agent_repo.get_rule_settings(session, tenant_id=tenant.id)
+        assert settings.task_max_drafts == 2
+        logs = agent_repo.list_decision_audit_logs(session, tenant_id=tenant.id, limit=10)
+        assert logs[0].decision_type == "agent_rule_settings"
+        assert logs[0].action == "updated"
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_agent_rule_settings_drive_rule_based_agent_outputs():
+    from tests.api.admin_commercial_helpers import seed_subscription, seed_user_and_login
+
+    admin = seed_user_and_login(
+        "ai-rules-output-admin@example.com",
+        role="admin",
+        tenant_code="ai-rules-output",
+    )
+    manager = seed_user_and_login(
+        "ai-rules-output-manager@example.com",
+        role="manager",
+        tenant_code="ai-rules-output",
+    )
+    seed_subscription(tenant_code="ai-rules-output", plan_code="standard", monthly_budget_limit=5000)
+    package_id = _seed_asset_package("ai-rules-output", with_result=True)
+    _seed_portfolio_snapshot("ai-rules-output")
+
+    settings_payload = {
+        "operation_high_priority_limit": 1,
+        "operation_data_gap_min_count": 1,
+        "task_max_drafts": 2,
+        "task_urgent_deadline_days": 2,
+        "task_normal_deadline_days": 9,
+        "cost_budget_warning_percent": 0.9,
+        "cost_condition_call_approval_threshold": 3,
+        "cost_ai_report_merge_threshold": 3,
+        "report_confidence_floor": 0.6,
+        "report_max_sections": 2,
+    }
+    assert admin.put("/api/ai-command-center/settings", json=settings_payload).status_code == 200
+
+    operation = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "operation_planning_agent", "asset_package_id": package_id},
+    )
+    assert operation.status_code == 200, operation.text
+    operation_plan = next(
+        item for item in operation.json()["output"]["evidence"] if item["label"] == "operation_plan"
+    )
+    assert len(operation_plan["value"]["high_priority_asset_pool"]) <= 1
+    thresholds = next(
+        item for item in operation.json()["output"]["evidence"] if item["label"] == "rule_thresholds"
+    )
+    assert thresholds["value"]["operation_high_priority_limit"] == 1
+
+    tasks = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "task_generation_agent", "asset_package_id": package_id},
+    )
+    assert tasks.status_code == 200, tasks.text
+    drafts = next(item for item in tasks.json()["output"]["evidence"] if item["label"] == "task_drafts")
+    assert len(drafts["value"]) <= 2
+    assert drafts["value"][0]["deadline_suggestion"]
+
+    cost = admin.post(
+        "/api/ai-command-center/runs",
+        json={
+            "agent_type": "cost_control_agent",
+            "asset_package_id": package_id,
+            "expected_vin_calls": 0,
+            "expected_condition_pricing_calls": 2,
+            "expected_ai_reports": 2,
+            "single_task_budget": 500,
+        },
+    )
+    assert cost.status_code == 200, cost.text
+    cost_payload = next(item for item in cost.json()["output"]["evidence"] if item["label"] == "cost_control")
+    assert cost_payload["value"]["thresholds"]["cost_condition_call_approval_threshold"] == 3
+    assert cost_payload["value"]["approval_required"] is False
+
+    report = manager.post(
+        "/api/ai-command-center/runs",
+        json={
+            "agent_type": "report_generation_agent",
+            "asset_package_id": package_id,
+            "report_type": "weekly_operation_report",
+        },
+    )
+    assert report.status_code == 200, report.text
+    report_draft = next(item for item in report.json()["output"]["evidence"] if item["label"] == "report_draft")
+    assert len(report_draft["value"]["sections"]) == 2
+    assert report.json()["output"]["confidence_score"] >= 0.6
+
+
+def test_agent_rule_profiles_are_agent_scenario_and_version_scoped():
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    admin = seed_user_and_login(
+        "ai-rule-profile-admin@example.com",
+        role="admin",
+        tenant_code="ai-rule-profile",
+    )
+    manager = seed_user_and_login(
+        "ai-rule-profile-manager@example.com",
+        role="manager",
+        tenant_code="ai-rule-profile",
+    )
+    package_id = _seed_asset_package("ai-rule-profile", with_result=True)
+    _seed_portfolio_snapshot("ai-rule-profile")
+
+    payload = {
+        "agent_type": "operation_planning_agent",
+        "scenario": "stress_week",
+        "operation_high_priority_limit": 1,
+        "operation_data_gap_min_count": 1,
+        "task_max_drafts": 8,
+        "task_urgent_deadline_days": 1,
+        "task_normal_deadline_days": 7,
+        "cost_budget_warning_percent": 0.8,
+        "cost_condition_call_approval_threshold": 1,
+        "cost_ai_report_merge_threshold": 2,
+        "report_confidence_floor": 0.4,
+        "report_max_sections": 3,
+    }
+    first = admin.put("/api/ai-command-center/settings", json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["version"] == 1
+    assert first.json()["is_active"] is True
+
+    second = admin.put(
+        "/api/ai-command-center/settings",
+        json={**payload, "operation_high_priority_limit": 2},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["version"] == 2
+    assert second.json()["operation_high_priority_limit"] == 2
+
+    profiles = manager.get("/api/ai-command-center/settings/profiles")
+    assert profiles.status_code == 200, profiles.text
+    profile_rows = [
+        row
+        for row in profiles.json()
+        if row["agent_type"] == "operation_planning_agent" and row["scenario"] == "stress_week"
+    ]
+    assert [row["version"] for row in profile_rows] == [2, 1]
+    assert profile_rows[0]["is_active"] is True
+    assert profile_rows[1]["is_active"] is False
+
+    selected = manager.get(
+        "/api/ai-command-center/settings",
+        params={"agent_type": "operation_planning_agent", "scenario": "stress_week"},
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["version"] == 2
+
+    run = manager.post(
+        "/api/ai-command-center/runs",
+        json={
+            "agent_type": "operation_planning_agent",
+            "asset_package_id": package_id,
+            "rule_scenario": "stress_week",
+        },
+    )
+    assert run.status_code == 200, run.text
+    thresholds = next(item for item in run.json()["output"]["evidence"] if item["label"] == "rule_thresholds")
+    assert thresholds["value"]["operation_high_priority_limit"] == 2
+    assert thresholds["value"]["profile"]["agent_type"] == "operation_planning_agent"
+    assert thresholds["value"]["profile"]["scenario"] == "stress_week"
+    assert thresholds["value"]["profile"]["version"] == 2
+
+
+def test_agent_run_review_loop_is_tenant_scoped_and_audited():
+    from db.session import get_db_session
+    from repositories import agent_repo
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    manager = seed_user_and_login(
+        "ai-review-manager@example.com",
+        role="manager",
+        tenant_code="ai-review",
+    )
+    viewer = seed_user_and_login(
+        "ai-review-viewer@example.com",
+        role="viewer",
+        tenant_code="ai-review",
+    )
+    package_id = _seed_asset_package("ai-review", with_result=True)
+    created = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "pricing_strategy_agent", "asset_package_id": package_id},
+    )
+    assert created.status_code == 200, created.text
+    run_id = created.json()["id"]
+
+    denied = viewer.post(
+        f"/api/ai-command-center/runs/{run_id}/reviews",
+        json={"outcome": "accepted", "usefulness_score": 4, "accuracy_score": 4},
+    )
+    assert denied.status_code == 403, denied.text
+
+    review_payload = {
+        "outcome": "partial",
+        "usefulness_score": 4,
+        "accuracy_score": 3,
+        "accepted_actions_count": 2,
+        "rejected_actions_count": 1,
+        "follow_up_required": True,
+        "feedback": "证据充分，但报价建议需要下轮优化。",
+    }
+    created_review = manager.post(
+        f"/api/ai-command-center/runs/{run_id}/reviews",
+        json=review_payload,
+    )
+    assert created_review.status_code == 200, created_review.text
+    assert created_review.json()["agent_run_id"] == run_id
+    assert created_review.json()["follow_up_required"] is True
+
+    reviews = manager.get(f"/api/ai-command-center/runs/{run_id}/reviews")
+    assert reviews.status_code == 200, reviews.text
+    assert reviews.json()[0]["outcome"] == "partial"
+
+    insights = manager.get("/api/ai-command-center/run-reviews/insights")
+    assert insights.status_code == 200, insights.text
+    assert insights.json()["review_count"] == 1
+    assert insights.json()["accepted_actions_count"] == 2
+    assert insights.json()["rejected_actions_count"] == 1
+    assert insights.json()["follow_up_required_count"] == 1
+    assert insights.json()["requires_human_review"] is True
+    assert insights.json()["recommendations"]
+
+    foreign = seed_user_and_login(
+        "ai-review-foreign@example.com",
+        role="manager",
+        tenant_code="ai-review-foreign",
+    )
+    leaked = foreign.post(
+        f"/api/ai-command-center/runs/{run_id}/reviews",
+        json=review_payload,
+    )
+    assert leaked.status_code == 404, leaked.text
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        logs = agent_repo.list_decision_audit_logs(
+            session,
+            tenant_id=created.json()["tenant_id"],
+            limit=10,
+        )
+        assert any(log.decision_type == "agent_run_review" and log.action == "created" for log in logs)
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
 def test_llm_unavailable_uses_fallback_evidence(monkeypatch):
     from config import settings
     from tests.api.admin_commercial_helpers import seed_user_and_login
