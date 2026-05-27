@@ -692,18 +692,22 @@ def _task_draft(
     deadline_days: int,
     required_documents: list[str],
     expected_result: str,
+    evidence: list[dict[str, Any]],
+    confidence_score: float,
 ) -> dict[str, Any]:
     return {
         "title": title,
         "description": description,
-        "priority": priority,
         "task_type": task_type,
-        "related_object_type": related_object_type,
-        "related_object_id": related_object_id,
+        "priority": priority,
         "suggested_owner_role": suggested_owner_role,
         "deadline_suggestion": _deadline(deadline_days),
+        "related_object_type": related_object_type,
+        "related_object_id": related_object_id,
         "required_documents": required_documents,
         "expected_result": expected_result,
+        "evidence": evidence,
+        "confidence_score": round(max(0, min(confidence_score, 1)), 2),
         "status": "draft",
         "requires_human_review": True,
     }
@@ -714,10 +718,12 @@ def _build_task_drafts(
     portfolio: PortfolioContext,
     request: AgentRunCreate,
     rule_settings: AgentRuleSettings,
+    recent_recommendations: list[Any],
 ) -> list[dict[str, Any]]:
     drafts: list[dict[str, Any]] = []
     urgent_days = rule_settings.task_urgent_deadline_days
     normal_days = rule_settings.task_normal_deadline_days
+    recommendation_types = {row.recommendation_type for row in recent_recommendations}
     if package.package is not None:
         counts = _asset_counts(package.assets)
         package_id = str(package.package.id)
@@ -734,6 +740,14 @@ def _build_task_drafts(
                     deadline_days=urgent_days,
                     required_documents=["车辆照片", "GPS 状态证明", "权属材料", "保险状态"],
                     expected_result="形成可复核的补资料清单并更新资产包风险状态",
+                    evidence=[
+                        {"source": "assets", "label": "risk_counts", "value": counts},
+                        {"source": "asset_packages", "label": "package_id", "value": package.package.id},
+                    ],
+                    confidence_score=_confidence_from_coverage(
+                        counts["asset_count"],
+                        counts["missing_valuation_count"],
+                    ),
                 )
             )
         if counts["missing_valuation_count"]:
@@ -749,6 +763,14 @@ def _build_task_drafts(
                     deadline_days=urgent_days,
                     required_documents=["车300估值记录", "人工复核备注"],
                     expected_result="补齐估值记录并标注估值置信度",
+                    evidence=[
+                        {
+                            "source": "assets",
+                            "label": "missing_valuation_count",
+                            "value": counts["missing_valuation_count"],
+                        }
+                    ],
+                    confidence_score=0.78,
                 )
             )
         if package.result is not None:
@@ -764,6 +786,19 @@ def _build_task_drafts(
                     deadline_days=normal_days,
                     required_documents=["定价结果", "风险提示", "竞拍底价审批记录"],
                     expected_result="形成待经理确认的竞拍准备清单",
+                    evidence=[
+                        {
+                            "source": "asset_packages.results_json",
+                            "label": "recommended_transfer_price_mid",
+                            "value": package.result.summary.recommended_transfer_price_mid,
+                        },
+                        {
+                            "source": "asset_packages.results_json",
+                            "label": "tradeability_level",
+                            "value": package.result.summary.tradeability_level,
+                        },
+                    ],
+                    confidence_score=0.74,
                 )
             )
             if package.result.summary.risk_alerts:
@@ -779,9 +814,20 @@ def _build_task_drafts(
                         deadline_days=normal_days,
                         required_documents=["贷款合同", "抵押登记", "债权余额表", "转让限制核查"],
                         expected_result="输出法务材料缺口和是否可推进出让的人工意见",
+                        evidence=[
+                            {
+                                "source": "asset_packages.results_json",
+                                "label": "risk_alerts",
+                                "value": package.result.summary.risk_alerts,
+                            }
+                        ],
+                        confidence_score=0.68,
                     )
                 )
-    if request.buyer_offer_price is not None and package.package is not None:
+    if (
+        (request.buyer_offer_price is not None or "buyer_offer_analysis_agent" in recommendation_types)
+        and package.package is not None
+    ):
         drafts.append(
             _task_draft(
                 title="复核买方报价",
@@ -794,6 +840,52 @@ def _build_task_drafts(
                 deadline_days=urgent_days,
                 required_documents=["买方报价单", "系统建议价", "谈判记录"],
                 expected_result="形成是否进入审批的买方报价复核意见",
+                evidence=[
+                    {"source": "buyer_offer", "label": "buyer_offer_price", "value": request.buyer_offer_price},
+                    {
+                        "source": "agent_recommendations",
+                        "label": "has_prior_buyer_offer_recommendation",
+                        "value": "buyer_offer_analysis_agent" in recommendation_types,
+                    },
+                ],
+                confidence_score=0.72 if request.buyer_offer_price is not None else 0.58,
+            )
+        )
+    if (
+        (request.expected_condition_pricing_calls or 0) >= rule_settings.cost_condition_call_approval_threshold
+        or request.single_task_budget is not None
+        or "cost_control_agent" in recommendation_types
+    ):
+        drafts.append(
+            _task_draft(
+                title="复核高成本能力调用审批",
+                description="本次任务可能涉及高级车况估值、AI 报告或单次预算，需要管理员复核额度与审批边界。",
+                task_type="cost_approval",
+                priority="high",
+                related_object_type="tenant_cost_quota",
+                related_object_id=None,
+                suggested_owner_role="admin",
+                deadline_days=urgent_days,
+                required_documents=["成本预估", "套餐额度", "月度使用量", "审批说明"],
+                expected_result="形成是否允许高成本能力调用的人工审批意见",
+                evidence=[
+                    {
+                        "source": "agent_request",
+                        "label": "expected_condition_pricing_calls",
+                        "value": request.expected_condition_pricing_calls,
+                    },
+                    {
+                        "source": "agent_request",
+                        "label": "single_task_budget",
+                        "value": request.single_task_budget,
+                    },
+                    {
+                        "source": "agent_rule_settings",
+                        "label": "cost_condition_call_approval_threshold",
+                        "value": rule_settings.cost_condition_call_approval_threshold,
+                    },
+                ],
+                confidence_score=0.66,
             )
         )
     for item in (portfolio.capacity_plan.current_month_execution_plan if portfolio.capacity_plan else [])[:2]:
@@ -810,6 +902,19 @@ def _build_task_drafts(
                     deadline_days=normal_days,
                     required_documents=["催收记录", "还款承诺", "客户联系记录"],
                     expected_result="更新催收进展和下一步处置建议",
+                    evidence=[
+                        {
+                            "source": "portfolio_capacity_plan",
+                            "label": "segment_name",
+                            "value": item.segment_name,
+                        },
+                        {
+                            "source": "portfolio_capacity_plan",
+                            "label": "selected_count",
+                            "value": item.selected_count,
+                        },
+                    ],
+                    confidence_score=0.64,
                 )
             )
     drafts.append(
@@ -824,6 +929,14 @@ def _build_task_drafts(
             deadline_days=normal_days,
             required_documents=["Agent 输出", "证据列表", "人工复核意见"],
             expected_result="确认报告草稿是否可进入正式审批或客户演示",
+            evidence=[
+                {
+                    "source": "agent_recommendations",
+                    "label": "recent_recommendation_types",
+                    "value": [row.recommendation_type for row in recent_recommendations],
+                }
+            ],
+            confidence_score=0.55 if recent_recommendations else 0.45,
         )
     )
     return drafts[:rule_settings.task_max_drafts]
@@ -835,9 +948,16 @@ def _task_generation_agent(
     request: AgentRunCreate,
     rule_settings: AgentRuleSettings,
     rule_profile: dict[str, Any],
+    recent_recommendations: list[Any],
 ) -> AgentOutput:
     evidence = _base_evidence(package)
-    drafts = _build_task_drafts(package, portfolio, request, rule_settings)
+    drafts = _build_task_drafts(
+        package,
+        portfolio,
+        request,
+        rule_settings,
+        recent_recommendations,
+    )
     if not drafts:
         return AgentOutput(
             summary="暂无足够数据生成任务草稿。",
@@ -877,6 +997,15 @@ def _task_generation_agent(
                 related_object_type="agent_run",
                 calculation_basis="根据资产包风险、定价结果、买方报价和产能计划生成任务草稿",
                 data_quality_notes="草稿需人工确认后才能进入正式任务派发",
+            ),
+            AgentEvidence(
+                source="agent_recommendations",
+                label="recent_recommendation_types",
+                value=[row.recommendation_type for row in recent_recommendations],
+                evidence_source="agent_recommendations",
+                related_object_type="agent_recommendation",
+                calculation_basis="读取当前租户最近 Agent recommendation，用于补充任务草稿上下文",
+                data_quality_notes="只读取当前租户 recommendation，不跨租户读取",
             ),
         ],
         requires_human_review=True,
@@ -1141,7 +1270,19 @@ def _run_agent_logic(session: Session, *, tenant_id: int, request: AgentRunCreat
         return _operation_planning_agent(context, portfolio, rule_settings, rule_profile)
     if agent_type == "task_generation_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
-        return _task_generation_agent(context, portfolio, request, rule_settings, rule_profile)
+        recent_recommendations = agent_repo.list_recommendations(
+            session,
+            tenant_id=tenant_id,
+            limit=5,
+        )
+        return _task_generation_agent(
+            context,
+            portfolio,
+            request,
+            rule_settings,
+            rule_profile,
+            recent_recommendations,
+        )
     if agent_type == "report_generation_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
         return _report_generation_agent(context, portfolio, request, rule_settings, rule_profile)
@@ -1213,6 +1354,14 @@ def run_agent(
                     "status": "draft",
                     "requires_human_review": True,
                     "description": "任务生成 Agent 未识别到详细草稿，保留人工复核占位任务。",
+                    "suggested_owner_role": "manager",
+                    "deadline_suggestion": _deadline(7),
+                    "related_object_type": "agent_run",
+                    "related_object_id": str(run.id),
+                    "required_documents": ["Agent 输出", "人工复核意见"],
+                    "expected_result": "确认是否需要补充正式任务草稿",
+                    "evidence": [{"source": "agent_run", "label": "agent_run_id", "value": run.id}],
+                    "confidence_score": 0.35,
                 }
             ]
         for draft in task_drafts:
@@ -1379,7 +1528,7 @@ def build_overview(session: Session, *, tenant_id: int, role: str) -> AiCommandO
             _serialize_task(row)
             for row in (
                 agent_repo.list_pending_tasks(session, tenant_id=tenant_id, limit=8)
-                if role_rank(role) >= role_rank("manager")
+                if role_rank(role) >= role_rank("operator")
                 else []
             )
         ],

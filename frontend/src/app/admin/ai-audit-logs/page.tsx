@@ -180,6 +180,7 @@ function LogTable({ logs }: { logs: DecisionAuditLog[] }) {
             <th className="px-3 py-2 text-left">时间</th>
             <th className="px-3 py-2 text-left">决策类型</th>
             <th className="px-3 py-2 text-left">动作</th>
+            <th className="px-3 py-2 text-left">租户</th>
             <th className="px-3 py-2 text-left">Run</th>
             <th className="px-3 py-2 text-left">人工复核</th>
             <th className="px-3 py-2 text-left">结果摘要</th>
@@ -191,6 +192,7 @@ function LogTable({ logs }: { logs: DecisionAuditLog[] }) {
               <td className="px-3 py-2 text-xs text-gray-500">{formatTime(row.created_at)}</td>
               <td className="px-3 py-2 font-medium text-gray-900">{row.decision_type}</td>
               <td className="px-3 py-2 text-gray-600">{row.action}</td>
+              <td className="px-3 py-2 text-gray-600">#{row.tenant_id}</td>
               <td className="px-3 py-2 text-gray-600">{row.agent_run_id ? `#${row.agent_run_id}` : "-"}</td>
               <td className="px-3 py-2">
                 {row.requires_human_review ? (

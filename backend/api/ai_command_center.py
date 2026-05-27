@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -20,10 +23,12 @@ from models.ai_command import (
     AgentRunReviewOut,
     AgentRunCreate,
     AgentRunOut,
+    AgentTaskDecisionCreate,
+    AgentTaskOut,
     AiCommandOverview,
     DecisionAuditLogOut,
 )
-from repositories import agent_repo
+from repositories import agent_repo, work_order_repo
 from services.agent_orchestrator import (
     AGENT_CATALOG,
     build_overview,
@@ -141,6 +146,31 @@ def _review_out(row) -> AgentRunReviewOut:
     )
 
 
+def _agent_task_out(row) -> AgentTaskOut:
+    return AgentTaskOut(
+        id=row.id,
+        agent_run_id=row.agent_run_id,
+        title=row.title,
+        task_type=row.task_type,
+        priority=row.priority,
+        status=row.status,
+        requires_human_review=row.requires_human_review,
+        created_at=row.created_at.isoformat(),
+        payload=agent_repo.load_json(row.payload_json),
+    )
+
+
+def _get_agent_task_or_404(session: Session, task_id: int, tenant_id: int):
+    row = agent_repo.get_task(session, task_id, tenant_id=tenant_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Agent 任务草稿不存在")
+    return row
+
+
+def _priority_for_work_order(priority: str) -> str:
+    return priority if priority in {"high", "medium", "low", "normal"} else "medium"
+
+
 def _review_insights(rows, tenant_id: int) -> AgentReviewInsightOut:
     review_count = len(rows)
     if review_count == 0:
@@ -187,6 +217,123 @@ def _review_insights(rows, tenant_id: int) -> AgentReviewInsightOut:
         recommendations=recommendations,
         requires_human_review=True,
     )
+
+
+@router.post(
+    "/tasks/{task_id:int}/confirm",
+    response_model=AgentTaskOut,
+    dependencies=[Depends(require_role("manager"))],
+)
+def confirm_agent_task_draft(
+    task_id: int,
+    req: Optional[AgentTaskDecisionCreate] = None,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    row = _get_agent_task_or_404(session, task_id, tenant_id)
+    if row.status != "draft":
+        raise BusinessError("agent_task_already_decided", "任务草稿已处理，不能重复确认", 409)
+    if row.priority == "high" and role_rank(user.role) < role_rank("admin"):
+        raise Forbidden("高风险任务草稿需 admin 确认")
+
+    before = _agent_task_out(row).model_dump()
+    payload = agent_repo.load_json(row.payload_json)
+    decided_at = datetime.utcnow().isoformat()
+    work_order = work_order_repo.create_work_order(
+        session,
+        tenant_id=tenant_id,
+        created_by=user.id,
+        order_type=row.task_type,
+        status="pending",
+        priority=_priority_for_work_order(row.priority),
+        title=row.title,
+        target_description=str(payload.get("description") or ""),
+        source_type="agent_task",
+        source_id=str(row.id),
+        payload={
+            "agent_task_id": row.id,
+            "agent_run_id": row.agent_run_id,
+            "source": "task_generation_agent",
+            "related_object_type": payload.get("related_object_type"),
+            "related_object_id": payload.get("related_object_id"),
+            "suggested_owner_role": payload.get("suggested_owner_role"),
+            "deadline": payload.get("deadline_suggestion"),
+            "required_documents": payload.get("required_documents") or [],
+            "expected_result": payload.get("expected_result"),
+            "confirmation_reason": req.reason if req else None,
+            "requires_human_review": True,
+        },
+    )
+    next_payload = {
+        **payload,
+        "status": "confirmed",
+        "confirmed_by": user.id,
+        "confirmed_at": decided_at,
+        "confirmation_reason": req.reason if req else None,
+        "work_order_id": work_order.id,
+        "work_order_status": work_order.status,
+    }
+    agent_repo.update_task(row, status="confirmed", payload=next_payload)
+    after = _agent_task_out(row).model_dump()
+    agent_repo.create_decision_audit_log(
+        session,
+        tenant_id=tenant_id,
+        agent_run_id=row.agent_run_id,
+        decision_type="agent_task_confirmation",
+        action="confirmed",
+        actor_user_id=user.id,
+        before=before,
+        after={
+            **after,
+            "work_order_id": work_order.id,
+            "work_order_status": work_order.status,
+            "requires_human_review": True,
+        },
+        requires_human_review=True,
+    )
+    return _agent_task_out(row)
+
+
+@router.post(
+    "/tasks/{task_id:int}/reject",
+    response_model=AgentTaskOut,
+    dependencies=[Depends(require_role("manager"))],
+)
+def reject_agent_task_draft(
+    task_id: int,
+    req: Optional[AgentTaskDecisionCreate] = None,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    row = _get_agent_task_or_404(session, task_id, tenant_id)
+    if row.status != "draft":
+        raise BusinessError("agent_task_already_decided", "任务草稿已处理，不能重复驳回", 409)
+
+    before = _agent_task_out(row).model_dump()
+    payload = agent_repo.load_json(row.payload_json)
+    next_payload = {
+        **payload,
+        "status": "rejected",
+        "rejected_by": user.id,
+        "rejected_at": datetime.utcnow().isoformat(),
+        "rejection_reason": req.reason if req else None,
+    }
+    agent_repo.update_task(row, status="rejected", payload=next_payload)
+    after = _agent_task_out(row).model_dump()
+    agent_repo.create_decision_audit_log(
+        session,
+        tenant_id=tenant_id,
+        agent_run_id=row.agent_run_id,
+        decision_type="agent_task_confirmation",
+        action="rejected",
+        actor_user_id=user.id,
+        before=before,
+        after={**after, "requires_human_review": True},
+        requires_human_review=True,
+    )
+    return _agent_task_out(row)
 
 
 @router.get(
@@ -390,6 +537,7 @@ def list_decision_audit_logs(
     return [
         DecisionAuditLogOut(
             id=row.id,
+            tenant_id=row.tenant_id,
             agent_run_id=row.agent_run_id,
             decision_type=row.decision_type,
             action=row.action,

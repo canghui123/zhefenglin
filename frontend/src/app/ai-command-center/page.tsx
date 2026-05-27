@@ -14,8 +14,10 @@ import {
 import { useSession } from "@/components/auth/session-provider";
 import { hasRole } from "@/lib/auth";
 import {
+  confirmAiAgentTaskDraft,
   getAiCommandOverview,
   listAiDecisionAuditLogs,
+  rejectAiAgentTaskDraft,
   runAiCommandAgent,
   type AgentEvidence,
   type AgentOutput,
@@ -219,6 +221,11 @@ function payloadText(payload: Record<string, unknown> | undefined, key: string) 
 function payloadList(payload: Record<string, unknown> | undefined, key: string) {
   const value = payload?.[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function payloadNumber(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function EvidenceDetails({ evidence, roleScope }: { evidence: AgentEvidence[]; roleScope: string }) {
@@ -585,21 +592,41 @@ function SuggestionCard({
   );
 }
 
-function ConfirmationQueue({ overview }: { overview: AiCommandOverview }) {
+function ConfirmationQueue({
+  overview,
+  canConfirmTasks,
+  canConfirmHighRiskTasks,
+  actioningTaskId,
+  onConfirmTask,
+  onRejectTask,
+}: {
+  overview: AiCommandOverview;
+  canConfirmTasks: boolean;
+  canConfirmHighRiskTasks: boolean;
+  actioningTaskId: number | null;
+  onConfirmTask: (taskId: number) => void;
+  onRejectTask: (taskId: number) => void;
+}) {
   const queue = [
     ...overview.pending_approvals.map((item) => ({
       id: `approval-${item.id}`,
+      taskId: null as number | null,
       group: item.recommendation_type.includes("report") ? "报告草稿复核" : item.recommendation_type.includes("cost") ? "高成本估值审批" : "报价确认",
       title: item.title,
       advice: item.summary,
       level: item.confidence_score >= 0.75 ? "中高" : "中",
+      canConfirm: false,
+      blockedReason: "",
     })),
     ...overview.pending_tasks.map((task) => ({
       id: `task-${task.id}`,
+      taskId: task.id,
       group: "任务草稿确认",
       title: task.title,
       advice: payloadText(task.payload, "description") || "AI 已生成任务草稿，需人工确认后才能派发。",
       level: task.priority === "high" ? "中高" : "中",
+      canConfirm: task.priority !== "high" || canConfirmHighRiskTasks,
+      blockedReason: task.priority === "high" && !canConfirmHighRiskTasks ? "高风险任务需 admin 确认" : "",
     })),
   ];
 
@@ -638,8 +665,31 @@ function ConfirmationQueue({ overview }: { overview: AiCommandOverview }) {
                           <span className={`shrink-0 rounded-full border px-2 py-1 text-xs font-semibold ${riskClass(item.level)}`}>{item.level}</span>
                         </div>
                         <div className="mt-3 flex gap-2">
-                          <button type="button" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">查看</button>
-                          <button type="button" className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-400" disabled>确认</button>
+                          <a href="#task-drafts" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700">查看</a>
+                          {item.taskId ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => onConfirmTask(item.taskId as number)}
+                                disabled={!canConfirmTasks || !item.canConfirm || actioningTaskId === item.taskId}
+                                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
+                                title={item.blockedReason}
+                              >
+                                {actioningTaskId === item.taskId ? "处理中" : "确认派发"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onRejectTask(item.taskId as number)}
+                                disabled={!canConfirmTasks || actioningTaskId === item.taskId}
+                                className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 disabled:cursor-not-allowed disabled:text-gray-400"
+                              >
+                                驳回
+                              </button>
+                              {item.blockedReason && <span className="text-xs leading-7 text-gray-400">{item.blockedReason}</span>}
+                            </>
+                          ) : (
+                            <button type="button" className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-400" disabled>确认</button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -849,13 +899,31 @@ function QuickAnalysis({
   );
 }
 
-function TaskDraftCard({ task }: { task: AgentTask }) {
+function TaskDraftCard({
+  task,
+  canConfirmTasks,
+  canConfirmThisTask,
+  actioning,
+  onConfirm,
+  onReject,
+}: {
+  task: AgentTask;
+  canConfirmTasks: boolean;
+  canConfirmThisTask: boolean;
+  actioning: boolean;
+  onConfirm: () => void;
+  onReject: () => void;
+}) {
   const payload = task.payload || {};
   const description = payloadText(payload, "description");
   const ownerRole = payloadText(payload, "suggested_owner_role");
   const deadline = payloadText(payload, "deadline_suggestion");
   const expectedResult = payloadText(payload, "expected_result");
   const requiredDocuments = payloadList(payload, "required_documents");
+  const relatedObjectType = payloadText(payload, "related_object_type");
+  const relatedObjectId = payloadText(payload, "related_object_id");
+  const confidenceScore = payloadNumber(payload, "confidence_score");
+  const evidenceItems = recordArray(payload.evidence);
 
   return (
     <div className="rounded-2xl border border-gray-100 bg-white p-4">
@@ -868,8 +936,12 @@ function TaskDraftCard({ task }: { task: AgentTask }) {
       </div>
       {description && <p className="mt-2 text-sm leading-5 text-gray-600">{description}</p>}
       <div className="mt-3 grid gap-2 text-xs text-gray-500 md:grid-cols-2">
+        <div>类型：{task.task_type}</div>
+        <div>优先级：{task.priority}</div>
         <div>建议角色：{ownerRole || "-"}</div>
         <div>建议截止：{deadline || "-"}</div>
+        <div>关联对象：{relatedObjectType || "-"} {relatedObjectId ? `#${relatedObjectId}` : ""}</div>
+        <div>置信度：{confidenceScore === null ? "-" : confidenceText(confidenceScore)}</div>
         <div className="md:col-span-2">预期结果：{expectedResult || "-"}</div>
       </div>
       {requiredDocuments.length > 0 && (
@@ -877,6 +949,41 @@ function TaskDraftCard({ task }: { task: AgentTask }) {
           {requiredDocuments.map((item) => <span key={item} className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600">{item}</span>)}
         </div>
       )}
+      <details className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-3">
+        <summary className="cursor-pointer text-xs font-semibold text-gray-700">分析依据</summary>
+        {evidenceItems.length === 0 ? (
+          <p className="mt-2 text-xs text-gray-400">暂无分析依据。</p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {evidenceItems.map((item, index) => (
+              <div key={`${evidenceText(item.label)}-${index}`} className="rounded-xl bg-white p-3 text-xs text-gray-600">
+                <div className="font-medium text-gray-900">{evidenceText(item.label || item.source || "依据")}</div>
+                <div className="mt-1 break-words text-gray-500">{evidenceText(item.value)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </details>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={!canConfirmTasks || !canConfirmThisTask || actioning}
+          className="inline-flex h-9 items-center rounded-xl bg-emerald-600 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-gray-300"
+        >
+          {actioning ? "处理中..." : "确认派发"}
+        </button>
+        <button
+          type="button"
+          onClick={onReject}
+          disabled={!canConfirmTasks || actioning}
+          className="inline-flex h-9 items-center rounded-xl border border-gray-200 px-3 text-sm font-medium text-gray-700 disabled:cursor-not-allowed disabled:text-gray-400"
+        >
+          驳回草稿
+        </button>
+        {!canConfirmTasks && <span className="text-xs leading-9 text-gray-400">仅 manager/admin 可确认任务草稿</span>}
+        {canConfirmTasks && !canConfirmThisTask && <span className="text-xs leading-9 text-gray-400">高风险任务需 admin 确认</span>}
+      </div>
     </div>
   );
 }
@@ -986,6 +1093,7 @@ export default function AiCommandCenterPage() {
   const [auditLogs, setAuditLogs] = useState<DecisionAuditLog[]>([]);
   const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("customer");
+  const [actioningTaskId, setActioningTaskId] = useState<number | null>(null);
   const currentRole = user?.role;
 
   const load = useCallback(async () => {
@@ -1011,6 +1119,8 @@ export default function AiCommandCenterPage() {
   }, [load]);
 
   const canRunAgent = hasRole(user, "operator");
+  const canConfirmTasks = hasRole(user, "manager");
+  const canConfirmHighRiskTasks = hasRole(user, "admin");
 
   const metricCards = useMemo(() => {
     const metrics = overview?.today_overview || {};
@@ -1103,6 +1213,40 @@ export default function AiCommandCenterPage() {
       setError(message.includes("unsupported_agent_type") || message.includes("agent_type") ? "暂不支持该分析类型" : message);
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function confirmTaskDraft(taskId: number) {
+    if (!canConfirmTasks) {
+      setError("当前角色无权确认任务草稿");
+      return;
+    }
+    setActioningTaskId(taskId);
+    setError("");
+    try {
+      await confirmAiAgentTaskDraft(taskId, "人工确认进入正式任务池");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "任务草稿确认失败");
+    } finally {
+      setActioningTaskId(null);
+    }
+  }
+
+  async function rejectTaskDraft(taskId: number) {
+    if (!canConfirmTasks) {
+      setError("当前角色无权驳回任务草稿");
+      return;
+    }
+    setActioningTaskId(taskId);
+    setError("");
+    try {
+      await rejectAiAgentTaskDraft(taskId, "人工复核后驳回任务草稿");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "任务草稿驳回失败");
+    } finally {
+      setActioningTaskId(null);
     }
   }
 
@@ -1217,7 +1361,14 @@ export default function AiCommandCenterPage() {
             </div>
           </section>
 
-          <ConfirmationQueue overview={overview} />
+          <ConfirmationQueue
+            overview={overview}
+            canConfirmTasks={canConfirmTasks}
+            canConfirmHighRiskTasks={canConfirmHighRiskTasks}
+            actioningTaskId={actioningTaskId}
+            onConfirmTask={confirmTaskDraft}
+            onRejectTask={rejectTaskDraft}
+          />
           <CustomerOperationPlan plan={operationPlanPayload} onGeneratePlan={prepareWeeklyPlan} />
           <div id="report-drafts">
             <ReportDraftsSection drafts={reportDraftPayloads} onGenerateReport={prepareReportDraft} />
@@ -1255,7 +1406,14 @@ export default function AiCommandCenterPage() {
             </div>
           </section>
 
-          <ConfirmationQueue overview={overview} />
+          <ConfirmationQueue
+            overview={overview}
+            canConfirmTasks={canConfirmTasks}
+            canConfirmHighRiskTasks={canConfirmHighRiskTasks}
+            actioningTaskId={actioningTaskId}
+            onConfirmTask={confirmTaskDraft}
+            onRejectTask={rejectTaskDraft}
+          />
 
           <QuickAnalysis
             canRunAgent={canRunAgent}
@@ -1292,7 +1450,17 @@ export default function AiCommandCenterPage() {
                 <div className="mt-5 rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5 text-sm text-gray-500">暂无任务草稿。</div>
               ) : (
                 <div className="mt-5 space-y-3">
-                  {overview.pending_tasks.map((task) => <TaskDraftCard key={task.id} task={task} />)}
+                  {overview.pending_tasks.map((task) => (
+                    <TaskDraftCard
+                      key={task.id}
+                      task={task}
+                      canConfirmTasks={canConfirmTasks}
+                      canConfirmThisTask={task.priority !== "high" || canConfirmHighRiskTasks}
+                      actioning={actioningTaskId === task.id}
+                      onConfirm={() => confirmTaskDraft(task.id)}
+                      onReject={() => rejectTaskDraft(task.id)}
+                    />
+                  ))}
                 </div>
               )}
             </div>

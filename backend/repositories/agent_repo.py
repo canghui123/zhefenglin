@@ -183,6 +183,29 @@ def create_task(
     return row
 
 
+def get_task(session: Session, task_id: int, *, tenant_id: int) -> Optional[AgentTask]:
+    stmt = (
+        select(AgentTask)
+        .where(AgentTask.id == task_id)
+        .where(AgentTask.tenant_id == tenant_id)
+        .limit(1)
+    )
+    return session.scalars(stmt).first()
+
+
+def update_task(
+    row: AgentTask,
+    *,
+    status: Optional[str] = None,
+    payload: Optional[dict[str, Any]] = None,
+) -> AgentTask:
+    if status is not None:
+        row.status = status
+    if payload is not None:
+        row.payload_json = dump_json(payload)
+    return row
+
+
 def list_pending_tasks(
     session: Session,
     *,

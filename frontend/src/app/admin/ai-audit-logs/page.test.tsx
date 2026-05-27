@@ -90,6 +90,7 @@ describe("AiAuditLogsPage", () => {
     mockListLogs.mockResolvedValue([
       {
         id: 1,
+        tenant_id: 1,
         agent_run_id: 12,
         decision_type: "task_generation_agent",
         action: "completed",
@@ -124,6 +125,7 @@ describe("AiAuditLogsPage", () => {
     expect(screen.getByText("复盘闭环")).toBeInTheDocument();
     expect(screen.getByText("AI 决策审计日志")).toBeInTheDocument();
     expect(screen.getAllByText("task_generation_agent").length).toBeGreaterThan(0);
+    expect(screen.getByText("#1")).toBeInTheDocument();
     expect(screen.getByText("operation_planning_agent/stress_week v2")).toBeInTheDocument();
     expect(screen.getByText("复盘洞察")).toBeInTheDocument();
     expect(screen.getByText("建议复核 Agent evidence 和阈值配置")).toBeInTheDocument();

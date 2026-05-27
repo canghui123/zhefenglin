@@ -78,6 +78,10 @@ class AgentTaskOut(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentTaskDecisionCreate(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
 class AgentRecommendationOut(BaseModel):
     id: int
     agent_run_id: Optional[int] = None
@@ -110,6 +114,7 @@ class AiCommandOverview(BaseModel):
 
 class DecisionAuditLogOut(BaseModel):
     id: int
+    tenant_id: int
     agent_run_id: Optional[int] = None
     decision_type: str
     action: str

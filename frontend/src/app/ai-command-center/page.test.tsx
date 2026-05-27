@@ -3,8 +3,10 @@ import userEvent from "@testing-library/user-event";
 
 import AiCommandCenterPage from "./page";
 import {
+  confirmAiAgentTaskDraft,
   getAiCommandOverview,
   listAiDecisionAuditLogs,
+  rejectAiAgentTaskDraft,
   type AiCommandOverview,
 } from "@/lib/api";
 import { useSession } from "@/components/auth/session-provider";
@@ -20,12 +22,16 @@ vi.mock("@/lib/api", async () => {
     getAiCommandOverview: vi.fn(),
     listAiDecisionAuditLogs: vi.fn(),
     runAiCommandAgent: vi.fn(),
+    confirmAiAgentTaskDraft: vi.fn(),
+    rejectAiAgentTaskDraft: vi.fn(),
   };
 });
 
 const mockUseSession = vi.mocked(useSession);
 const mockGetAiCommandOverview = vi.mocked(getAiCommandOverview);
 const mockListAiDecisionAuditLogs = vi.mocked(listAiDecisionAuditLogs);
+const mockConfirmAiAgentTaskDraft = vi.mocked(confirmAiAgentTaskDraft);
+const mockRejectAiAgentTaskDraft = vi.mocked(rejectAiAgentTaskDraft);
 
 const baseOverview: AiCommandOverview = {
   today_overview: {
@@ -73,6 +79,13 @@ const baseOverview: AiCommandOverview = {
       status: "mock",
       min_role: "manager",
     },
+    {
+      agent_type: "task_generation_agent",
+      name: "任务生成 Agent",
+      stage: "phase_2",
+      status: "rules_based",
+      min_role: "manager",
+    },
   ],
   pending_tasks: [
     {
@@ -88,8 +101,18 @@ const baseOverview: AiCommandOverview = {
         description: "补齐车况照片和权属材料",
         suggested_owner_role: "operator",
         deadline_suggestion: "1天内",
+        related_object_type: "asset_package",
+        related_object_id: "1",
+        confidence_score: 0.78,
         expected_result: "完成资料复核",
         required_documents: ["车况照片"],
+        evidence: [
+          {
+            source: "assets",
+            label: "risk_counts",
+            value: { missing_valuation_count: 2 },
+          },
+        ],
       },
     },
   ],
@@ -214,6 +237,23 @@ describe("AiCommandCenterPage", () => {
     mockSession("operator");
     mockGetAiCommandOverview.mockResolvedValue(baseOverview);
     mockListAiDecisionAuditLogs.mockResolvedValue([]);
+    mockConfirmAiAgentTaskDraft.mockResolvedValue({
+      ...baseOverview.pending_tasks[0],
+      status: "confirmed",
+      payload: {
+        ...baseOverview.pending_tasks[0].payload,
+        status: "confirmed",
+        work_order_id: 101,
+      },
+    });
+    mockRejectAiAgentTaskDraft.mockResolvedValue({
+      ...baseOverview.pending_tasks[0],
+      status: "rejected",
+      payload: {
+        ...baseOverview.pending_tasks[0].payload,
+        status: "rejected",
+      },
+    });
   });
 
   it("renders the AI daily judgment card", async () => {
@@ -251,6 +291,23 @@ describe("AiCommandCenterPage", () => {
     expect(screen.getByText("买方报价偏离确认")).toBeInTheDocument();
   });
 
+  it("lets manager confirm a task draft from the confirmation queue", async () => {
+    const user = userEvent.setup();
+    mockSession("manager");
+    mockGetAiCommandOverview.mockResolvedValue({
+      ...baseOverview,
+      pending_tasks: [{ ...baseOverview.pending_tasks[0], priority: "medium" }],
+    });
+
+    render(<AiCommandCenterPage />);
+
+    expect(await screen.findByText("任务草稿确认")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "确认派发" })[0]);
+
+    expect(mockConfirmAiAgentTaskDraft).toHaveBeenCalledWith(1, "人工确认进入正式任务池");
+    expect(mockGetAiCommandOverview).toHaveBeenCalledTimes(2);
+  });
+
   it("renders customer view sections and hides the technical workbench by default", async () => {
     render(<AiCommandCenterPage />);
 
@@ -275,7 +332,38 @@ describe("AiCommandCenterPage", () => {
     expect(screen.getByText("判断买方报价")).toBeInTheDocument();
     expect(screen.getAllByText("生成本周作战计划").length).toBeGreaterThan(0);
     expect(screen.getAllByText("生成报告草稿").length).toBeGreaterThan(0);
+    expect(screen.getByText("任务生成 Agent")).toBeInTheDocument();
+    expect(screen.getAllByText("规则分析").length).toBeGreaterThan(0);
     expect(screen.getByText("预览能力")).toBeInTheDocument();
+    expect(screen.getByText("仅 manager/admin 可确认任务草稿")).toBeInTheDocument();
+    expect(screen.getByText("关联对象：asset_package #1")).toBeInTheDocument();
+    expect(screen.getByText("置信度：78%")).toBeInTheDocument();
+    expect(screen.getByText("分析依据")).toBeInTheDocument();
+  });
+
+  it("shows high-risk task confirmation as admin-only for manager", async () => {
+    const user = userEvent.setup();
+    mockSession("manager");
+    render(<AiCommandCenterPage />);
+
+    await screen.findByText("客户视图");
+    await user.click(screen.getByRole("button", { name: "内部工作台" }));
+
+    expect(await screen.findAllByText("高风险任务需 admin 确认")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "确认派发" })[0]).toBeDisabled();
+  });
+
+  it("lets manager reject a task draft from the internal workbench", async () => {
+    const user = userEvent.setup();
+    mockSession("manager");
+    render(<AiCommandCenterPage />);
+
+    await screen.findByText("客户视图");
+    await user.click(screen.getByRole("button", { name: "内部工作台" }));
+    await user.click(await screen.findByRole("button", { name: "驳回草稿" }));
+
+    expect(mockRejectAiAgentTaskDraft).toHaveBeenCalledWith(1, "人工复核后驳回任务草稿");
+    expect(mockGetAiCommandOverview).toHaveBeenCalledTimes(2);
   });
 
   it("hides sensitive evidence for viewer role", async () => {

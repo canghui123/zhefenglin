@@ -334,6 +334,7 @@ def test_admin_can_view_decision_audit_logs_operator_cannot():
     logs = admin.get("/api/ai-command-center/decision-audit-logs")
     assert logs.status_code == 200, logs.text
     assert logs.json()
+    assert logs.json()[0]["tenant_id"]
     assert logs.json()[0]["decision_type"] == "asset_package_diagnosis_agent"
     assert logs.json()[0]["action"] == "completed"
     assert logs.json()[0]["requires_human_review"] is True
@@ -428,9 +429,14 @@ def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
                 "collection_follow_up",
                 "buyer_offer_review",
                 "report_review",
+                "cost_approval",
             }
             assert first["suggested_owner_role"]
             assert first["required_documents"]
+            assert first["evidence"]
+            assert 0 <= first["confidence_score"] <= 1
+            assert all(draft["status"] == "draft" for draft in drafts["value"])
+            assert all(draft["requires_human_review"] is True for draft in drafts["value"])
         if agent_type == "report_generation_agent":
             draft = next(item for item in body["output"]["evidence"] if item["label"] == "report_draft")
             assert draft["value"]["distribution"] == "draft_only"
@@ -466,6 +472,22 @@ def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
     assert "quota_remaining" in cost["value"]
     assert "approval_required" in cost["value"]
 
+    cost_task_response = manager.post(
+        "/api/ai-command-center/runs",
+        json={
+            "agent_type": "task_generation_agent",
+            "asset_package_id": package_id,
+            "expected_condition_pricing_calls": 2,
+            "single_task_budget": 100,
+            "question": "生成成本审批任务草稿",
+        },
+    )
+    assert cost_task_response.status_code == 200, cost_task_response.text
+    cost_task_drafts = next(
+        item for item in cost_task_response.json()["output"]["evidence"] if item["label"] == "task_drafts"
+    )
+    assert any(draft["task_type"] == "cost_approval" for draft in cost_task_drafts["value"])
+
     gen = get_db_session()
     session = next(gen)
     try:
@@ -477,6 +499,228 @@ def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
         assert payload["status"] == "draft"
         assert payload["requires_human_review"] is True
         assert payload["suggested_owner_role"]
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_task_generation_draft_confirmation_creates_pending_work_order_and_audit():
+    from db.session import get_db_session
+    from repositories import agent_repo, tenant_repo, work_order_repo
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    manager = seed_user_and_login(
+        "ai-task-confirm-manager@example.com",
+        role="manager",
+        tenant_code="ai-task-confirm",
+    )
+    admin = seed_user_and_login(
+        "ai-task-confirm-admin@example.com",
+        role="admin",
+        tenant_code="ai-task-confirm",
+    )
+    operator = seed_user_and_login(
+        "ai-task-confirm-operator@example.com",
+        role="operator",
+        tenant_code="ai-task-confirm",
+    )
+    foreign_manager = seed_user_and_login(
+        "ai-task-confirm-foreign@example.com",
+        role="manager",
+        tenant_code="ai-task-confirm-foreign",
+    )
+    package_id = _seed_asset_package("ai-task-confirm", with_result=True)
+
+    created = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "task_generation_agent", "asset_package_id": package_id},
+    )
+    assert created.status_code == 200, created.text
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, "ai-task-confirm")
+        assert tenant is not None
+        drafts = agent_repo.list_pending_tasks(session, tenant_id=tenant.id, limit=20)
+        assert drafts
+        high_draft = next(draft for draft in drafts if draft.priority == "high")
+        normal_draft = next(draft for draft in drafts if draft.priority != "high")
+        high_draft_id = high_draft.id
+        draft_id = normal_draft.id
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+    denied = operator.post(
+        f"/api/ai-command-center/tasks/{draft_id}/confirm",
+        json={"reason": "operator 不应确认"},
+    )
+    assert denied.status_code == 403, denied.text
+
+    high_denied = manager.post(
+        f"/api/ai-command-center/tasks/{high_draft_id}/confirm",
+        json={"reason": "manager 不应确认高风险任务"},
+    )
+    assert high_denied.status_code == 403, high_denied.text
+    assert "高风险任务草稿需 admin 确认" in high_denied.json()["error"]["message"]
+
+    leaked = foreign_manager.post(
+        f"/api/ai-command-center/tasks/{draft_id}/confirm",
+        json={"reason": "跨租户不应确认"},
+    )
+    assert leaked.status_code == 404, leaked.text
+
+    confirmed = manager.post(
+        f"/api/ai-command-center/tasks/{draft_id}/confirm",
+        json={"reason": "经理确认进入正式任务池"},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()
+    assert body["status"] == "confirmed"
+    assert body["requires_human_review"] is True
+    assert body["payload"]["status"] == "confirmed"
+    assert body["payload"]["work_order_id"]
+    work_order_id = body["payload"]["work_order_id"]
+
+    duplicate = manager.post(f"/api/ai-command-center/tasks/{draft_id}/confirm")
+    assert duplicate.status_code == 409, duplicate.text
+    assert duplicate.json()["error"]["code"] == "agent_task_already_decided"
+
+    high_confirmed = admin.post(
+        f"/api/ai-command-center/tasks/{high_draft_id}/confirm",
+        json={"reason": "管理员确认高风险任务进入正式任务池"},
+    )
+    assert high_confirmed.status_code == 200, high_confirmed.text
+    assert high_confirmed.json()["status"] == "confirmed"
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, "ai-task-confirm")
+        assert tenant is not None
+        work_order = work_order_repo.get_work_order(session, work_order_id, tenant_id=tenant.id)
+        assert work_order is not None
+        assert work_order.status == "pending"
+        assert work_order.source_type == "agent_task"
+        assert work_order.source_id == str(draft_id)
+        assert work_order.created_by is not None
+        persisted = agent_repo.get_task(session, draft_id, tenant_id=tenant.id)
+        assert persisted is not None
+        assert persisted.status == "confirmed"
+        logs = agent_repo.list_decision_audit_logs(session, tenant_id=tenant.id, limit=10)
+        assert any(
+            log.decision_type == "agent_task_confirmation" and log.action == "confirmed"
+            for log in logs
+        )
+        assert len(
+            [
+                log
+                for log in logs
+                if log.decision_type == "agent_task_confirmation" and log.action == "confirmed"
+            ]
+        ) >= 2
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_operator_can_view_task_drafts_but_cannot_confirm():
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    manager = seed_user_and_login(
+        "ai-task-view-manager@example.com",
+        role="manager",
+        tenant_code="ai-task-view",
+    )
+    operator = seed_user_and_login(
+        "ai-task-view-operator@example.com",
+        role="operator",
+        tenant_code="ai-task-view",
+    )
+    package_id = _seed_asset_package("ai-task-view", with_result=True)
+    created = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "task_generation_agent", "asset_package_id": package_id},
+    )
+    assert created.status_code == 200, created.text
+
+    overview = operator.get("/api/ai-command-center/overview")
+    assert overview.status_code == 200, overview.text
+    assert overview.json()["pending_tasks"]
+    draft_id = overview.json()["pending_tasks"][0]["id"]
+
+    denied = operator.post(
+        f"/api/ai-command-center/tasks/{draft_id}/confirm",
+        json={"reason": "operator 不能确认任务草稿"},
+    )
+    assert denied.status_code == 403, denied.text
+
+
+def test_task_generation_draft_can_be_rejected_without_creating_work_order():
+    from db.session import get_db_session
+    from repositories import agent_repo, tenant_repo, work_order_repo
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    manager = seed_user_and_login(
+        "ai-task-reject-manager@example.com",
+        role="manager",
+        tenant_code="ai-task-reject",
+    )
+    package_id = _seed_asset_package("ai-task-reject", with_result=True)
+    created = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "task_generation_agent", "asset_package_id": package_id},
+    )
+    assert created.status_code == 200, created.text
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, "ai-task-reject")
+        assert tenant is not None
+        draft = agent_repo.list_pending_tasks(session, tenant_id=tenant.id, limit=20)[0]
+        draft_id = draft.id
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+    rejected = manager.post(
+        f"/api/ai-command-center/tasks/{draft_id}/reject",
+        json={"reason": "资料不充分，暂不派发"},
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "rejected"
+    assert rejected.json()["payload"]["rejection_reason"] == "资料不充分，暂不派发"
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, "ai-task-reject")
+        assert tenant is not None
+        persisted = agent_repo.get_task(session, draft_id, tenant_id=tenant.id)
+        assert persisted is not None
+        assert persisted.status == "rejected"
+        assert work_order_repo.find_open_by_source(
+            session,
+            tenant_id=tenant.id,
+            source_type="agent_task",
+            source_id=str(draft_id),
+            order_type=persisted.task_type,
+        ) is None
+        logs = agent_repo.list_decision_audit_logs(session, tenant_id=tenant.id, limit=10)
+        assert any(
+            log.decision_type == "agent_task_confirmation" and log.action == "rejected"
+            for log in logs
+        )
     finally:
         try:
             next(gen)

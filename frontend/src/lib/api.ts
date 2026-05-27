@@ -341,6 +341,22 @@ export async function createAiAgentRunReview(runId: number, input: AgentRunRevie
   });
 }
 
+export async function confirmAiAgentTaskDraft(taskId: number, reason?: string) {
+  return request<AgentTask>(`/api/ai-command-center/tasks/${taskId}/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+}
+
+export async function rejectAiAgentTaskDraft(taskId: number, reason?: string) {
+  return request<AgentTask>(`/api/ai-command-center/tasks/${taskId}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(reason ? { reason } : {}),
+  });
+}
+
 export async function listDisposalTasks(params?: { status?: string; task_type?: string }) {
   const query = new URLSearchParams();
   if (params?.status) query.set("status", params.status);
@@ -1485,6 +1501,7 @@ export interface AiCommandOverview {
 
 export interface DecisionAuditLog {
   id: number;
+  tenant_id: number;
   agent_run_id: number | null;
   decision_type: string;
   action: string;

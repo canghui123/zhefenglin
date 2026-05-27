@@ -1,6 +1,7 @@
 from models.ai_command import AgentOutput
 from services.agent_orchestrator import (
     AGENT_CATALOG,
+    _task_draft,
     classify_intent,
     redact_output_for_role,
 )
@@ -24,6 +25,34 @@ def test_agent_catalog_marks_semi_automated_agents_rules_based():
     assert AGENT_CATALOG["task_generation_agent"]["status"] == "rules_based"
     assert AGENT_CATALOG["report_generation_agent"]["status"] == "rules_based"
     assert AGENT_CATALOG["cost_control_agent"]["status"] == "rules_based"
+
+
+def test_task_draft_schema_contains_reviewable_action_fields():
+    draft = _task_draft(
+        title="复核高成本能力调用审批",
+        description="需要管理员复核额度与审批边界。",
+        task_type="cost_approval",
+        priority="high",
+        related_object_type="tenant_cost_quota",
+        related_object_id="tenant-1",
+        suggested_owner_role="admin",
+        deadline_days=1,
+        required_documents=["成本预估", "套餐额度"],
+        expected_result="形成是否允许高成本能力调用的人工审批意见",
+        evidence=[{"source": "agent_request", "label": "single_task_budget", "value": 100}],
+        confidence_score=0.66,
+    )
+
+    assert draft["task_type"] == "cost_approval"
+    assert draft["status"] == "draft"
+    assert draft["requires_human_review"] is True
+    assert draft["suggested_owner_role"] == "admin"
+    assert draft["deadline_suggestion"]
+    assert draft["related_object_type"] == "tenant_cost_quota"
+    assert draft["required_documents"]
+    assert draft["expected_result"]
+    assert draft["evidence"]
+    assert draft["confidence_score"] == 0.66
 
 
 def test_viewer_output_redaction_only_keeps_summary_and_review_flag():
