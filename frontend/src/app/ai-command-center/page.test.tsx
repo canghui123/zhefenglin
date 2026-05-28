@@ -7,6 +7,7 @@ import {
   getAiCommandOverview,
   listAiDecisionAuditLogs,
   rejectAiAgentTaskDraft,
+  runAiCommandAgent,
   type AiCommandOverview,
 } from "@/lib/api";
 import { useSession } from "@/components/auth/session-provider";
@@ -32,6 +33,7 @@ const mockGetAiCommandOverview = vi.mocked(getAiCommandOverview);
 const mockListAiDecisionAuditLogs = vi.mocked(listAiDecisionAuditLogs);
 const mockConfirmAiAgentTaskDraft = vi.mocked(confirmAiAgentTaskDraft);
 const mockRejectAiAgentTaskDraft = vi.mocked(rejectAiAgentTaskDraft);
+const mockRunAiCommandAgent = vi.mocked(runAiCommandAgent);
 
 const baseOverview: AiCommandOverview = {
   today_overview: {
@@ -76,7 +78,7 @@ const baseOverview: AiCommandOverview = {
       agent_type: "operation_planning_agent",
       name: "运营计划 Agent",
       stage: "phase_2",
-      status: "mock",
+      status: "rules_based",
       min_role: "manager",
     },
     {
@@ -150,13 +152,31 @@ const baseOverview: AiCommandOverview = {
             source: "portfolio_capacity_plan",
             label: "operation_plan",
             value: {
+              title: "本周/月处置作战计划草稿",
+              agent_status: "rules_based",
+              requires_human_review: true,
               weekly_focus: ["优先处理高损失贡献分层", "补齐关键资料缺口"],
               high_priority_asset_pool: [{ segment_name: "在库新能源", asset_count: 8 }],
+              quick_auction_pool: [{ segment_name: "可竞拍资产", asset_count: 5, suggested_action: "复核资料和底价后进入快速竞拍准备" }],
               auction_pool: [{ segment_name: "可竞拍资产", asset_count: 5 }],
+              legal_advancement_pool: [{ segment_name: "法务路径", asset_count: 2, suggested_action: "复核合同、抵押和债权材料后推进法务路径" }],
               legal_pool: [{ segment_name: "法务路径", asset_count: 2 }],
-              data_completion_pool: [{ package_id: 1 }],
+              valuation_review_pool: [{ package_name: "新能源包", missing_valuation_count: 2 }],
+              data_completion_pool: [{ package_id: 1, package_name: "新能源包" }],
+              debt_transfer_pool: [{ package_name: "GPS 离线车辆", gps_offline_count: 2 }],
+              observe_pool: [{ segment_name: "还款意愿观察池", suggested_action: "跟进还款意愿和现金流承诺" }],
+              buyer_offer_review_pool: [{ title: "买方报价偏离确认" }],
               paused_pool: [{ segment_name: "暂缓池" }],
+              risk_warnings: ["存在资料缺口，直接推进竞拍或出让可能导致买方压价"],
+              capacity_budget_constraints: {
+                capacity_bottlenecks: ["auction_units不足"],
+                budget_gap: 200000,
+                notes: ["所有产能和预算约束只用于排期建议"],
+              },
               cashflow_focus: { cash_90d: 1200000 },
+              missing_data: [],
+              data_quality_notes: ["草稿需人工复核"],
+              thresholds: { operation_high_priority_limit: 5 },
             },
             evidence_source: "portfolio_capacity_plan",
             related_object_type: "portfolio_snapshot",
@@ -237,6 +257,7 @@ describe("AiCommandCenterPage", () => {
     mockSession("operator");
     mockGetAiCommandOverview.mockResolvedValue(baseOverview);
     mockListAiDecisionAuditLogs.mockResolvedValue([]);
+    mockRunAiCommandAgent.mockResolvedValue(baseOverview.recent_runs[0]);
     mockConfirmAiAgentTaskDraft.mockResolvedValue({
       ...baseOverview.pending_tasks[0],
       status: "confirmed",
@@ -314,13 +335,16 @@ describe("AiCommandCenterPage", () => {
     expect(await screen.findByText("客户视图")).toBeInTheDocument();
     expect(screen.getByText("本周作战计划")).toBeInTheDocument();
     expect(screen.getByText("报告草稿")).toBeInTheDocument();
-    expect(screen.getByText("90 天现金回流关注：1,200,000 元。该计划为规则化草稿，需人工复核后进入任务或审批流程。")).toBeInTheDocument();
+    expect(screen.getByText("债权转让池")).toBeInTheDocument();
+    expect(screen.getByText("暂缓观察池")).toBeInTheDocument();
+    expect(screen.getByText("产能/预算约束")).toBeInTheDocument();
+    expect(screen.getByText("90 天现金回流关注：1,200,000 元。报价复核池 1 项。该计划为规则化草稿，需人工复核后进入任务或审批流程。")).toBeInTheDocument();
     expect(screen.getAllByText("高管摘要").length).toBeGreaterThan(0);
     expect(screen.queryByText("Agent 工作台")).not.toBeInTheDocument();
     expect(screen.queryByText("查看详细依据")).not.toBeInTheDocument();
   });
 
-  it("renders quick analysis entry points in internal workbench and keeps mock status visible", async () => {
+  it("renders quick analysis entry points in internal workbench and keeps rules-based status visible", async () => {
     const user = userEvent.setup();
     render(<AiCommandCenterPage />);
 
@@ -334,11 +358,31 @@ describe("AiCommandCenterPage", () => {
     expect(screen.getAllByText("生成报告草稿").length).toBeGreaterThan(0);
     expect(screen.getByText("任务生成 Agent")).toBeInTheDocument();
     expect(screen.getAllByText("规则分析").length).toBeGreaterThan(0);
-    expect(screen.getByText("预览能力")).toBeInTheDocument();
     expect(screen.getByText("仅 manager/admin 可确认任务草稿")).toBeInTheDocument();
     expect(screen.getByText("关联对象：asset_package #1")).toBeInTheDocument();
     expect(screen.getByText("置信度：78%")).toBeInTheDocument();
     expect(screen.getByText("分析依据")).toBeInTheDocument();
+  });
+
+  it("runs operation_planning_agent from the weekly plan quick entry", async () => {
+    const user = userEvent.setup();
+    mockSession("manager");
+    render(<AiCommandCenterPage />);
+
+    await screen.findByText("客户视图");
+    await user.click(screen.getByRole("button", { name: "内部工作台" }));
+    const quickEntry = screen.getByText("梳理优先处置池、补资料池和暂缓池").closest("button");
+    expect(quickEntry).not.toBeNull();
+    await user.click(quickEntry as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "开始分析" }));
+
+    expect(mockRunAiCommandAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent_type: "operation_planning_agent",
+        question: "生成本周处置作战计划",
+        rule_scenario: "default",
+      }),
+    );
   });
 
   it("shows high-risk task confirmation as admin-only for manager", async () => {

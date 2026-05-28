@@ -171,6 +171,10 @@ function recordArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => !!asRecord(item)) : [];
 }
 
+function planItemName(item: Record<string, unknown>) {
+  return evidenceText(item.segment_name || item.package_name || item.title || item.related_object_id || "待复核对象");
+}
+
 function findEvidencePayload(runs: AgentRun[], agentType: AiAgentType, label: string) {
   for (const run of runs) {
     if (run.agent_type !== agentType) continue;
@@ -310,17 +314,36 @@ function ViewModeSwitch({
 function CustomerOperationPlan({
   plan,
   onGeneratePlan,
+  onGenerateTask,
 }: {
   plan: Record<string, unknown> | null;
   onGeneratePlan: () => void;
+  onGenerateTask: () => void;
 }) {
   const focus = stringArray(plan?.weekly_focus).slice(0, 4);
   const highPriorityPool = recordArray(plan?.high_priority_asset_pool);
-  const auctionPool = recordArray(plan?.auction_pool);
-  const legalPool = recordArray(plan?.legal_pool);
+  const auctionPool = recordArray(plan?.quick_auction_pool).length ? recordArray(plan?.quick_auction_pool) : recordArray(plan?.auction_pool);
+  const legalPool = recordArray(plan?.legal_advancement_pool).length ? recordArray(plan?.legal_advancement_pool) : recordArray(plan?.legal_pool);
   const dataPool = recordArray(plan?.data_completion_pool);
+  const valuationPool = recordArray(plan?.valuation_review_pool);
+  const debtTransferPool = recordArray(plan?.debt_transfer_pool);
+  const observePool = recordArray(plan?.observe_pool);
   const pausedPool = recordArray(plan?.paused_pool);
+  const buyerOfferPool = recordArray(plan?.buyer_offer_review_pool);
+  const riskWarnings = stringArray(plan?.risk_warnings);
+  const missingData = stringArray(plan?.missing_data);
+  const qualityNotes = stringArray(plan?.data_quality_notes);
+  const constraints = asRecord(plan?.capacity_budget_constraints);
+  const bottlenecks = stringArray(constraints?.capacity_bottlenecks);
   const cashflow = asRecord(plan?.cashflow_focus);
+  const poolSections = [
+    { title: "高优先级资产池", items: highPriorityPool, tone: "border-red-100 bg-red-50 text-red-800" },
+    { title: "快速竞拍池", items: auctionPool, tone: "border-emerald-100 bg-emerald-50 text-emerald-800" },
+    { title: "法务推进池", items: legalPool, tone: "border-amber-100 bg-amber-50 text-amber-800" },
+    { title: "补资料/估值复核池", items: [...dataPool, ...valuationPool], tone: "border-blue-100 bg-blue-50 text-blue-800" },
+    { title: "债权转让池", items: debtTransferPool, tone: "border-gray-200 bg-gray-50 text-gray-800" },
+    { title: "暂缓观察池", items: [...observePool, ...pausedPool], tone: "border-gray-200 bg-gray-50 text-gray-800" },
+  ];
 
   return (
     <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -329,9 +352,14 @@ function CustomerOperationPlan({
           <h2 className="text-xl font-bold text-gray-950">本周作战计划</h2>
           <p className="mt-1 text-sm text-gray-500">只展示业务分池和行动重点，正式排期仍需人工确认。</p>
         </div>
-        <button type="button" onClick={onGeneratePlan} className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700">
-          生成本周作战计划
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onGeneratePlan} className="inline-flex h-10 items-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700">
+            生成本周作战计划
+          </button>
+          <button type="button" onClick={onGenerateTask} className="inline-flex h-10 items-center rounded-xl border border-blue-200 bg-blue-50 px-4 text-sm font-semibold text-blue-700 hover:bg-blue-100">
+            生成任务草稿
+          </button>
+        </div>
       </div>
 
       {!plan ? (
@@ -349,25 +377,58 @@ function CustomerOperationPlan({
             </ul>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <div className="text-xs text-gray-500">高优先级资产池</div>
-              <div className="mt-1 text-2xl font-bold text-gray-950">{highPriorityPool.length}</div>
-            </div>
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <div className="text-xs text-gray-500">建议竞拍池</div>
-              <div className="mt-1 text-2xl font-bold text-gray-950">{auctionPool.length}</div>
-            </div>
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <div className="text-xs text-gray-500">建议法务池</div>
-              <div className="mt-1 text-2xl font-bold text-gray-950">{legalPool.length}</div>
-            </div>
-            <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <div className="text-xs text-gray-500">补资料 / 暂缓池</div>
-              <div className="mt-1 text-2xl font-bold text-gray-950">{dataPool.length + pausedPool.length}</div>
-            </div>
+            {poolSections.slice(0, 4).map((section) => (
+              <div key={section.title} className={`rounded-2xl border p-4 ${section.tone}`}>
+                <div className="text-xs opacity-80">{section.title}</div>
+                <div className="mt-1 text-2xl font-bold">{section.items.length}</div>
+              </div>
+            ))}
           </div>
+          <div className="lg:col-span-2 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {poolSections.map((section) => (
+              <div key={`${section.title}-details`} className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                <div className="text-sm font-semibold text-gray-900">{section.title}</div>
+                {section.items.length === 0 ? (
+                  <p className="mt-2 text-sm text-gray-400">暂无</p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {section.items.slice(0, 3).map((item, index) => (
+                      <li key={`${section.title}-${index}`} className="rounded-xl bg-white p-3 text-sm text-gray-600">
+                        <div className="font-medium text-gray-950">{planItemName(item)}</div>
+                        <div className="mt-1 text-xs text-gray-500">{evidenceText(item.suggested_action || item.reason || item.recommended_strategy || item.task_type)}</div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+          {(riskWarnings.length > 0 || missingData.length > 0 || bottlenecks.length > 0) && (
+            <div className="lg:col-span-2 grid gap-3 md:grid-cols-3">
+              <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+                <div className="text-sm font-semibold text-amber-900">风险提示</div>
+                <p className="mt-2 text-sm leading-6 text-amber-800">{riskWarnings.slice(0, 2).join("；") || "暂无明确风险提示，仍需人工复核。"}</p>
+              </div>
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <div className="text-sm font-semibold text-blue-900">产能/预算约束</div>
+                <p className="mt-2 text-sm leading-6 text-blue-800">{bottlenecks.join("、") || evidenceText(constraints?.notes) || "暂无明确瓶颈。"}</p>
+              </div>
+              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <div className="text-sm font-semibold text-gray-900">数据完整性</div>
+                <p className="mt-2 text-sm leading-6 text-gray-600">{missingData.length ? `缺失：${missingData.join("、")}` : qualityNotes.slice(0, 1).join("；") || "数据质量未发现明显阻断。"}</p>
+              </div>
+            </div>
+          )}
           <div className="lg:col-span-2 rounded-2xl border border-gray-100 bg-gray-50 p-4 text-sm text-gray-600">
-            90 天现金回流关注：{formatAmount(cashflow?.cash_90d)} 元。该计划为规则化草稿，需人工复核后进入任务或审批流程。
+            90 天现金回流关注：{formatAmount(cashflow?.cash_90d)} 元。报价复核池 {buyerOfferPool.length} 项。该计划为规则化草稿，需人工复核后进入任务或审批流程。
+            <details className="mt-3">
+              <summary className="cursor-pointer text-xs font-semibold text-gray-700">分析依据</summary>
+              <div className="mt-2 space-y-1 text-xs text-gray-500">
+                <div>状态：{STATUS_LABELS[String(plan.agent_status || "")] || evidenceText(plan.agent_status)}</div>
+                <div>规则阈值：{evidenceText(plan.thresholds)}</div>
+                <div>数据说明：{qualityNotes.join("；") || "-"}</div>
+              </div>
+            </details>
           </div>
         </div>
       )}
@@ -1369,7 +1430,7 @@ export default function AiCommandCenterPage() {
             onConfirmTask={confirmTaskDraft}
             onRejectTask={rejectTaskDraft}
           />
-          <CustomerOperationPlan plan={operationPlanPayload} onGeneratePlan={prepareWeeklyPlan} />
+          <CustomerOperationPlan plan={operationPlanPayload} onGeneratePlan={prepareWeeklyPlan} onGenerateTask={prepareTaskDraft} />
           <div id="report-drafts">
             <ReportDraftsSection drafts={reportDraftPayloads} onGenerateReport={prepareReportDraft} />
           </div>

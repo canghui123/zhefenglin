@@ -539,22 +539,43 @@ def _operation_plan_payload(
     portfolio: PortfolioContext,
     package: PackageContext,
     rule_settings: AgentRuleSettings,
+    recent_recommendations: list[Any],
 ) -> dict[str, Any]:
     segments = portfolio.segments
     capacity = portfolio.capacity_plan
     pool_limit = rule_settings.operation_high_priority_limit
     high_priority = _top_segments(segments, "expected_loss_amount", limit=pool_limit)
-    auction_pool = [
-        item.model_dump()
-        for item in ((capacity.current_month_execution_plan if capacity else [])[:pool_limit])
-        if item.task_type == "auction"
-    ]
-    legal_pool = [
-        item.model_dump()
-        for item in ((capacity.current_month_execution_plan if capacity else [])[:pool_limit])
-        if item.task_type in {"litigation", "special_procedure"}
-    ]
-    data_pool = []
+    current_items = list(capacity.current_month_execution_plan if capacity else [])
+    deferred_items = list(capacity.next_month_deferred_pool if capacity else [])
+    paused_items = list(capacity.paused_pool if capacity else [])
+
+    def capacity_pool(task_types: set[str], source_items: list[Any]) -> list[dict[str, Any]]:
+        pool: list[dict[str, Any]] = []
+        for item in source_items:
+            if item.task_type not in task_types:
+                continue
+            payload = item.model_dump()
+            payload["suggested_action"] = {
+                "auction": "复核资料和底价后进入快速竞拍准备",
+                "litigation": "复核合同、抵押和债权材料后推进法务路径",
+                "special_procedure": "复核特殊程序适用条件后进入法务排期",
+                "debt_transfer": "评估债权转让或外包清收可行性",
+                "collection": "跟进还款意愿和现金流承诺",
+                "restructure": "评估重组价值和暂缓处置窗口",
+            }.get(item.task_type, "人工复核后再进入执行队列")
+            pool.append(payload)
+            if len(pool) >= pool_limit:
+                break
+        return pool
+
+    auction_pool = capacity_pool({"auction"}, current_items)
+    legal_pool = capacity_pool({"litigation", "special_procedure"}, current_items + deferred_items)
+    debt_transfer_pool = capacity_pool({"debt_transfer"}, current_items + deferred_items)
+    observe_pool = capacity_pool({"collection", "restructure"}, deferred_items)
+    data_pool: list[dict[str, Any]] = []
+    valuation_review_pool: list[dict[str, Any]] = []
+    package_legal_pool: list[dict[str, Any]] = []
+    package_debt_pool: list[dict[str, Any]] = []
     if package.package is not None:
         counts = _asset_counts(package.assets)
         data_gap_count = (
@@ -572,17 +593,106 @@ def _operation_plan_payload(
                     "ownership_pending_count": counts["ownership_pending_count"],
                 }
             )
-    paused_pool = [item.model_dump() for item in (capacity.paused_pool if capacity else [])[:pool_limit]]
+        if counts["missing_valuation_count"]:
+            valuation_review_pool.append(
+                {
+                    "package_id": package.package.id,
+                    "package_name": package.package.name,
+                    "missing_valuation_count": counts["missing_valuation_count"],
+                    "suggested_action": "补齐估值或发起估值复核后再进入报价/竞拍判断",
+                }
+            )
+        if counts["ownership_pending_count"] or counts["insurance_lapsed_count"]:
+            package_legal_pool.append(
+                {
+                    "package_id": package.package.id,
+                    "package_name": package.package.name,
+                    "ownership_pending_count": counts["ownership_pending_count"],
+                    "insurance_lapsed_count": counts["insurance_lapsed_count"],
+                    "suggested_action": "复核权属、合同、保险和债权转让限制",
+                }
+            )
+        if counts["gps_offline_count"]:
+            package_debt_pool.append(
+                {
+                    "package_id": package.package.id,
+                    "package_name": package.package.name,
+                    "gps_offline_count": counts["gps_offline_count"],
+                    "suggested_action": "复核定位和收车难度，必要时进入债权转让或清收跟进池",
+                }
+            )
+    recommendation_types = {row.recommendation_type for row in recent_recommendations}
+    buyer_offer_review_pool = [
+        {
+            "agent_recommendation_id": row.id,
+            "title": row.title,
+            "summary": row.summary,
+            "confidence_score": row.confidence_score,
+            "suggested_action": "复核买方报价偏离、谈判空间和审批边界",
+        }
+        for row in recent_recommendations
+        if row.recommendation_type == "buyer_offer_analysis_agent"
+    ][:pool_limit]
+    paused_pool = [item.model_dump() for item in paused_items[:pool_limit]]
     deferred_pool = [
         item.model_dump()
         for item in (capacity.next_month_deferred_pool if capacity else [])[:pool_limit]
     ]
-    return {
-        "weekly_focus": [
-            "优先处理高损失贡献分层",
-            "将可竞拍资产池推进至资料复核和底价确认",
-            "对估值缺口、权属未完结和 GPS 离线资产补齐资料",
+    missing_data: list[str] = []
+    if package.package is None:
+        missing_data.append("asset_package")
+    elif not package.assets:
+        missing_data.append("asset_details")
+    if package.package is not None and package.result is None:
+        missing_data.append("pricing_result")
+    if not segments:
+        missing_data.append("portfolio_segments")
+    if portfolio.empty_reason:
+        missing_data.append("real_portfolio_capacity_plan")
+
+    data_quality_notes: list[str] = []
+    if portfolio.empty_reason:
+        data_quality_notes.append(portfolio.empty_reason)
+    if package.package is None:
+        data_quality_notes.append("未找到资产包，资产包级分池仅能保持空状态")
+    if package.package is not None and package.result is None:
+        data_quality_notes.append("资产包尚无定价结果，竞拍/报价相关判断置信度受限")
+    if "buyer_offer_analysis_agent" not in recommendation_types:
+        data_quality_notes.append("未读取到最近买方报价分析 recommendation，报价复核池保持空状态")
+    if capacity and capacity.budget_gap > 0:
+        data_quality_notes.append("当前产能计划存在预算缺口，正式排期前需确认预算或额度")
+
+    weekly_focus: list[str] = []
+    if high_priority:
+        weekly_focus.append("优先处理高损失贡献分层")
+    if auction_pool:
+        weekly_focus.append("推进已入库且路径可行的快速竞拍池")
+    if legal_pool or package_legal_pool:
+        weekly_focus.append("复核合同、权属和法务路径材料")
+    if data_pool or valuation_review_pool:
+        weekly_focus.append("补齐估值、GPS、权属等关键资料缺口")
+    if debt_transfer_pool or package_debt_pool:
+        weekly_focus.append("评估非在库或定位异常资产的债权转让/清收跟进路径")
+    if not weekly_focus:
+        weekly_focus.append("先补齐资产包、组合分层和定价结果，再形成正式作战计划")
+
+    budget_constraints = {
+        "capacity_bottlenecks": capacity.capacity_bottlenecks if capacity else [],
+        "budget_gap": capacity.budget_gap if capacity else 0,
+        "remaining_capacity": capacity.remaining_capacity if capacity else {},
+        "resource_usage": capacity.resource_usage if capacity else {},
+        "notes": [
+            "所有产能和预算约束只用于排期建议，不会自动批准高成本估值或额度消耗",
+            *([f"预算缺口约 {capacity.budget_gap:,.0f} 元" if capacity and capacity.budget_gap > 0 else "暂无明确预算缺口"]),
         ],
+    }
+
+    return {
+        "title": "本周/月处置作战计划草稿",
+        "agent_status": "rules_based",
+        "requires_human_review": True,
+        "weekly_focus": weekly_focus,
+        "monthly_execution_plan": [item.model_dump() for item in current_items[:pool_limit]],
         "high_priority_asset_pool": [
             {
                 "segment_name": _segment_label(segment),
@@ -593,17 +703,39 @@ def _operation_plan_payload(
             }
             for segment in high_priority
         ],
+        "quick_auction_pool": auction_pool,
         "auction_pool": auction_pool,
+        "legal_advancement_pool": legal_pool + package_legal_pool,
         "legal_pool": legal_pool,
+        "valuation_review_pool": valuation_review_pool,
         "data_completion_pool": data_pool,
+        "debt_transfer_pool": debt_transfer_pool + package_debt_pool,
+        "observe_pool": observe_pool,
+        "buyer_offer_review_pool": buyer_offer_review_pool,
         "paused_pool": paused_pool,
         "deferred_pool": deferred_pool,
+        "risk_warnings": [
+            warning
+            for warning in [
+                "存在资料缺口，直接推进竞拍或出让可能导致买方压价" if data_pool or valuation_review_pool else "",
+                "存在法务或权属材料风险，需人工复核后才能推进路径" if legal_pool or package_legal_pool else "",
+                "存在非在库/GPS 离线资产，需评估收车难度和债权转让可行性" if debt_transfer_pool or package_debt_pool else "",
+                "存在产能或预算瓶颈，正式排期前需确认资源" if capacity and (capacity.capacity_bottlenecks or capacity.budget_gap > 0) else "",
+            ]
+            if warning
+        ],
+        "capacity_budget_constraints": budget_constraints,
         "capacity_bottlenecks": capacity.capacity_bottlenecks if capacity else [],
         "cashflow_focus": {
             "cash_30d": sum(float(segment.get("cash_30d") or 0) for segment in segments),
             "cash_90d": sum(float(segment.get("cash_90d") or 0) for segment in segments),
             "cash_180d": sum(float(segment.get("cash_180d") or 0) for segment in segments),
         },
+        "missing_data": list(dict.fromkeys(missing_data)),
+        "data_quality_notes": data_quality_notes,
+        "limited_data_reason": "、".join(dict.fromkeys(missing_data)) if missing_data else None,
+        "fallback_reason": "暂无真实组合数据和资产包数据" if portfolio.empty_reason and package.package is None else None,
+        "next_agent_action": "如需落地执行，请基于本作战计划运行 task_generation_agent 生成 draft 任务草稿",
         "thresholds": rule_settings.model_dump(),
     }
 
@@ -613,8 +745,10 @@ def _operation_planning_agent(
     portfolio: PortfolioContext,
     rule_settings: AgentRuleSettings,
     rule_profile: dict[str, Any],
+    recent_recommendations: list[Any],
 ) -> AgentOutput:
     evidence = _base_evidence(package)
+    plan = _operation_plan_payload(portfolio, package, rule_settings, recent_recommendations)
     if portfolio.empty_reason and not portfolio.segments and package.package is None:
         return AgentOutput(
             summary="暂无真实组合数据和资产包数据，运营计划 Agent 已进入空数据安全模式。",
@@ -626,16 +760,27 @@ def _operation_planning_agent(
             + [
                 _agent_status_evidence("operation_planning_agent"),
                 _rule_settings_evidence(rule_settings, rule_profile),
+                AgentEvidence(
+                    source="portfolio_capacity_plan",
+                    label="operation_plan",
+                    value=plan,
+                    evidence_source="portfolio_capacity_plan",
+                    related_object_type="portfolio_snapshot",
+                    related_object_id=str(portfolio.snapshot_id) if portfolio.snapshot_id else None,
+                    calculation_basis="无真实数据时输出缺失项和下一步补录建议，不编造作战结论",
+                    data_quality_notes=portfolio.empty_reason,
+                ),
             ],
             requires_human_review=True,
         )
 
-    plan = _operation_plan_payload(portfolio, package, rule_settings)
     findings = [
         f"高优先级资产池 {len(plan['high_priority_asset_pool'])} 个分层。",
-        f"建议竞拍池 {len(plan['auction_pool'])} 个分层。",
-        f"建议法务池 {len(plan['legal_pool'])} 个分层。",
+        f"快速竞拍池 {len(plan['quick_auction_pool'])} 个分层。",
+        f"法务推进池 {len(plan['legal_advancement_pool'])} 个来源。",
         f"补资料池 {len(plan['data_completion_pool'])} 个来源。",
+        f"债权转让池 {len(plan['debt_transfer_pool'])} 个来源。",
+        f"暂缓观察池 {len(plan['observe_pool']) + len(plan['paused_pool'])} 个来源。",
     ]
     if portfolio.capacity_plan:
         findings.append(f"本月可执行资产 {portfolio.capacity_plan.total_selected_assets} 台。")
@@ -646,21 +791,39 @@ def _operation_planning_agent(
         warnings.append("存在暂缓处置池，需先解除物权、入库或路径可行性问题")
     if plan["data_completion_pool"]:
         warnings.append("存在资料缺口，直接推进竞拍或出让可能导致买方压价")
+    warnings.extend([item for item in plan["risk_warnings"] if item not in warnings])
+    if plan["missing_data"]:
+        warnings.append(f"数据不完整：{'、'.join(plan['missing_data'])}")
+    confidence = 0.78
+    if plan["missing_data"]:
+        confidence = 0.58 if portfolio.segments or package.package else 0.35
+    elif not portfolio.segments:
+        confidence = 0.45
 
     return AgentOutput(
-        summary="已生成本周半自动运营计划草稿，覆盖高优先级资产池、竞拍池、法务池、补资料池和暂缓处置池。",
+        summary="已生成本周/月半自动处置作战计划草稿，覆盖高优先级资产池、快速竞拍池、法务推进池、补资料池、债权转让池和暂缓观察池。",
         key_findings=findings,
         recommended_actions=[
             "经理复核高优先级资产池后确认本周推进范围",
             "主管按补资料池建立资料补齐任务",
-            "竞拍和法务动作仅作为草稿进入人工确认",
+            "将快速竞拍、法务推进和债权转让动作转为 draft 任务草稿后再人工确认",
+            "存在数据缺口时先补录缺失项，再复跑运营计划 Agent",
         ],
         risk_warnings=warnings or ["暂未识别重大产能瓶颈，仍需人工复核排期和外部资源"],
-        confidence_score=0.72 if portfolio.segments else 0.45,
+        confidence_score=confidence,
         evidence=evidence
         + [
             _agent_status_evidence("operation_planning_agent"),
             _rule_settings_evidence(rule_settings, rule_profile),
+            AgentEvidence(
+                source="agent_recommendations",
+                label="recent_recommendation_types",
+                value=[row.recommendation_type for row in recent_recommendations],
+                evidence_source="agent_recommendations",
+                related_object_type="agent_recommendation",
+                calculation_basis="读取当前租户最近 Agent recommendation，辅助识别报价复核和任务转化线索",
+                data_quality_notes="只读取当前租户 recommendation，不跨租户读取",
+            ),
             AgentEvidence(
                 source="portfolio_capacity_plan",
                 label="operation_plan",
@@ -1161,7 +1324,7 @@ def _report_generation_agent(
     }
     if report_type not in supported:
         report_type = "executive_summary"
-    plan = _operation_plan_payload(portfolio, package, rule_settings)
+    plan = _operation_plan_payload(portfolio, package, rule_settings, [])
     summary = package.result.summary if package.result else None
     sections = [
         {
@@ -1267,7 +1430,18 @@ def _run_agent_logic(session: Session, *, tenant_id: int, request: AgentRunCreat
     rule_profile = _rule_profile_from_row(rule_row)
     if agent_type == "operation_planning_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
-        return _operation_planning_agent(context, portfolio, rule_settings, rule_profile)
+        recent_recommendations = agent_repo.list_recommendations(
+            session,
+            tenant_id=tenant_id,
+            limit=5,
+        )
+        return _operation_planning_agent(
+            context,
+            portfolio,
+            rule_settings,
+            rule_profile,
+            recent_recommendations,
+        )
     if agent_type == "task_generation_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
         recent_recommendations = agent_repo.list_recommendations(

@@ -414,8 +414,18 @@ def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
             plan = next(item for item in body["output"]["evidence"] if item["label"] == "operation_plan")
             assert "weekly_focus" in plan["value"]
             assert "high_priority_asset_pool" in plan["value"]
+            assert "quick_auction_pool" in plan["value"]
             assert "auction_pool" in plan["value"]
+            assert "legal_advancement_pool" in plan["value"]
             assert "data_completion_pool" in plan["value"]
+            assert "valuation_review_pool" in plan["value"]
+            assert "debt_transfer_pool" in plan["value"]
+            assert "observe_pool" in plan["value"]
+            assert "capacity_budget_constraints" in plan["value"]
+            assert "missing_data" in plan["value"]
+            assert "data_quality_notes" in plan["value"]
+            assert plan["value"]["requires_human_review"] is True
+            assert plan["value"]["agent_status"] == "rules_based"
         if agent_type == "task_generation_agent":
             drafts = next(item for item in body["output"]["evidence"] if item["label"] == "task_drafts")
             first = drafts["value"][0]
@@ -499,6 +509,73 @@ def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
         assert payload["status"] == "draft"
         assert payload["requires_human_review"] is True
         assert payload["suggested_owner_role"]
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_operation_planning_agent_limited_data_and_tenant_isolation():
+    from db.session import get_db_session
+    from repositories import agent_repo, tenant_repo
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    manager = seed_user_and_login(
+        "ai-operation-limited-manager@example.com",
+        role="manager",
+        tenant_code="ai-operation-limited",
+    )
+    operator = seed_user_and_login(
+        "ai-operation-limited-operator@example.com",
+        role="operator",
+        tenant_code="ai-operation-limited",
+    )
+    foreign_manager = seed_user_and_login(
+        "ai-operation-limited-foreign@example.com",
+        role="manager",
+        tenant_code="ai-operation-limited-foreign",
+    )
+
+    denied = operator.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "operation_planning_agent", "question": "生成本周作战计划"},
+    )
+    assert denied.status_code == 403, denied.text
+
+    created = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "operation_planning_agent", "question": "生成本周作战计划"},
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    output = body["output"]
+    _assert_agent_output_schema(output)
+    assert output["agent_status"] == "rules_based"
+    assert output["confidence_score"] == 0.35
+    plan = next(item for item in output["evidence"] if item["label"] == "operation_plan")
+    assert plan["value"]["missing_data"]
+    assert "asset_package" in plan["value"]["missing_data"]
+    assert "portfolio_segments" in plan["value"]["missing_data"]
+    assert plan["value"]["limited_data_reason"]
+    assert plan["value"]["fallback_reason"] == "暂无真实组合数据和资产包数据"
+    assert plan["value"]["weekly_focus"] == ["先补齐资产包、组合分层和定价结果，再形成正式作战计划"]
+
+    leaked = foreign_manager.get(f"/api/ai-command-center/runs/{body['id']}")
+    assert leaked.status_code == 404, leaked.text
+
+    gen = get_db_session()
+    session = next(gen)
+    try:
+        tenant = tenant_repo.get_tenant_by_code(session, "ai-operation-limited")
+        assert tenant is not None
+        recommendations = agent_repo.list_recommendations(session, tenant_id=tenant.id, limit=5)
+        assert any(row.recommendation_type == "operation_planning_agent" for row in recommendations)
+        logs = agent_repo.list_decision_audit_logs(session, tenant_id=tenant.id, limit=5)
+        assert any(
+            row.decision_type == "operation_planning_agent" and row.action == "completed"
+            for row in logs
+        )
     finally:
         try:
             next(gen)
