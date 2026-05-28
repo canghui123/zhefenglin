@@ -463,12 +463,21 @@ function ReportDraftsSection({
           {drafts.map((draft, index) => {
             const title = typeof draft.title === "string" ? draft.title : "报告草稿";
             const sections = recordArray(draft.sections).slice(0, 3);
+            const confidence = payloadNumber(draft, "confidence_score");
+            const missingData = stringArray(draft.missing_data);
+            const reviewChecklist = stringArray(draft.review_checklist).slice(0, 3);
+            const dataQualityNotes = stringArray(draft.data_quality_notes).slice(0, 2);
+            const sourceContext = asRecord(draft.source_context);
+            const statusLabel = draft.status === "draft" ? "草稿" : evidenceText(draft.status || "草稿");
             return (
               <article key={`${title}-${index}`} className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <div className="text-sm font-semibold text-gray-950">{title}</div>
-                    <div className="mt-1 text-xs text-gray-500">{REPORT_TYPE_LABELS[String(draft.report_type || "")] || "需人工复核"}</div>
+                    <div className="mt-1 text-xs text-gray-500">
+                      {REPORT_TYPE_LABELS[String(draft.report_type || "")] || "需人工复核"} · {statusLabel}
+                      {confidence !== null ? ` · 置信度 ${confidenceText(confidence)}` : ""}
+                    </div>
                   </div>
                   <span className="rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700">需人工复核</span>
                 </div>
@@ -480,6 +489,38 @@ function ReportDraftsSection({
                     </div>
                   ))}
                 </div>
+                {(reviewChecklist.length > 0 || missingData.length > 0 || dataQualityNotes.length > 0 || sourceContext) && (
+                  <details className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-gray-700">复核清单与数据说明</summary>
+                    <div className="mt-2 space-y-2 text-xs text-gray-500">
+                      {reviewChecklist.length > 0 && (
+                        <div>
+                          <div className="font-medium text-gray-700">复核清单</div>
+                          <ul className="mt-1 list-disc space-y-1 pl-4">
+                            {reviewChecklist.map((item) => <li key={item}>{item}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      {missingData.length > 0 && (
+                        <div>
+                          <span className="font-medium text-amber-700">缺失数据：</span>
+                          {missingData.join("、")}
+                        </div>
+                      )}
+                      {dataQualityNotes.length > 0 && <div>{dataQualityNotes.join("；")}</div>}
+                      {sourceContext && (
+                        <div>
+                          <div className="font-medium text-gray-700">来源上下文</div>
+                          <div className="mt-1 grid gap-1 sm:grid-cols-3">
+                            <span>资产包：{evidenceText(sourceContext.asset_package_id)}</span>
+                            <span>组合快照：{evidenceText(sourceContext.portfolio_snapshot_id)}</span>
+                            <span>数据来源：{evidenceText(sourceContext.portfolio_data_source)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                )}
               </article>
             );
           })}

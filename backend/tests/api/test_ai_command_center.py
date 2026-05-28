@@ -449,8 +449,14 @@ def test_semi_automated_agents_return_rule_outputs_and_enforce_roles():
             assert all(draft["requires_human_review"] is True for draft in drafts["value"])
         if agent_type == "report_generation_agent":
             draft = next(item for item in body["output"]["evidence"] if item["label"] == "report_draft")
+            assert draft["value"]["status"] == "draft"
             assert draft["value"]["distribution"] == "draft_only"
             assert draft["value"]["requires_human_review"] is True
+            assert draft["value"]["confidence_score"] == body["output"]["confidence_score"]
+            assert draft["value"]["review_checklist"]
+            assert "missing_data" in draft["value"]
+            assert "data_quality_notes" in draft["value"]
+            assert "自动外发" in draft["value"]["forbidden_actions"]
 
     denied_cost = manager.post(
         "/api/ai-command-center/runs",
@@ -948,7 +954,37 @@ def test_agent_rule_settings_drive_rule_based_agent_outputs():
     assert report.status_code == 200, report.text
     report_draft = next(item for item in report.json()["output"]["evidence"] if item["label"] == "report_draft")
     assert len(report_draft["value"]["sections"]) == 2
+    assert report_draft["value"]["status"] == "draft"
+    assert report_draft["value"]["source_context"]["asset_package_id"] == package_id
+    assert "review_checklist" in report_draft["value"]
     assert report.json()["output"]["confidence_score"] >= 0.6
+
+
+def test_report_generation_agent_handles_limited_data_as_draft():
+    from tests.api.admin_commercial_helpers import seed_user_and_login
+
+    manager = seed_user_and_login(
+        "ai-report-limited-manager@example.com",
+        role="manager",
+        tenant_code="ai-report-limited",
+    )
+
+    response = manager.post(
+        "/api/ai-command-center/runs",
+        json={"agent_type": "report_generation_agent", "report_type": "buyer_offer_memo"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["output"]["requires_human_review"] is True
+    assert body["output"]["agent_status"] == "rules_based"
+    draft = next(item for item in body["output"]["evidence"] if item["label"] == "report_draft")
+    assert draft["value"]["status"] == "draft"
+    assert draft["value"]["distribution"] == "draft_only"
+    assert {"asset_package", "pricing_result", "asset_details", "buyer_offer_price"}.issubset(
+        set(draft["value"]["missing_data"])
+    )
+    assert "自动外发" in draft["value"]["forbidden_actions"]
+    assert "报告草稿缺失数据" in body["output"]["risk_warnings"][1]
 
 
 def test_agent_rule_profiles_are_agent_scenario_and_version_scoped():

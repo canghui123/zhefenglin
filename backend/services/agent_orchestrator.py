@@ -1307,6 +1307,130 @@ def _cost_control_agent(
     )
 
 
+def _report_section(heading: str, content: str, evidence_refs: Optional[list[str]] = None) -> dict[str, Any]:
+    return {
+        "heading": heading,
+        "content": content,
+        "evidence_refs": evidence_refs or [],
+    }
+
+
+def _report_missing_data(
+    package: PackageContext,
+    portfolio: PortfolioContext,
+    request: AgentRunCreate,
+    report_type: str,
+) -> list[str]:
+    missing: list[str] = []
+    if package.package is None:
+        missing.append("asset_package")
+    if package.result is None:
+        missing.append("pricing_result")
+    if not package.assets:
+        missing.append("asset_details")
+    if report_type == "buyer_offer_memo" and request.buyer_offer_price is None:
+        missing.append("buyer_offer_price")
+    if report_type == "weekly_operation_report" and not portfolio.segments:
+        missing.append("portfolio_segments")
+    return missing
+
+
+def _report_data_quality_notes(
+    missing_data: list[str],
+    portfolio: PortfolioContext,
+) -> list[str]:
+    notes = ["报告草稿未导出、未发送，需人工复核后才能进入正式流程"]
+    if missing_data:
+        notes.append(f"缺失数据会降低报告置信度：{', '.join(missing_data)}")
+    if portfolio.empty_reason:
+        notes.append(portfolio.empty_reason)
+    return notes
+
+
+def _build_report_sections(
+    package: PackageContext,
+    portfolio: PortfolioContext,
+    request: AgentRunCreate,
+    report_type: str,
+    rule_settings: AgentRuleSettings,
+) -> list[dict[str, Any]]:
+    package_name = package.package.name if package.package else "未选择资产包"
+    counts = _asset_counts(package.assets)
+    plan = _operation_plan_payload(portfolio, package, rule_settings, [])
+    summary = package.result.summary if package.result else None
+    price_text = (
+        f"建议中位价约 {summary.recommended_transfer_price_mid:,.0f} 元，区间 "
+        f"{summary.recommended_transfer_price_low:,.0f} - {summary.recommended_transfer_price_high:,.0f} 元。"
+        if summary
+        else "当前缺少完整定价结果，价格相关内容仅能作为待补充草稿。"
+    )
+    data_gap_text = (
+        f"明细资产 {counts['asset_count']} 台，缺少估值 {counts['missing_valuation_count']} 台，"
+        f"GPS 离线 {counts['gps_offline_count']} 台，权属未完成 {counts['ownership_pending_count']} 台。"
+    )
+    weekly_focus = "；".join(plan["weekly_focus"]) or "暂无可用作战重点，需先补充组合或资产包数据。"
+
+    if report_type == "asset_package_brief":
+        return [
+            _report_section("资产包概况", f"{package_name} 当前可读取 {counts['asset_count']} 台资产明细。", ["package_id", "total_assets"]),
+            _report_section("资料完整度", data_gap_text, ["risk_counts"]),
+            _report_section("定价与估值摘要", price_text, ["recommended_transfer_price_mid"]),
+            _report_section("建议补充材料", "优先补齐 VIN、里程、车况照片、权属和估值依据，避免买方压价。", ["missing_data"]),
+        ]
+
+    if report_type == "buyer_offer_memo":
+        if package.result and request.buyer_offer_price is not None:
+            analysis = analyze_buyer_offer(
+                package.result,
+                buyer_offer_price=request.buyer_offer_price,
+                buyer_offer_note=request.buyer_offer_note,
+            )
+            offer_text = (
+                f"买方报价 {analysis.buyer_offer_price:,.0f} 元，"
+                f"相对系统中位建议差额 {analysis.buyer_offer_gap:,.0f} 元。"
+            )
+            action_text = "；".join(analysis.negotiation_suggestions[:3])
+        else:
+            offer_text = "当前缺少买方报价或定价结果，备忘录只能列出待补充项。"
+            action_text = "补录买方报价、报价说明和内部建议价后再形成谈判意见。"
+        return [
+            _report_section("报价判断", offer_text, ["buyer_offer_price", "recommended_transfer_price_mid"]),
+            _report_section("偏离说明", price_text, ["buyer_offer_gap_rate"]),
+            _report_section("谈判建议", action_text, ["negotiation_suggestions"]),
+            _report_section("复核边界", "Agent 不得自动接受报价，正式报价结论必须经理或审批人确认。", ["requires_human_review"]),
+        ]
+
+    if report_type == "weekly_operation_report":
+        return [
+            _report_section("本周作战重点", weekly_focus, ["operation_plan"]),
+            _report_section(
+                "分组资产池",
+                (
+                    f"高优先级 {len(plan['high_priority_asset_pool'])} 项，快速竞拍 {len(plan['quick_auction_pool'])} 项，"
+                    f"法务推进 {len(plan['legal_advancement_pool'])} 项，补资料 {len(plan['data_completion_pool'])} 项。"
+                ),
+                ["operation_plan"],
+            ),
+            _report_section(
+                "任务草稿与待确认",
+                "如需落地执行，应由 task_generation_agent 生成 draft 任务草稿，并由 manager/admin 人工确认。",
+                ["agent_tasks"],
+            ),
+            _report_section(
+                "风险与资源约束",
+                "；".join(plan["risk_warnings"][:3]) or "暂无明确风险阻断，仍需人工复核产能和预算。",
+                ["capacity_budget_constraints"],
+            ),
+        ]
+
+    return [
+        _report_section("核心判断", f"{package_name} 已形成内部汇报草稿。{price_text}", ["package_id", "recommended_transfer_price_mid"]),
+        _report_section("资产与风险概况", data_gap_text, ["risk_counts"]),
+        _report_section("运营重点", weekly_focus, ["operation_plan"]),
+        _report_section("人工复核事项", "正式导出、对外发送、法律判断和出让审批均需人工确认。", ["requires_human_review"]),
+    ]
+
+
 def _report_generation_agent(
     package: PackageContext,
     portfolio: PortfolioContext,
@@ -1324,43 +1448,55 @@ def _report_generation_agent(
     }
     if report_type not in supported:
         report_type = "executive_summary"
-    plan = _operation_plan_payload(portfolio, package, rule_settings, [])
-    summary = package.result.summary if package.result else None
-    sections = [
-        {
-            "heading": "核心判断",
-            "content": (
-                f"资产包建议中位价约 {summary.recommended_transfer_price_mid:,.0f} 元，需人工复核。"
-                if summary
-                else "当前缺少完整定价结果，报告仅作为草稿。"
-            ),
-        },
-        {
-            "heading": "运营重点",
-            "content": "；".join(plan["weekly_focus"]),
-        },
-        {
-            "heading": "风险提示",
-            "content": "Agent 不会自动下载、外发、审批或替代法律结论。",
-        },
-    ][:rule_settings.report_max_sections]
+    missing_data = _report_missing_data(package, portfolio, request, report_type)
+    data_quality_notes = _report_data_quality_notes(missing_data, portfolio)
+    sections = _build_report_sections(
+        package,
+        portfolio,
+        request,
+        report_type,
+        rule_settings,
+    )[: rule_settings.report_max_sections]
+    base_confidence = 0.68 if package.package or portfolio.segments else 0.4
+    if package.result:
+        base_confidence += 0.08
+    if portfolio.segments:
+        base_confidence += 0.05
+    if missing_data:
+        base_confidence -= min(0.25, 0.05 * len(missing_data))
+    confidence = round(min(0.9, max(rule_settings.report_confidence_floor, base_confidence)), 2)
     draft = {
         "report_type": report_type,
         "title": supported[report_type],
+        "status": "draft",
         "sections": sections,
+        "review_checklist": [
+            "核对底层资产、估值和定价证据",
+            "补充人工判断和业务负责人意见",
+            "确认是否进入正式审批、导出或客户沟通流程",
+        ],
+        "missing_data": missing_data,
+        "data_quality_notes": data_quality_notes,
+        "source_context": {
+            "asset_package_id": package.package.id if package.package else None,
+            "portfolio_snapshot_id": portfolio.snapshot_id,
+            "portfolio_data_source": portfolio.capacity_plan.data_source if portfolio.capacity_plan else "unknown",
+        },
+        "confidence_score": confidence,
         "requires_human_review": True,
         "distribution": "draft_only",
+        "allowed_actions": ["人工复核", "补充证据", "提交正式审批"],
+        "forbidden_actions": ["自动下载", "自动外发", "自动批准出让", "替代法律结论"],
         "thresholds": rule_settings.model_dump(),
     }
-    confidence = min(
-        0.9,
-        max(rule_settings.report_confidence_floor, 0.68 if package.package or portfolio.segments else 0.4),
-    )
     return AgentOutput(
         summary=f"已生成《{supported[report_type]}》草稿，不会自动下载或对外发送。",
         key_findings=[section["heading"] for section in draft["sections"]],
         recommended_actions=["经理复核报告草稿", "补充人工意见和证据附件", "确认后再进入正式导出或客户沟通流程"],
-        risk_warnings=["报告生成 Agent 只生成草稿，不自动下载、不自动发送、不替代法律结论"],
+        risk_warnings=[
+            "报告生成 Agent 只生成草稿，不自动下载、不自动发送、不替代法律结论",
+            *([f"报告草稿缺失数据：{', '.join(missing_data)}"] if missing_data else []),
+        ],
         confidence_score=confidence,
         evidence=evidence
         + [

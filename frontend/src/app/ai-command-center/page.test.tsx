@@ -212,10 +212,20 @@ const baseOverview: AiCommandOverview = {
             value: {
               report_type: "executive_summary",
               title: "高管摘要",
+              status: "draft",
               sections: [
                 { heading: "核心判断", content: "资产包需人工复核。" },
                 { heading: "运营重点", content: "优先处理高风险资产。" },
               ],
+              review_checklist: ["核对底层资产、估值和定价证据", "补充人工判断和业务负责人意见"],
+              missing_data: ["pricing_result"],
+              data_quality_notes: ["报告草稿未导出、未发送，需人工复核后才能进入正式流程"],
+              source_context: {
+                asset_package_id: 1,
+                portfolio_snapshot_id: 2,
+                portfolio_data_source: "real_portfolio",
+              },
+              confidence_score: 0.68,
               requires_human_review: true,
             },
             evidence_source: "agent_orchestrator",
@@ -342,6 +352,9 @@ describe("AiCommandCenterPage", () => {
     expect(screen.getAllByText("高管摘要").length).toBeGreaterThan(0);
     expect(screen.queryByText("Agent 工作台")).not.toBeInTheDocument();
     expect(screen.queryByText("查看详细依据")).not.toBeInTheDocument();
+    expect(screen.getByText(/高管摘要 · 草稿 · 置信度 68%/)).toBeInTheDocument();
+    expect(screen.getByText("复核清单与数据说明")).toBeInTheDocument();
+    expect(screen.getByText("来源上下文")).toBeInTheDocument();
   });
 
   it("renders quick analysis entry points in internal workbench and keeps rules-based status visible", async () => {
