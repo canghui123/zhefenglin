@@ -25,6 +25,10 @@ COLUMN_KEYWORDS = {
     "ride_hailing_vehicle": ["网约车", "网约"],
     "battery_replacement_history": ["换电池", "电池更换", "更换电池"],
     "range_km": ["续航", "续航里程", "CLTC", "NEDC"],
+    # 不良资产核心三要素 —— 长 keyword 优先匹配避免歧义（参考 _match_column len 比较）
+    "overdue_days": ["逾期天数", "逾期月数", "逾期月份", "逾期", "M3+", "M6+", "M12+"],
+    "in_storage": ["是否在库", "已入库", "是否收车", "在库状态", "收车状态"],
+    "storage_days": ["在库天数", "库存天数", "停车天数", "已入库天数", "入库天数"],
 }
 
 
@@ -217,6 +221,23 @@ def parse_excel(
                 # 如果数字超过100，视作"公里"，转成万公里
                 mileage = raw / 10000 if raw > 100 else raw
 
+        # 不良资产核心三要素 —— 解析逾期天数 / 是否在库 / 在库天数
+        overdue_days = None
+        if "overdue_days" in field_to_col:
+            raw = _parse_float(row.get(field_to_col["overdue_days"], None))
+            if raw is not None and raw >= 0:
+                overdue_days = int(round(raw))
+
+        in_storage = None
+        if "in_storage" in field_to_col:
+            in_storage = _parse_bool(row.get(field_to_col["in_storage"], None))
+
+        storage_days = None
+        if "storage_days" in field_to_col:
+            raw = _parse_float(row.get(field_to_col["storage_days"], None))
+            if raw is not None and raw >= 0:
+                storage_days = int(round(raw))
+
         assets.append(Asset(
             row_number=row_num,
             car_description=car_desc,
@@ -234,6 +255,9 @@ def parse_excel(
             ride_hailing_vehicle=ride_hailing_vehicle,
             battery_replacement_history=battery_replacement,
             range_km=range_km,
+            overdue_days=overdue_days,
+            in_storage=in_storage,
+            storage_days=storage_days,
             buyout_price=None,
         ))
 

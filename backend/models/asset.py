@@ -29,6 +29,20 @@ class Asset(BaseModel):
     ride_hailing_vehicle: Optional[bool] = Field(None, description="是否网约车")
     battery_replacement_history: Optional[bool] = Field(None, description="是否有电池更换历史")
     range_km: Optional[float] = Field(None, description="标称或当前续航里程(km)")
+    overdue_days: Optional[int] = Field(
+        None,
+        ge=0,
+        description="逾期天数。汽车金融不良资产核心要素之一，决定催收路径与处置紧迫性。",
+    )
+    in_storage: Optional[bool] = Field(
+        None,
+        description="是否已入库（是否已收车至处置仓）。决定可走拖回路径 vs 远程债权转让路径。",
+    )
+    storage_days: Optional[int] = Field(
+        None,
+        ge=0,
+        description="在库天数（已入库后停放天数）。影响资金占用成本和残值衰减。",
+    )
     buyout_price: Optional[float] = Field(
         None,
         description="历史兼容字段。当前资产包出让定价不再从Excel识别或使用买断价。",
@@ -72,6 +86,9 @@ class AssetFieldOverride(BaseModel):
     ride_hailing_vehicle: Optional[bool] = Field(None, description="修正后的是否网约车")
     battery_replacement_history: Optional[bool] = Field(None, description="修正后的电池更换历史")
     range_km: Optional[float] = Field(None, description="修正后的续航里程(km)")
+    overdue_days: Optional[int] = Field(None, ge=0, description="修正后的逾期天数")
+    in_storage: Optional[bool] = Field(None, description="修正后的是否在库")
+    storage_days: Optional[int] = Field(None, ge=0, description="修正后的在库天数")
 
     @field_validator("car_description", "vin", mode="before")
     @classmethod
