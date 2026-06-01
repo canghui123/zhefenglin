@@ -336,13 +336,84 @@ def _diagnose_asset_package(context: PackageContext) -> AgentOutput:
         "优先复核高本金或高估值偏差车辆，避免整体包被低估",
         "将 AI 结论作为出让沟通草稿，正式处置仍需经理复核",
     ]
+
+    # B1: 不良资产业务字段消费 —— 逾期分层 / 缺 VIN / 在库状态
+    business_evidence: list[AgentEvidence] = []
+    if context.result is not None:
+        summary = context.result.summary
+        # 逾期分层 finding(业内人最先看的指标)
+        seg = summary.overdue_segments_breakdown or {}
+        if seg:
+            m3_minus = int(seg.get("M3-", 0))
+            m3_m6 = int(seg.get("M3-M6", 0))
+            m6_m12 = int(seg.get("M6-M12", 0))
+            m12_plus = int(seg.get("M12+", 0))
+            unknown = int(seg.get("unknown", 0))
+            findings.append(
+                f"逾期分层:M3- {m3_minus} 台,M3-M6 {m3_m6} 台,M6-M12 {m6_m12} 台,M12+ {m12_plus} 台,数据缺失 {unknown} 台。"
+            )
+            business_evidence.append(
+                AgentEvidence(
+                    source="asset_packages.results_json",
+                    label="overdue_segments_breakdown",
+                    value=seg,
+                    related_object_type="asset_package",
+                    related_object_id=str(context.package.id),
+                    calculation_basis="按 classify_overdue_days 业内 M3/M6/M12 边界统计",
+                )
+            )
+        # M12+ 主推法务推进
+        if summary.m12_plus_count:
+            actions.insert(
+                0,
+                f"对 {summary.m12_plus_count} 台 M12+ 车辆优先安排法务推进或纳入债权转让池",
+            )
+            warnings.append(
+                f"M12+ 严重逾期车辆 {summary.m12_plus_count} 台,资金占用与残值衰减压力高"
+            )
+        # 缺 VIN finding
+        if summary.missing_vin_count:
+            findings.append(
+                f"缺 VIN 车辆 {summary.missing_vin_count} 台,影响出让合规与买方尽调。"
+            )
+            actions.append(
+                f"对 {summary.missing_vin_count} 台缺 VIN 车辆生成补 VIN 资料任务草稿"
+            )
+        # 在库状态 finding
+        if summary.in_storage_count or summary.not_in_storage_count:
+            avg_label = (
+                f"在库平均 {summary.storage_days_avg:.0f} 天"
+                if summary.storage_days_avg is not None
+                else "在库天数数据缺失"
+            )
+            findings.append(
+                f"在库 {summary.in_storage_count} 台 / 未收车 {summary.not_in_storage_count} 台,{avg_label}。"
+            )
+            business_evidence.append(
+                AgentEvidence(
+                    source="asset_packages.results_json",
+                    label="inventory_status",
+                    value={
+                        "in_storage": summary.in_storage_count,
+                        "not_in_storage": summary.not_in_storage_count,
+                        "storage_days_avg": summary.storage_days_avg,
+                        "long_storage_count": summary.long_storage_count,
+                    },
+                    calculation_basis="按 Asset.in_storage 与 storage_days 字段聚合",
+                )
+            )
+        if summary.long_storage_count:
+            warnings.append(
+                f"在库超 90 天 {summary.long_storage_count} 台,资金占用警告,建议加快处置"
+            )
+
     return AgentOutput(
         summary=f"{context.package.name or '最新资产包'} 已完成第一阶段资产包诊断，建议先处理数据缺口再进入正式出让决策。",
         key_findings=findings,
         recommended_actions=actions,
         risk_warnings=warnings or ["暂未识别重大数据风险，但仍需人工复核底层资产真实性"],
         confidence_score=_confidence_from_coverage(counts["asset_count"], counts["missing_valuation_count"]),
-        evidence=evidence + [AgentEvidence(source="assets", label="risk_counts", value=counts)],
+        evidence=evidence + [AgentEvidence(source="assets", label="risk_counts", value=counts)] + business_evidence,
         requires_human_review=True,
     )
 
@@ -621,6 +692,75 @@ def _operation_plan_payload(
                     "suggested_action": "复核定位和收车难度，必要时进入债权转让或清收跟进池",
                 }
             )
+        # ── B1: 包级 M12+ / M6-M12 逾期分层池(从 result.summary 读)─────
+        if package.result is not None:
+            pkg_summary = package.result.summary
+            if pkg_summary.m12_plus_count:
+                package_legal_pool.append(
+                    {
+                        "package_id": package.package.id,
+                        "package_name": package.package.name,
+                        "overdue_segment": "M12+",
+                        "m12_plus_count": pkg_summary.m12_plus_count,
+                        "suggested_action": (
+                            f"对 {pkg_summary.m12_plus_count} 台 M12+ 严重逾期车辆"
+                            "优先安排法务推进 / 起诉 / 评估纳入债权转让池"
+                        ),
+                    }
+                )
+                # M12+ 也加进债权转让候选(双重收纳,经理可选路径)
+                package_debt_pool.append(
+                    {
+                        "package_id": package.package.id,
+                        "package_name": package.package.name,
+                        "overdue_segment": "M12+",
+                        "m12_plus_count": pkg_summary.m12_plus_count,
+                        "suggested_action": (
+                            f"{pkg_summary.m12_plus_count} 台 M12+ 车辆可考虑批量债权转让"
+                            "降低自有催收 / 法务负载"
+                        ),
+                    }
+                )
+            if pkg_summary.m6_m12_count:
+                # M6-M12 进入"资料补全 + 协商减免"复核
+                valuation_review_pool.append(
+                    {
+                        "package_id": package.package.id,
+                        "package_name": package.package.name,
+                        "overdue_segment": "M6-M12",
+                        "m6_m12_count": pkg_summary.m6_m12_count,
+                        "suggested_action": (
+                            f"对 {pkg_summary.m6_m12_count} 台 M6-M12 车辆推进协商减免、"
+                            "资料补全并准备法务备案"
+                        ),
+                    }
+                )
+            if pkg_summary.missing_vin_count:
+                data_pool.append(
+                    {
+                        "package_id": package.package.id,
+                        "package_name": package.package.name,
+                        "data_gap": "missing_vin",
+                        "missing_vin_count": pkg_summary.missing_vin_count,
+                        "suggested_action": (
+                            f"对 {pkg_summary.missing_vin_count} 台缺 VIN 车辆"
+                            "发起补 VIN 资料任务,出让前必须补齐"
+                        ),
+                    }
+                )
+            if pkg_summary.long_storage_count:
+                package_debt_pool.append(
+                    {
+                        "package_id": package.package.id,
+                        "package_name": package.package.name,
+                        "long_storage_count": pkg_summary.long_storage_count,
+                        "storage_days_avg": pkg_summary.storage_days_avg,
+                        "suggested_action": (
+                            f"对 {pkg_summary.long_storage_count} 台在库超 90 天车辆"
+                            "加快处置,资金占用与残值衰减预警"
+                        ),
+                    }
+                )
     recommendation_types = {row.recommendation_type for row in recent_recommendations}
     buyer_offer_review_pool = [
         {
@@ -800,15 +940,69 @@ def _operation_planning_agent(
     elif not portfolio.segments:
         confidence = 0.45
 
+    # B1: 业务字段消费 —— 让作战计划针对 M12+ / M6-M12 / 缺 VIN / 长期在库给出具体指引
+    actions = [
+        "经理复核高优先级资产池后确认本周推进范围",
+        "主管按补资料池建立资料补齐任务",
+        "将快速竞拍、法务推进和债权转让动作转为 draft 任务草稿后再人工确认",
+        "存在数据缺口时先补录缺失项，再复跑运营计划 Agent",
+    ]
+    package_business_evidence: list[AgentEvidence] = []
+    if package.result is not None:
+        summary = package.result.summary
+        m12_plus = summary.m12_plus_count
+        m6_m12 = summary.m6_m12_count
+        if m12_plus or m6_m12:
+            findings.append(
+                f"逾期分层:M12+ {m12_plus} 台,M6-M12 {m6_m12} 台。"
+            )
+        if m12_plus:
+            actions.insert(0, f"对 {m12_plus} 台 M12+ 优先安排法务推进或债权转让评估")
+            warnings.append(
+                f"M12+ {m12_plus} 台逾期超 365 天,资金占用与残值衰减压力高,建议本周确认法务/转让方案"
+            )
+        if m6_m12:
+            actions.insert(1, f"对 {m6_m12} 台 M6-M12 安排协商减免与法务备案并行")
+        if summary.missing_vin_count:
+            actions.append(f"补 {summary.missing_vin_count} 台缺 VIN 资料,降低出让合规风险")
+            warnings.append(f"缺 VIN {summary.missing_vin_count} 台,影响出让合规与买方尽调")
+        if summary.long_storage_count:
+            warnings.append(
+                f"在库超 90 天 {summary.long_storage_count} 台,建议本周加快出让动作"
+            )
+        if summary.in_storage_count or summary.not_in_storage_count:
+            avg_label = (
+                f"在库平均 {summary.storage_days_avg:.0f} 天"
+                if summary.storage_days_avg is not None
+                else "在库天数缺失"
+            )
+            findings.append(
+                f"在库 {summary.in_storage_count} / 未收车 {summary.not_in_storage_count},{avg_label}。"
+            )
+        package_business_evidence.append(
+            AgentEvidence(
+                source="asset_packages.results_json",
+                label="package_business_signals",
+                value={
+                    "m12_plus_count": m12_plus,
+                    "m6_m12_count": m6_m12,
+                    "missing_vin_count": summary.missing_vin_count,
+                    "in_storage_count": summary.in_storage_count,
+                    "not_in_storage_count": summary.not_in_storage_count,
+                    "storage_days_avg": summary.storage_days_avg,
+                    "long_storage_count": summary.long_storage_count,
+                    "overdue_segments_breakdown": summary.overdue_segments_breakdown,
+                },
+                related_object_type="asset_package",
+                related_object_id=str(package.package.id) if package.package else None,
+                calculation_basis="按 pricing_engine.calculate_package 输出的业务聚合字段读取",
+            )
+        )
+
     return AgentOutput(
         summary="已生成本周/月半自动处置作战计划草稿，覆盖高优先级资产池、快速竞拍池、法务推进池、补资料池、债权转让池和暂缓观察池。",
         key_findings=findings,
-        recommended_actions=[
-            "经理复核高优先级资产池后确认本周推进范围",
-            "主管按补资料池建立资料补齐任务",
-            "将快速竞拍、法务推进和债权转让动作转为 draft 任务草稿后再人工确认",
-            "存在数据缺口时先补录缺失项，再复跑运营计划 Agent",
-        ],
+        recommended_actions=actions,
         risk_warnings=warnings or ["暂未识别重大产能瓶颈，仍需人工复核排期和外部资源"],
         confidence_score=confidence,
         evidence=evidence
@@ -834,6 +1028,7 @@ def _operation_planning_agent(
                 calculation_basis="基于真实组合分层、资产包风险和产能约束生成规则化运营计划",
                 data_quality_notes=portfolio.empty_reason,
             ),
+            *package_business_evidence,
         ],
         requires_human_review=True,
     )
@@ -985,6 +1180,109 @@ def _build_task_drafts(
                             }
                         ],
                         confidence_score=0.68,
+                    )
+                )
+
+            # ── B1: 业务字段驱动的高价值任务草稿 ────────────────────────────
+            pkg_summary = package.result.summary
+            # M12+ 法务推进草稿 —— high 优先级,需 admin 确认(对应 Agent 治理边界)
+            if pkg_summary.m12_plus_count:
+                drafts.append(
+                    _task_draft(
+                        title=f"M12+ 严重逾期资产推进法务/债权转让({pkg_summary.m12_plus_count} 台)",
+                        description=(
+                            f"资产包内 {pkg_summary.m12_plus_count} 台车辆逾期超 365 天,"
+                            f"建议优先推进法务诉讼或纳入债权转让池。Agent 不自动批准法律结论,"
+                            f"必须由 manager 或 admin 复核法务材料、债务人通知与转让限制后再行动。"
+                        ),
+                        task_type="legal_material_review",
+                        priority="high",
+                        related_object_type="asset_package",
+                        related_object_id=package_id,
+                        suggested_owner_role="manager",
+                        deadline_days=urgent_days,
+                        required_documents=[
+                            "M12+ 资产清单",
+                            "贷款合同与抵押登记",
+                            "债务人通知与诉讼时效核查",
+                            "转让限制清单",
+                        ],
+                        expected_result="形成 M12+ 资产的法务路径/转让路径的人工复核意见",
+                        evidence=[
+                            {
+                                "source": "asset_packages.results_json",
+                                "label": "m12_plus_count",
+                                "value": pkg_summary.m12_plus_count,
+                            },
+                            {
+                                "source": "asset_packages.results_json",
+                                "label": "overdue_segments_breakdown",
+                                "value": pkg_summary.overdue_segments_breakdown,
+                            },
+                        ],
+                        confidence_score=0.82,
+                    )
+                )
+            # 缺 VIN 补资料草稿 —— 出让合规直接关联
+            if pkg_summary.missing_vin_count:
+                drafts.append(
+                    _task_draft(
+                        title=f"补齐缺 VIN 车辆资料({pkg_summary.missing_vin_count} 台)",
+                        description=(
+                            f"资产包内 {pkg_summary.missing_vin_count} 台车辆缺 VIN,"
+                            f"影响出让合规、买方尽调与车300估值复核,建议本周补齐。"
+                        ),
+                        task_type="data_completion",
+                        priority="high",
+                        related_object_type="asset_package",
+                        related_object_id=package_id,
+                        suggested_owner_role="operator",
+                        deadline_days=urgent_days,
+                        required_documents=[
+                            "车辆登记证(行驶证)扫描件",
+                            "VIN 钢印照片或保险单",
+                        ],
+                        expected_result="VIN 字段在资产包台账补齐,可重新触发定价分析",
+                        evidence=[
+                            {
+                                "source": "asset_packages.results_json",
+                                "label": "missing_vin_count",
+                                "value": pkg_summary.missing_vin_count,
+                            }
+                        ],
+                        confidence_score=0.85,
+                    )
+                )
+            # 长期在库车辆加快处置草稿
+            if pkg_summary.long_storage_count:
+                drafts.append(
+                    _task_draft(
+                        title=f"长期在库车辆加快出让({pkg_summary.long_storage_count} 台)",
+                        description=(
+                            f"资产包内 {pkg_summary.long_storage_count} 台车已入库超 90 天,"
+                            f"资金占用与残值衰减压力高,建议本周内启动竞拍或定向出让流程。"
+                        ),
+                        task_type="auction_preparation",
+                        priority="medium",
+                        related_object_type="asset_package",
+                        related_object_id=package_id,
+                        suggested_owner_role="manager",
+                        deadline_days=normal_days,
+                        required_documents=["车辆库存清单", "残值复核", "处置渠道选择"],
+                        expected_result="形成长期在库车辆的竞拍排期或定向出让方案",
+                        evidence=[
+                            {
+                                "source": "asset_packages.results_json",
+                                "label": "long_storage_count",
+                                "value": pkg_summary.long_storage_count,
+                            },
+                            {
+                                "source": "asset_packages.results_json",
+                                "label": "storage_days_avg",
+                                "value": pkg_summary.storage_days_avg,
+                            },
+                        ],
+                        confidence_score=0.74,
                     )
                 )
     if (

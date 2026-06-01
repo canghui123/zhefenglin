@@ -324,6 +324,40 @@ class PackageSummary(BaseModel):
     low_liquidity_count: int = 0
     new_energy_asset_count: int = 0
     market_liquidity_summary: str = ""
+    # ── B1: 不良资产业务字段聚合(逾期 / 在库 / 数据完整性)─────────────
+    # 这些字段让 Agent 不必遍历每台车,直接从 summary 读到分层结果。
+    overdue_segments_breakdown: dict[str, int] = Field(
+        default_factory=dict,
+        description="逾期分层计数 {M3-/M3-M6/M6-M12/M12+/unknown: count}",
+    )
+    m12_plus_count: int = Field(
+        default=0,
+        description="逾期 > 365 天的车辆数(M12+池),决定法务推进 / 债权转让强度",
+    )
+    m6_m12_count: int = Field(
+        default=0,
+        description="逾期 180-365 天的车辆数(M6-M12池),协商减免 / 资料补全候选",
+    )
+    missing_vin_count: int = Field(
+        default=0,
+        description="缺 VIN 车辆数,直接影响出让合规与定价可信度",
+    )
+    in_storage_count: int = Field(
+        default=0,
+        description="已入库(已收车)车辆数",
+    )
+    not_in_storage_count: int = Field(
+        default=0,
+        description="未入库车辆数 —— 可能需走债权转让而非拖车处置",
+    )
+    storage_days_avg: Optional[float] = Field(
+        default=None,
+        description="已入库车辆的平均在库天数(空时无在库车辆)",
+    )
+    long_storage_count: int = Field(
+        default=0,
+        description="在库 > 90 天的车辆数,资金占用 / 残值衰减预警",
+    )
 
 
 class PackageCalculationResult(BaseModel):

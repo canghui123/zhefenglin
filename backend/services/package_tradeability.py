@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from models.asset import AssetPricingResult, PackageSummary, TradeabilityResult
+from typing import Optional
+
+from models.asset import Asset, AssetPricingResult, PackageSummary, TradeabilityResult
+from services.overdue_segmentation import storage_timeliness_score
 
 
 def _ratio(ok_count: int, total: int) -> float:
@@ -23,10 +26,43 @@ def _level(score: int) -> str:
     return "E"
 
 
+def _timeliness_from_source_assets(
+    source_assets: list[Asset],
+    *,
+    max_score: float = 10.0,
+) -> float:
+    """B1: 真正的"处置时效性" = 在库状态 + 在库天数加权平均。
+
+    每台车按 `storage_timeliness_score()` 算 0..max_score,然后取均值。
+    """
+    if not source_assets:
+        return 0.0
+    scores = [
+        storage_timeliness_score(
+            in_storage=a.in_storage,
+            storage_days=a.storage_days,
+            max_score=max_score,
+        )
+        for a in source_assets
+    ]
+    return sum(scores) / len(scores)
+
+
 def calculate_package_tradeability(
     summary: PackageSummary,
     assets: list[AssetPricingResult],
+    *,
+    source_assets: Optional[list[Asset]] = None,
 ) -> TradeabilityResult:
+    """计算资产包交易适配度。
+
+    Args:
+        summary:  已经填完业务字段的 PackageSummary(B1 含逾期/在库/缺 VIN 聚合)
+        assets:   定价后的 AssetPricingResult 列表(用来算各类风险占比)
+        source_assets: B1 新增 - source pydantic Asset 列表,带 in_storage /
+                      storage_days / overdue_days 等业务字段,用来算"处置时效性"。
+                      为 None 时退回旧的"估值可信度"代理逻辑(向后兼容)。
+    """
     total = max(len(assets), 1)
     valued = sum(1 for row in assets if row.che300_valuation and row.che300_valuation > 0)
     with_principal = sum(1 for row in assets if row.loan_principal and row.loan_principal > 0)
@@ -52,7 +88,12 @@ def calculate_package_tradeability(
     coverage_component = min(coverage_component, 20)
     control_component = 15 * _ratio(no_gps_risk, total)
     title_component = 10 * _ratio(no_title_risk, total)
-    timeliness_component = 10 * _ratio(no_low_confidence, total)
+    # B1: 处置时效性优先用 source assets 算(在库 + 在库天数);
+    # 没有 source 时退回旧的估值可信度代理(向后兼容)
+    if source_assets:
+        timeliness_component = _timeliness_from_source_assets(source_assets, max_score=10.0)
+    else:
+        timeliness_component = 10 * _ratio(no_low_confidence, total)
     buyer_acceptance_component = 10 * min(
         _ratio(no_low_coverage, total),
         _ratio(no_low_liquidity, total),

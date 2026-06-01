@@ -13,6 +13,10 @@ from models.asset import (
 )
 from models.valuation import ValuationResult
 from services.market_liquidity import calculate_market_liquidity
+from services.overdue_segmentation import (
+    OverdueSegment,
+    aggregate_overdue_segments,
+)
 from services.package_tradeability import calculate_package_tradeability
 from services.valuation_confidence import calculate_valuation_confidence
 
@@ -370,6 +374,56 @@ def calculate_package(
                 f"有{len(risky_new_energy)}台新能源车存在电池、质保、运营或品牌流动性专项风险"
             )
 
+    # ── B1: 不良资产核心业务字段聚合(逾期分层 / 在库状态 / 缺 VIN)─────
+    overdue_breakdown = aggregate_overdue_segments(assets)
+    m12_plus_count = overdue_breakdown[OverdueSegment.M12_PLUS.value]["count"]
+    m6_m12_count = overdue_breakdown[OverdueSegment.M6_M12.value]["count"]
+    m3_m6_count = overdue_breakdown[OverdueSegment.M3_M6.value]["count"]
+    overdue_unknown_count = overdue_breakdown[OverdueSegment.UNKNOWN.value]["count"]
+
+    # 缺 VIN 计数 —— pricing_engine 也补 risk_flag,确保前端能看到
+    missing_vin_assets = [a for a in assets if not a.vin]
+    missing_vin_count = len(missing_vin_assets)
+    for asset in assets:
+        if not asset.vin:
+            # 注入到对应 result.risk_flags(已有 result 按 row_number 匹配)
+            for r in results:
+                if r.row_number == asset.row_number and "缺VIN" not in " ".join(r.risk_flags):
+                    r.risk_flags.append("缺VIN（数据完整性）")
+
+    # 在库状态聚合
+    in_storage_assets = [a for a in assets if a.in_storage is True]
+    in_storage_count = len(in_storage_assets)
+    not_in_storage_count = sum(1 for a in assets if a.in_storage is False)
+    long_storage_count = sum(
+        1 for a in in_storage_assets
+        if a.storage_days is not None and a.storage_days > 90
+    )
+    storage_days_avg: Optional[float] = None
+    valid_storage_days = [a.storage_days for a in in_storage_assets if a.storage_days is not None]
+    if valid_storage_days:
+        storage_days_avg = round(sum(valid_storage_days) / len(valid_storage_days), 1)
+
+    # B1 业务规则触发的 risk_alerts —— 业内人眼里这些是关键信号
+    if m12_plus_count:
+        risk_alerts.append(
+            f"有{m12_plus_count}台逾期超 365 天(M12+)，建议优先纳入法务推进池或债权转让池"
+        )
+    if m6_m12_count:
+        risk_alerts.append(
+            f"有{m6_m12_count}台逾期 180-365 天(M6-M12)，建议协商减免与法务备案并行推进"
+        )
+    if missing_vin_count:
+        risk_alerts.append(
+            f"有{missing_vin_count}台缺 VIN，影响出让合规与买方尽调，建议先补 VIN 资料"
+        )
+    if long_storage_count:
+        risk_alerts.append(
+            f"有{long_storage_count}台在库超 90 天，资金占用与残值衰减加速，建议加快处置"
+        )
+    if overdue_unknown_count and overdue_unknown_count == len(assets):
+        risk_alerts.append("整包逾期天数缺失，无法做处置紧迫度判断，需先补资料")
+
     if inventory:
         methodology = (
             "在库车资产包以车300车辆评估价为主锚，结合抵押物价值覆盖率、权属/GPS/保险等瑕疵给出"
@@ -431,8 +485,20 @@ def calculate_package(
             if results
             else ""
         ),
+        # B1: 业务字段聚合
+        overdue_segments_breakdown={
+            key: val["count"] if isinstance(val, dict) else val
+            for key, val in overdue_breakdown.items()
+        },
+        m12_plus_count=m12_plus_count,
+        m6_m12_count=m6_m12_count,
+        missing_vin_count=missing_vin_count,
+        in_storage_count=in_storage_count,
+        not_in_storage_count=not_in_storage_count,
+        storage_days_avg=storage_days_avg,
+        long_storage_count=long_storage_count,
     )
-    tradeability = calculate_package_tradeability(summary, results)
+    tradeability = calculate_package_tradeability(summary, results, source_assets=assets)
     summary.tradeability_score = tradeability.score
     summary.tradeability_level = tradeability.level
     summary.tradeability_summary = tradeability.summary
