@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     che300_access_key: str = ""
     che300_access_secret: str = ""
     che300_api_base: str = "https://cloud-api.che300.com"
+    # 估值后端模式:
+    #   "auto" (默认)  - 有合法 key 走真 API,没 key / 占位符 key 自动 fallback mock
+    #   "real"        - 强制走真车300 API,即使 key 为空也尝试(用于生产排错)
+    #   "mock"        - 强制走本地 mock 估值,完全不联网(用于演示/测试)
+    # 历史问题:之前判断仅看 "key 是否非空字符串",`disabled_for_demo` 这种占位符
+    # 会被误判为"有 key" 然后调真 API 失败 → 估值 0%。本字段是修复。
+    che300_mode: str = "auto"
     default_city_code: str = "320100"
     default_city_name: str = "南京"
 

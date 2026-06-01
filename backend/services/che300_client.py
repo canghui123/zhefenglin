@@ -19,6 +19,50 @@ from models.valuation import ValuationResult
 from repositories import valuation_repo
 
 
+# 已知的占位符 access_key —— 这些值表示"我没有真车300 key,请走 mock"。
+# 历史问题:之前代码 `if settings.che300_access_key:` 把 `disabled_for_demo`
+# 当成"有 key" 然后真的调车300 API 失败 → 估值覆盖率 0%。
+# 现在通过白名单 + che300_mode 显式开关共同决定是否调真 API。
+_CHE300_MOCK_PLACEHOLDER_KEYS = {
+    "",
+    "disabled",
+    "disabled_for_demo",
+    "mock",
+    "demo",
+    "placeholder",
+    "your_che300_access_key_here",
+    "change_me",
+}
+
+
+def _should_use_real_che300_api() -> bool:
+    """统一判断:本次估值调用是否应该走真车300 API。
+
+    优先级:
+      1. che300_mode=="mock" → 永远走 mock,不联网
+      2. che300_mode=="real" → 永远走真 API,即使 key 为空也尝试
+                              (这种情况会被车300 拒绝,但不会被本判断拦截)
+      3. che300_mode=="auto"(默认):
+           - access_key 与 access_secret 都设置
+           - 且 access_key 不在占位符白名单里
+         才走真 API,否则 fallback mock。
+    """
+    mode = (getattr(settings, "che300_mode", "auto") or "auto").lower().strip()
+    if mode == "mock":
+        return False
+    if mode == "real":
+        return True
+
+    # auto 模式
+    key = (settings.che300_access_key or "").strip()
+    secret = (settings.che300_access_secret or "").strip()
+    if not key or not secret:
+        return False
+    if key.lower() in _CHE300_MOCK_PLACEHOLDER_KEYS:
+        return False
+    return True
+
+
 def _generate_signature(business_params: dict, access_key: str, timestamp: str, secret_key: str) -> str:
     """车300签名算法（官方文档）：
     1. 参与签名的字段 = 业务参数 + access_key（不含debug/image_base64）
@@ -156,7 +200,7 @@ async def get_valuation_by_vin(
     from_cache = cached is not None
 
     if result is None:
-        if settings.che300_access_key and settings.che300_access_secret:
+        if _should_use_real_che300_api():
             result = await _real_vin_valuation(
                 session,
                 vin,
