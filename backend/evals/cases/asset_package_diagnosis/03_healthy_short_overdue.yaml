@@ -1,0 +1,58 @@
+case_id: 03_healthy_short_overdue
+description: 健康包 —— 全部 M3- 短期逾期,无缺 VIN,在库率高。Agent 不应过度报警
+agent_type: asset_package_diagnosis_agent
+
+input:
+  package:
+    id: 102
+    tenant_id: 1
+    name: "[eval] 健康包"
+    total_assets: 25
+  result_summary:
+    total_assets: 25
+    asset_package_type: inventory
+    overdue_segments_breakdown:
+      "M3-": 25
+      "M3-M6": 0
+      "M6-M12": 0
+      "M12+": 0
+      "unknown": 0
+    m12_plus_count: 0
+    m6_m12_count: 0
+    missing_vin_count: 0
+    in_storage_count: 22
+    not_in_storage_count: 3
+    long_storage_count: 0
+    storage_days_avg: 18
+    risk_alerts: []
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - find_text:
+        in: key_findings
+        substr: "M3-"
+    - find_text:
+        in: key_findings
+        substr: "25"
+
+  should:
+    - find_text:
+        in: key_findings
+        substr: "在库 22"
+    - find_text:
+        in: key_findings
+        substr: "在库平均"
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "法务推进"  # 健康包不应该被推法务路径
+    - forbidden_text:
+        in: risk_warnings
+        substr: "M12+"
+    - forbidden_text:
+        in: risk_warnings
+        substr: "缺 VIN"

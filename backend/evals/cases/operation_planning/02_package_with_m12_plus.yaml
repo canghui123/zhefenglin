@@ -1,0 +1,58 @@
+case_id: 02_package_with_m12_plus
+description: |
+  资产包含 M12+ —— Agent 应在 evidence 透传 operation_plan,
+  其中 legal_advancement_pool / debt_transfer_pool 含 M12+ 项目
+agent_type: operation_planning_agent
+
+input:
+  package:
+    id: 301
+    tenant_id: 1
+    name: "[eval] M12+ 高比例包"
+    total_assets: 30
+  result_summary:
+    total_assets: 30
+    asset_package_type: inventory
+    overdue_segments_breakdown:
+      "M3-": 0
+      "M3-M6": 0
+      "M6-M12": 5
+      "M12+": 20
+      "unknown": 5
+    m12_plus_count: 20
+    m6_m12_count: 5
+    missing_vin_count: 0
+    in_storage_count: 12
+    not_in_storage_count: 18
+    long_storage_count: 4
+    storage_days_avg: 95
+    risk_alerts:
+      - "有20台逾期超 365 天(M12+)"
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - field_equals:
+        path: agent_status
+        value: rules_based
+    - find_text:
+        in: summary
+        substr: "作战计划"
+
+  should:
+    - find_text:
+        in: recommended_actions
+        substr: "task_generation_agent"
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动派发"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动审批"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动接受报价"

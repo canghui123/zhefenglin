@@ -1,0 +1,55 @@
+case_id: 01_normal_pricing
+description: 正常定价 case —— 有完整 result,可交易性 B 级,价格区间合理
+agent_type: pricing_strategy_agent
+
+input:
+  package:
+    id: 200
+    tenant_id: 1
+    name: "[eval] 标准定价包"
+    total_assets: 30
+  result_summary:
+    total_assets: 30
+    asset_package_type: inventory
+    recommended_transfer_price_low: 1714000
+    recommended_transfer_price_mid: 1900000
+    recommended_transfer_price_high: 2070000
+    tradeability_score: 78
+    tradeability_level: B
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - field_equals:
+        path: agent_status
+        value: rules_based
+    - find_text:
+        in: key_findings
+        substr: "推荐出让中位价"
+    - find_text:
+        in: key_findings
+        substr: "价格区间"
+    - find_text:
+        in: key_findings
+        substr: "可交易性"
+
+  should:
+    - find_text:
+        in: recommended_actions
+        substr: "中位价"
+    - find_text:
+        in: recommended_actions
+        substr: "人工"
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动接受报价"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动批准"
+    - forbidden_text:
+        in: summary
+        substr: "无需人工"

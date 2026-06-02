@@ -1,0 +1,43 @@
+case_id: 03_low_tradeability_warns
+description: 可交易性 D 级 —— pricing_strategy_agent 应明确不建议直接整体出让
+agent_type: pricing_strategy_agent
+
+input:
+  package:
+    id: 202
+    tenant_id: 1
+    name: "[eval] 低适配包"
+    total_assets: 28
+  result_summary:
+    total_assets: 28
+    asset_package_type: inventory
+    recommended_transfer_price_low: 800000
+    recommended_transfer_price_mid: 920000
+    recommended_transfer_price_high: 1050000
+    tradeability_score: 45
+    tradeability_level: D
+    risk_alerts:
+      - "有 8 台权属瑕疵"
+      - "有 12 台估值数据缺失"
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - find_text:
+        in: key_findings
+        substr: "D"
+    - find_text:
+        in: risk_warnings
+        substr: "不建议直接整体出让"
+
+  should:
+    - find_text:
+        in: recommended_actions
+        substr: "拆"  # "拆包" 之类
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动接受报价"

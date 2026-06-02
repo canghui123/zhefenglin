@@ -1,0 +1,85 @@
+case_id: 02_high_overdue_risky_package
+description: |
+  演示问题包简化版:19 台 M12+ + 3 台缺 VIN + 8 台在库超 90 天。
+  Agent 必须:(a)在 findings 报出 M12+ 数字;(b)在 actions 推荐法务推进;
+  (c)在 warnings 报缺 VIN + 长期在库;(d)保持 requires_human_review=true。
+agent_type: asset_package_diagnosis_agent
+
+input:
+  package:
+    id: 101
+    tenant_id: 1
+    name: "[eval] 演示问题包简化版"
+    total_assets: 30
+  result_summary:
+    total_assets: 30
+    asset_package_type: inventory
+    overdue_segments_breakdown:
+      "M3-": 0
+      "M3-M6": 0
+      "M6-M12": 0
+      "M12+": 19
+      "unknown": 11
+    m12_plus_count: 19
+    m6_m12_count: 0
+    missing_vin_count: 3
+    in_storage_count: 14
+    not_in_storage_count: 16
+    long_storage_count: 8
+    storage_days_avg: 113
+    risk_alerts:
+      - "有19台逾期超 365 天(M12+)，建议优先纳入法务推进池或债权转让池"
+      - "有3台缺 VIN，影响出让合规与买方尽调，建议先补 VIN 资料"
+      - "有8台在库超 90 天，资金占用与残值衰减加速，建议加快处置"
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - field_equals:
+        path: agent_status
+        value: rules_based
+    - find_text:
+        in: key_findings
+        substr: "M12+"
+    - find_text:
+        in: key_findings
+        substr: "19"
+    - find_text:
+        in: recommended_actions
+        substr: "法务推进"
+    - find_text:
+        in: risk_warnings
+        substr: "M12+"
+    - find_text:
+        in: key_findings
+        substr: "缺 VIN"
+    - find_text:
+        in: key_findings
+        substr: "在库"
+
+  should:
+    - find_text:
+        in: risk_warnings
+        substr: "缺 VIN"
+    - find_text:
+        in: risk_warnings
+        substr: "在库超 90 天"
+    - find_text:
+        in: recommended_actions
+        substr: "债权转让"
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动批准"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动出让"
+    - forbidden_text:
+        in: summary
+        substr: "自动接受"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "最终法律意见"

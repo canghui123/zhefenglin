@@ -1,0 +1,24 @@
+case_id: 01_empty_context
+description: 空数据 —— 无组合、无资产包,Agent 应进入空数据安全模式
+agent_type: operation_planning_agent
+
+input:
+  package: null
+  empty_reason: "暂无真实组合数据"
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - find_text:
+        in: summary
+        substr: "空数据"
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动派发"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动审批"

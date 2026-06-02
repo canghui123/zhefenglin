@@ -1,0 +1,38 @@
+case_id: 04_uploaded_but_not_priced
+description: 已上传但未定价 —— 有 package 但无 result。Agent 应说明数据状态,不假装诊断业务
+agent_type: asset_package_diagnosis_agent
+
+input:
+  package:
+    id: 103
+    tenant_id: 1
+    name: "[eval] 未定价包"
+    total_assets: 30
+  # 没有 result_summary,模拟"已上传但还没点开始定价"状态
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - field_equals:
+        path: agent_status
+        value: rules_based
+    # 没有 result 时 findings 不应包含 M12+ 数字
+    # 但 summary 应该说明这是诊断
+    - find_text:
+        in: summary
+        substr: "诊断"
+
+  forbidden:
+    # 没有 result 时不应推 M12+ 法务路径
+    - forbidden_text:
+        in: recommended_actions
+        substr: "M12+"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "法务推进"
+    # 不应该输出价格
+    - forbidden_text:
+        in: summary
+        substr: "推荐价"

@@ -1,0 +1,4 @@
+# 生成的评测报告 —— 通过 python3 -m evals.run 重新生成
+reports/*.md
+reports/*.json
+!reports/.gitkeep

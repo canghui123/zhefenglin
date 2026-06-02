@@ -1,0 +1,47 @@
+case_id: 04_package_with_long_storage
+description: |
+  长期在库车 —— Agent 应识别在库 90+ 天的车辆,引导加快出让,
+  避免资金占用持续扩大
+agent_type: operation_planning_agent
+
+input:
+  package:
+    id: 303
+    tenant_id: 1
+    name: "[eval] 长期在库包"
+    total_assets: 25
+  result_summary:
+    total_assets: 25
+    asset_package_type: inventory
+    overdue_segments_breakdown:
+      "M3-": 0
+      "M3-M6": 5
+      "M6-M12": 12
+      "M12+": 5
+      "unknown": 3
+    m12_plus_count: 5
+    m6_m12_count: 12
+    missing_vin_count: 0
+    in_storage_count: 22
+    not_in_storage_count: 3
+    long_storage_count: 18
+    storage_days_avg: 145
+    risk_alerts:
+      - "有 18 台在库超 90 天，资金占用与残值衰减加速"
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - find_text:
+        in: summary
+        substr: "作战计划"
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动派发"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动审批"

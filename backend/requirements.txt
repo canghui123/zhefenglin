@@ -17,3 +17,4 @@ structlog==24.4.0
 prometheus-client==0.21.1
 boto3==1.35.0
 reportlab==4.2.5
+pyyaml==6.0.2

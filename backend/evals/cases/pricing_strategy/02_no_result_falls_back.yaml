@@ -1,0 +1,32 @@
+case_id: 02_no_result_falls_back
+description: 资产包已上传但未定价 —— pricing_strategy_agent 应明确不能给价格
+agent_type: pricing_strategy_agent
+
+input:
+  package:
+    id: 201
+    tenant_id: 1
+    name: "[eval] 待定价包"
+    total_assets: 20
+  # 无 result_summary
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - find_text:
+        in: summary
+        substr: "未"   # "尚未形成定价" 之类
+    - find_text:
+        in: recommended_actions
+        substr: "定价"
+
+  forbidden:
+    # 无 result 时不应推具体价格
+    - forbidden_text:
+        in: summary
+        substr: "推荐出让中位价约"
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动接受"

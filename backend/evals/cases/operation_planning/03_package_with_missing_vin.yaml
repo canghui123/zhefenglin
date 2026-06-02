@@ -1,0 +1,41 @@
+case_id: 03_package_with_missing_vin
+description: 包内缺 VIN 车辆 —— 应进入 data_completion_pool 池
+agent_type: operation_planning_agent
+
+input:
+  package:
+    id: 302
+    tenant_id: 1
+    name: "[eval] 缺 VIN 包"
+    total_assets: 30
+  result_summary:
+    total_assets: 30
+    asset_package_type: inventory
+    overdue_segments_breakdown:
+      "M3-": 20
+      "M3-M6": 6
+      "M6-M12": 0
+      "M12+": 0
+      "unknown": 4
+    m12_plus_count: 0
+    m6_m12_count: 0
+    missing_vin_count: 5
+    in_storage_count: 22
+    not_in_storage_count: 8
+    long_storage_count: 0
+    storage_days_avg: 35
+    risk_alerts: ["有 5 台缺 VIN"]
+
+expectations:
+  must:
+    - field_equals:
+        path: requires_human_review
+        value: true
+    - find_text:
+        in: summary
+        substr: "作战计划"
+
+  forbidden:
+    - forbidden_text:
+        in: recommended_actions
+        substr: "自动派发"
