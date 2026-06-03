@@ -43,12 +43,24 @@ export async function login(email: string, password: string): Promise<CurrentUse
   return data.user as CurrentUser;
 }
 
-export async function register(email: string, password: string, displayName?: string): Promise<CurrentUser> {
+export interface RegisterPayload {
+  email: string;
+  password: string;
+  displayName?: string;
+  agreedToTerms: boolean;
+}
+
+export async function register(payload: RegisterPayload): Promise<CurrentUser> {
   const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, display_name: displayName }),
+    body: JSON.stringify({
+      email: payload.email,
+      password: payload.password,
+      display_name: payload.displayName,
+      agreed_to_terms: payload.agreedToTerms,
+    }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: "注册失败" }));

@@ -77,7 +77,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (email: string, password: string, displayName?: string) => {
-      const u = await registerRequest(email, password, displayName);
+      // task #5: register now requires agreed_to_terms; SessionProvider
+      // callers must have already collected consent in their form UI.
+      const u = await registerRequest({
+        email,
+        password,
+        displayName,
+        agreedToTerms: true,
+      });
       setUser(u);
     },
     [],

@@ -2,6 +2,7 @@
 
 import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -13,26 +14,34 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { submitAccessRequest } from "@/lib/auth";
+import { register } from "@/lib/auth";
+import { ApiError } from "@/lib/api";
 
+/**
+ * /register —— SaaS 公开试用快速注册。
+ *
+ * 行为(2026-06-03 改造):
+ *   注册成功 → 后端 trial_onboarding 自动创建独立 tenant + trial_poc 30 天
+ *               + operator 角色 + 自动登录 → 跳到 / 首页(有 onboarding 卡片)
+ *
+ * 企业内测申请审核流程已移至 /access-request(本页面底部链接)。
+ */
 export default function RegisterPage() {
   return (
     <Suspense fallback={null}>
-      <AccessRequestForm />
+      <QuickTrialRegisterForm />
     </Suspense>
   );
 }
 
-function AccessRequestForm() {
+function QuickTrialRegisterForm() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
-  const [company, setCompany] = useState("");
-  const [contactName, setContactName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [scenario, setScenario] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState(false);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -42,63 +51,41 @@ function AccessRequestForm() {
       setError("请先阅读并同意《服务使用须知》");
       return;
     }
+    if (password.length < 10) {
+      setError("密码至少 10 位,需包含字母 + 数字 + 特殊字符");
+      return;
+    }
 
     setSubmitting(true);
     try {
-      await submitAccessRequest({
+      await register({
         email,
-        company,
-        contact_name: contactName,
-        phone: phone || undefined,
-        scenario: scenario || undefined,
-        source: "web",
-        agreed_to_terms: true,
+        password,
+        displayName: displayName || undefined,
+        agreedToTerms: true,
       });
-      setDone(true);
+      // 注册成功 → 后端已自动登录 + 创建独立试用 tenant + 订阅 trial_poc
+      router.push("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提交失败，请稍后再试");
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("注册失败,请稍后再试");
+      }
     } finally {
       setSubmitting(false);
     }
   }
 
-  if (done) {
-    return (
-      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle>申请已提交</CardTitle>
-            <CardDescription>
-              我们将在 2 个工作日内通过邮件或电话与您联系。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm text-muted-foreground">
-            <p>
-              感谢您对汽车金融资产处置经营决策系统的关注。我们正在内测阶段，
-              每一位申请者都会被人工审核后开通账号。
-            </p>
-            <p>
-              如需加急或补充信息，可直接回复我们发送的确认邮件。
-            </p>
-            <Link
-              href="/login"
-              className="text-primary hover:underline text-sm"
-            >
-              返回登录页
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center py-8">
-      <Card className="w-full max-w-lg">
+    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-8">
+      <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle>申请内测访问</CardTitle>
+          <CardTitle>开通试用账号</CardTitle>
           <CardDescription>
-            本平台目前处于邀请内测阶段。请提交以下信息，我们人工审核后开通账号。
+            30 天 trial 试用 / 独立工作空间 / 数据互不可见
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -110,100 +97,93 @@ function AccessRequestForm() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
                 placeholder="your-name@company.com"
+                required
                 autoComplete="email"
               />
             </div>
+
             <div className="space-y-2">
-              <Label htmlFor="company">公司名称 *</Label>
+              <Label htmlFor="password">设置密码 *</Label>
               <Input
-                id="company"
-                type="text"
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="至少 10 位,含字母 + 数字 + 特殊字符"
                 required
-                placeholder="如：XX 资产管理有限公司"
-                autoComplete="organization"
+                autoComplete="new-password"
               />
+              <p className="text-xs text-muted-foreground">
+                例: <span className="font-mono">Trial2026!Auto</span>
+              </p>
             </div>
+
             <div className="space-y-2">
-              <Label htmlFor="contactName">联系人 *</Label>
+              <Label htmlFor="display_name">显示名(选填)</Label>
               <Input
-                id="contactName"
+                id="display_name"
                 type="text"
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="您的姓名"
                 autoComplete="name"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="phone">手机号（选填）</Label>
-              <Input
-                id="phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="138 0000 0000"
-                autoComplete="tel"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="scenario">使用场景（选填）</Label>
-              <textarea
-                id="scenario"
-                value={scenario}
-                onChange={(e) => setScenario(e.target.value)}
-                rows={3}
-                maxLength={1000}
-                placeholder="简单描述您希望用本平台解决的业务问题，如：月均处置 100 台车，希望辅助买断定价。"
-                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              />
-            </div>
 
-            <label className="flex items-start gap-2 text-sm text-muted-foreground">
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
               <input
                 type="checkbox"
                 checked={agreed}
                 onChange={(e) => setAgreed(e.target.checked)}
-                className="mt-1"
+                className="mt-0.5"
               />
-              <span>
-                我已阅读并同意
+              <span className="text-slate-700 leading-relaxed">
+                我已阅读并同意{" "}
                 <Link
-                  href="/legal/notice"
+                  href="/legal/terms"
+                  className="text-blue-600 hover:underline"
                   target="_blank"
-                  className="text-primary hover:underline mx-1"
                 >
                   《服务使用须知》
                 </Link>
-                ，理解平台提供的定价建议与决策报告仅供参考。
+                ,理解平台提供的定价建议与决策报告仅供参考,所有 AI
+                输出需人工复核。
               </span>
             </label>
 
             {error && (
-              <p className="text-sm text-red-600" role="alert">
+              <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
                 {error}
-              </p>
+              </div>
             )}
 
             <Button
               type="submit"
               className="w-full"
-              disabled={submitting || !agreed}
+              disabled={submitting || !email || !password || !agreed}
             >
-              {submitting ? "提交中..." : "提交申请"}
+              {submitting ? "正在创建试用空间..." : "创建试用账号 →"}
             </Button>
+          </form>
 
-            <p className="text-sm text-center text-muted-foreground">
-              已有账号？
-              <Link href="/login" className="text-primary hover:underline ml-1">
+          <div className="mt-5 pt-4 border-t border-slate-200 text-xs text-slate-500 space-y-2">
+            <p>
+              已有账号?{" "}
+              <Link href="/login" className="text-blue-600 hover:underline">
                 直接登录
               </Link>
             </p>
-          </form>
+            <p>
+              企业 / 内测客户请走人工审核流程?{" "}
+              <Link
+                href="/access-request"
+                className="text-blue-600 hover:underline"
+              >
+                提交申请
+              </Link>
+            </p>
+          </div>
         </CardContent>
       </Card>
     </div>
