@@ -41,4 +41,10 @@ echo
 echo "== frontend =="
 curl -k -fsSI "${BASE_URL}/asset-pricing" | sed -n '1,12p'
 
+echo "== env drift check =="
+# B4: 主动验证 DB / S3 / JWT / CHE300 / 存储 / CORS 配置漂移
+# 任何一项失败 smoke-check 会非 0 退出。这就是 2026-05-30 一天内撞 3 次
+# 配置漂移(DB_PASSWORD / S3 / CHE300)之后加的最后一道关。
+"${COMPOSE[@]}" exec -T backend python3 scripts/env_drift_check.py
+
 echo "smoke check ok: ${BASE_URL}"
