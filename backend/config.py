@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     terms_version: str = "2026.04.21"
     default_registration_tenant_code: str = "default"
     default_registration_tenant_name: str = "默认租户"
+    # task #5: 注册时的 onboarding 模式
+    #   "trial"  - 每个新注册用户独立 tenant + 自动订阅 trial_poc 套餐 30 天(SaaS 默认)
+    #   "legacy" - 老逻辑:所有注册用户挂到 default_registration_tenant_code(私有化部署等场景)
+    trial_onboarding_mode: str = "trial"
+    trial_days: int = 30
+    trial_monthly_budget_limit: float = 200.0
 
     # ---------- File Storage ----------
     storage_backend: str = "local"  # "local" | "s3"

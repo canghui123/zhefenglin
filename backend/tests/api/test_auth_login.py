@@ -6,6 +6,7 @@ These tests describe the contract:
 - POST /api/auth/login with bad credentials returns 401.
 - GET /api/auth/me with the session cookie returns the current user.
 """
+import pytest
 from fastapi.testclient import TestClient
 
 from config import settings
@@ -13,6 +14,13 @@ from main import app
 from db.session import get_db_session
 from repositories import tenant_repo, user_repo
 from services.password_service import hash_password
+
+
+@pytest.fixture(autouse=True)
+def _default_to_legacy_onboarding(monkeypatch):
+    """task #5: 这个文件的 register 老用例都假设"挂到 default 租户"的 legacy 行为;
+    SaaS 试用 onboard(trial mode)由 test_trial_onboarding.py 单独覆盖。"""
+    monkeypatch.setattr(settings, "trial_onboarding_mode", "legacy", raising=False)
 
 
 def _seed_user(email="admin@example.com", password="Passw0rd!1", role="admin"):
