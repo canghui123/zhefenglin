@@ -4,16 +4,32 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { healthCheck } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { healthCheck, listPackages } from "@/lib/api";
+
+// task #5: 试用 onboarding 卡片 —— 仅在资产包为 0 时显示
+const ONBOARDING_STEPS = [
+  { num: 1, title: "上传资产包 Excel", desc: "30 秒识别 18 个业务字段,100% 自动映射列名" },
+  { num: 2, title: "AI 自动诊断", desc: "M3/M6/M12 分层 · 缺 VIN 识别 · 长期在库聚合" },
+  { num: 3, title: "处置建议草稿", desc: "出让区间 · 法务推进 · 债权转让 · 补资料任务" },
+  { num: 4, title: "任务确认闭环", desc: "人工 review · 落正式 work_orders · 全链路审计" },
+];
 
 export default function HomePage() {
   const [status, setStatus] = useState<string>("checking");
+  const [packagesCount, setPackagesCount] = useState<number | null>(null);
 
   useEffect(() => {
     healthCheck()
       .then(() => setStatus("connected"))
       .catch(() => setStatus("disconnected"));
+
+    listPackages()
+      .then((pkgs) => setPackagesCount(pkgs.length))
+      .catch(() => setPackagesCount(null));
   }, []);
+
+  const showOnboarding = packagesCount === 0;
 
   return (
     <div>
@@ -26,6 +42,61 @@ export default function HomePage() {
           {status === "connected" ? "后端已连接" : status === "checking" ? "连接中..." : "后端未连接"}
         </Badge>
       </div>
+
+      {/* task #5: 试用 onboarding 卡片 —— 资产包为 0 时显示
+          设计语言:浅色金融专业版,克制留白,不渐变不花哨 */}
+      {showOnboarding && (
+        <div className="mb-8 rounded-md border border-slate-200 bg-slate-50 p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr,1.6fr] gap-6">
+            <div>
+              <div className="text-xs font-medium uppercase tracking-wider text-slate-500 mb-2">
+                试用环境 · 快速开始
+              </div>
+              <h2 className="text-xl font-semibold text-slate-900 mb-2 leading-snug">
+                上传第一份资产包,开始你的 AI 处置体验
+              </h2>
+              <p className="text-sm text-slate-600 mb-4 leading-relaxed">
+                系统会自动识别 18 个业务字段、按 M3/M6/M12 分层逾期资产、识别缺 VIN 和在库异常,
+                生成可人工确认的处置任务草稿。试用期 30 天,3 席位。
+              </p>
+              <Link href="/asset-pricing">
+                <Button>立即上传资产包 Excel →</Button>
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {ONBOARDING_STEPS.map((step) => (
+                <div
+                  key={step.num}
+                  className="rounded border border-slate-200 bg-white p-3"
+                >
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className="text-xs font-mono text-slate-400">
+                      0{step.num}
+                    </span>
+                    <span className="text-sm font-medium text-slate-900">
+                      {step.title}
+                    </span>
+                  </div>
+                  <div className="text-xs text-slate-500 leading-relaxed">
+                    {step.desc}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="mt-5 pt-4 border-t border-slate-200 flex items-center justify-between flex-wrap gap-3 text-xs text-slate-500">
+            <div className="flex items-center gap-4">
+              <span>
+                <span className="font-medium text-slate-700">AI 边界:</span>{" "}
+                所有 Agent 输出标注 requires_human_review,不替你做出让/法律结论
+              </span>
+            </div>
+            <span className="text-slate-400">
+              数据隔离:你的试用空间独立 tenant,看不到其他用户数据
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Link href="/asset-pricing">
