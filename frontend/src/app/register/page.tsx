@@ -80,7 +80,40 @@ function QuickTrialRegisterForm() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-8">
+    <div className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center px-4 py-8 gap-5">
+      {/* 价值陈述卡 —— 扫码进来第一眼看到,移动端 3 卡垂直堆叠,桌面端 3 列 */}
+      <div className="w-full max-w-md">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+          <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/60 border border-emerald-200 rounded-lg px-3 py-3 text-center sm:text-left">
+            <div className="text-2xl mb-1.5 leading-none">🎯</div>
+            <div className="text-xs font-semibold text-emerald-900 leading-tight">
+              30 天免费试用
+            </div>
+            <div className="text-[11px] text-emerald-700 mt-0.5 leading-tight">
+              无需付费
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100/60 border border-blue-200 rounded-lg px-3 py-3 text-center sm:text-left">
+            <div className="text-2xl mb-1.5 leading-none">🤖</div>
+            <div className="text-xs font-semibold text-blue-900 leading-tight">
+              AI 自动识别
+            </div>
+            <div className="text-[11px] text-blue-700 mt-0.5 leading-tight">
+              M12+ / 缺 VIN / 长期在库等
+            </div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-50 to-purple-100/60 border border-purple-200 rounded-lg px-3 py-3 text-center sm:text-left">
+            <div className="text-2xl mb-1.5 leading-none">🔒</div>
+            <div className="text-xs font-semibold text-purple-900 leading-tight">
+              独立工作空间
+            </div>
+            <div className="text-[11px] text-purple-700 mt-0.5 leading-tight">
+              数据互不可见 / 审计可追溯
+            </div>
+          </div>
+        </div>
+      </div>
+
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>开通试用账号</CardTitle>
