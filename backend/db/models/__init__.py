@@ -48,3 +48,4 @@ from db.models.agent import (  # noqa: F401
     AgentRuleSetting,
     AgentRunReview,
 )
+from db.models.report_draft import ReportDraft  # noqa: F401
