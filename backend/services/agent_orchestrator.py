@@ -38,6 +38,7 @@ from repositories import (
     asset_package_repo,
     plan_repo,
     portfolio_repo,
+    report_draft_repo,
     subscription_repo,
     usage_repo,
 )
@@ -1735,6 +1736,10 @@ def _report_generation_agent(
     request: AgentRunCreate,
     rule_settings: AgentRuleSettings,
     rule_profile: dict[str, Any],
+    *,
+    session: Optional[Session] = None,
+    tenant_id: Optional[int] = None,
+    user_id: Optional[int] = None,
 ) -> AgentOutput:
     evidence = _base_evidence(package)
     report_type = request.report_type or "executive_summary"
@@ -1787,6 +1792,51 @@ def _report_generation_agent(
         "forbidden_actions": ["自动下载", "自动外发", "自动批准出让", "替代法律结论"],
         "thresholds": rule_settings.model_dump(),
     }
+    # ── B3: 把草稿落入独立 report_drafts 表(优雅退化:落表失败不让 Agent 整体失败)
+    report_draft_id: Optional[int] = None
+    if session is not None and tenant_id is not None:
+        try:
+            related_pkg_id = (
+                str(package.package.id) if package.package is not None else None
+            )
+            draft_row = report_draft_repo.create_draft(
+                session,
+                tenant_id=tenant_id,
+                report_type=report_type,
+                title=supported[report_type],
+                content_json={
+                    "sections": sections,
+                    "missing_data": missing_data,
+                    "data_quality_notes": data_quality_notes,
+                    "allowed_actions": draft["allowed_actions"],
+                    "forbidden_actions": draft["forbidden_actions"],
+                },
+                review_checklist_json={"items": draft["review_checklist"]},
+                source_context_json=draft["source_context"],
+                confidence_score=confidence,
+                related_object_type="asset_package" if package.package is not None else None,
+                related_object_id=related_pkg_id,
+                created_by=user_id,
+            )
+            report_draft_id = draft_row.id
+        except Exception:  # noqa: BLE001 — Agent 输出比落表更重要,退化无害
+            report_draft_id = None
+
+    extra_evidence: list[AgentEvidence] = []
+    if report_draft_id is not None:
+        extra_evidence.append(
+            AgentEvidence(
+                source="report_drafts",
+                label="report_draft_id",
+                value=report_draft_id,
+                evidence_source="report_drafts",
+                related_object_type="report_draft",
+                related_object_id=str(report_draft_id),
+                calculation_basis="Agent 生成报告草稿落入独立 report_drafts 表(B3)",
+                data_quality_notes="状态机:draft → submitted → accepted/rejected/needs_revision",
+            )
+        )
+
     return AgentOutput(
         summary=f"已生成《{supported[report_type]}》草稿，不会自动下载或对外发送。",
         key_findings=[section["heading"] for section in draft["sections"]],
@@ -1810,7 +1860,8 @@ def _report_generation_agent(
                 calculation_basis="基于资产包定价、运营计划和风险提示生成报告草稿",
                 data_quality_notes="草稿未导出、未发送，需人工复核",
             ),
-        ],
+        ]
+        + extra_evidence,
         requires_human_review=True,
     )
 
@@ -1839,7 +1890,13 @@ def _mock_agent(agent_type: str) -> AgentOutput:
     )
 
 
-def _run_agent_logic(session: Session, *, tenant_id: int, request: AgentRunCreate) -> AgentOutput:
+def _run_agent_logic(
+    session: Session,
+    *,
+    tenant_id: int,
+    request: AgentRunCreate,
+    user_id: Optional[int] = None,
+) -> AgentOutput:
     agent_type = request.agent_type or classify_intent(request.question)
     context = _latest_package_context(
         session,
@@ -1893,7 +1950,16 @@ def _run_agent_logic(session: Session, *, tenant_id: int, request: AgentRunCreat
         )
     if agent_type == "report_generation_agent":
         portfolio = _portfolio_context(session, tenant_id=tenant_id)
-        return _report_generation_agent(context, portfolio, request, rule_settings, rule_profile)
+        return _report_generation_agent(
+            context,
+            portfolio,
+            request,
+            rule_settings,
+            rule_profile,
+            session=session,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
     if agent_type == "cost_control_agent":
         return _cost_control_agent(session, tenant_id, context, request, rule_settings, rule_profile)
     return _mock_agent(agent_type)
@@ -1930,7 +1996,7 @@ def run_agent(
         requires_human_review=True,
     )
     output = _apply_agent_status(
-        _run_agent_logic(session, tenant_id=tenant_id, request=request),
+        _run_agent_logic(session, tenant_id=tenant_id, request=request, user_id=user_id),
         agent_type,
     )
     output.requires_human_review = True
