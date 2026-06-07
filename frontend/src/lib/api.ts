@@ -1656,3 +1656,102 @@ export interface AuditLogRow {
   after_json: string | null;
   created_at: string | null;
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// B3: Report drafts
+// ─────────────────────────────────────────────────────────────────────
+
+export type ReportDraftStatus =
+  | "draft"
+  | "submitted"
+  | "accepted"
+  | "rejected"
+  | "needs_revision";
+
+export type ReportDraftDistribution = "draft_only" | "internal" | "external";
+
+export type ReportDraftType =
+  | "executive_summary"
+  | "asset_package_brief"
+  | "buyer_offer_memo"
+  | "weekly_operation_report"
+  | "custom";
+
+export type ReportDraftAction =
+  | "submit"
+  | "accept"
+  | "reject"
+  | "request_revision";
+
+export interface ReportDraftListItem {
+  id: number;
+  report_type: string;
+  title: string;
+  status: ReportDraftStatus;
+  distribution: ReportDraftDistribution;
+  confidence_score: number | null;
+  related_object_type: string | null;
+  related_object_id: string | null;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReportDraftDetail extends ReportDraftListItem {
+  tenant_id: number;
+  agent_run_id: number | null;
+  content_json: Record<string, unknown>;
+  review_checklist_json: Record<string, unknown> | null;
+  source_context_json: Record<string, unknown> | null;
+  requires_human_review: boolean;
+  created_by: number | null;
+  submitted_by: number | null;
+  reviewed_by: number | null;
+  review_notes: string | null;
+}
+
+export async function listReportDrafts(params?: {
+  status?: ReportDraftStatus;
+  report_type?: ReportDraftType;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.report_type) qs.set("report_type", params.report_type);
+  const query = qs.toString();
+  return request<ReportDraftListItem[]>(
+    `/api/report-drafts${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getReportDraft(id: number) {
+  return request<ReportDraftDetail>(`/api/report-drafts/${id}`);
+}
+
+export async function updateReportDraft(
+  id: number,
+  payload: {
+    title?: string;
+    content_json?: Record<string, unknown>;
+    review_checklist_json?: Record<string, unknown>;
+  },
+) {
+  return request<ReportDraftDetail>(`/api/report-drafts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function transitionReportDraft(
+  id: number,
+  payload: {
+    action: ReportDraftAction;
+    notes?: string;
+    distribution?: ReportDraftDistribution;
+  },
+) {
+  return request<ReportDraftDetail>(`/api/report-drafts/${id}/transition`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

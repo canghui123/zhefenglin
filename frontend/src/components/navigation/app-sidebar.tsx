@@ -83,6 +83,7 @@ const navSections: Array<{ title: string; items: NavItem[] }> = [
         featureKey: "tenant.value_dashboard",
       },
       { href: "/admin/users", label: "用户管理", minRole: "admin" },
+      { href: "/admin/report-drafts", label: "报告草稿", minRole: "manager" },
       { href: "/admin/ai-audit-logs", label: "AI 审计日志", minRole: "admin" },
       { href: "/admin/audit-logs", label: "审计日志", minRole: "manager" },
     ],
