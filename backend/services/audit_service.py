@@ -16,15 +16,25 @@ from sqlalchemy.orm import Session
 
 from db.models.audit_log import AuditLog
 from repositories import audit_repo
+from services.data_masking import _redact_pii_in_text, mask_sensitive_payload
 
 
 def _to_json(obj: Optional[Any]) -> Optional[str]:
+    """Serialise audit before/after with PII redaction.
+
+    B6 (2026-06-08): the audit_logs table is read by ops and tailed via
+    docker compose logs; raw VIN / 手机号 / 身份证 / 邮箱 must not leak
+    there. Run the payload through mask_sensitive_payload (which does
+    both field-name masking and value-content regex scanning) before
+    json.dumps. String inputs go through the regex-only path.
+    """
     if obj is None:
         return None
     if isinstance(obj, str):
-        return obj
+        return _redact_pii_in_text(obj)
     try:
-        return json.dumps(obj, ensure_ascii=False, default=str)
+        sanitized = mask_sensitive_payload(obj)
+        return json.dumps(sanitized, ensure_ascii=False, default=str)
     except TypeError:
         return json.dumps({"repr": repr(obj)}, ensure_ascii=False)
 
