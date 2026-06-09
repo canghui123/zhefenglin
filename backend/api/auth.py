@@ -125,11 +125,17 @@ def register(
         )
 
     display_name = req.display_name or req.email.split("@")[0]
+    # SaaS 试用模式 → user.role=operator(独立 tenant 内可做业务,
+    # 但 admin 后台仍由 user.role=admin 把守)。legacy 模式 → viewer,
+    # 保留原 access-request 审核流程的最小权限默认。
+    initial_role = (
+        "operator" if trial_onboarding.is_trial_mode_enabled() else "viewer"
+    )
     new_user = user_repo.create_user(
         session,
         email=req.email,
         password_hash=hash_password(req.password),
-        role="viewer",
+        role=initial_role,
         display_name=display_name,
     )
     # 记录用户同意服务条款的时间 + 版本，留存合规证据
