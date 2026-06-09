@@ -65,7 +65,9 @@ function QuickTrialRegisterForm() {
         agreedToTerms: true,
       });
       // 注册成功 → 后端已自动登录 + 创建独立试用 tenant + 订阅 trial_poc
-      router.push("/");
+      // 用 window.location 强制 full reload, 让 session-provider 重新拉 cookie / me,
+      // 否则 router.push 太快, 中间件可能在 me 解析前误判未登录 → 跳 /login?next=/
+      window.location.href = "/";
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);

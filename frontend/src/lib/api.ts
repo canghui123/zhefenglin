@@ -39,11 +39,19 @@ async function buildApiError(
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  // 默认对有 body 的请求加 Content-Type: application/json,避免 422
+  const method = (options?.method || "GET").toUpperCase();
+  const hasBody = options?.body !== undefined && options?.body !== null;
+  const defaultHeaders: Record<string, string> = {};
+  if (hasBody && method !== "GET") {
+    defaultHeaders["Content-Type"] = "application/json";
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
     ...options,
     headers: {
-      ...(options?.headers || {}),
+      ...defaultHeaders,
+      ...((options?.headers as Record<string, string>) || {}),
     },
   });
   if (!res.ok) {
