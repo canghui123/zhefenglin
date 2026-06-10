@@ -40,10 +40,13 @@ async function buildApiError(
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   // 默认对有 body 的请求加 Content-Type: application/json,避免 422
+  // FormData 例外:必须让浏览器自动生成 multipart boundary,强写会导致后端 422
   const method = (options?.method || "GET").toUpperCase();
   const hasBody = options?.body !== undefined && options?.body !== null;
+  const isFormData =
+    typeof FormData !== "undefined" && options?.body instanceof FormData;
   const defaultHeaders: Record<string, string> = {};
-  if (hasBody && method !== "GET") {
+  if (hasBody && method !== "GET" && !isFormData) {
     defaultHeaders["Content-Type"] = "application/json";
   }
   const res = await fetch(`${API_BASE}${path}`, {
