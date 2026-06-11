@@ -77,7 +77,8 @@ def _generate_signature(business_params: dict, access_key: str, timestamp: str, 
     param_str = "&".join(f"{k}={sign_params[k]}" for k in sorted_keys)
 
     sign_str = f"{timestamp}{param_str}{secret_key}"
-    return hashlib.md5(sign_str.encode("utf-8")).hexdigest()
+    # MD5 是车300 API 签名规范的硬性要求,非安全用途
+    return hashlib.md5(sign_str.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _check_cache(session: Session, cache_key: str) -> Optional[ValuationResult]:
