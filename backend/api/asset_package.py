@@ -20,6 +20,7 @@ from errors import (
     FileTooLarge,
     InvalidFileFormat,
     ParseError,
+    QuotaExceeded,
     ReportNotGenerated,
 )
 from models.asset import (
@@ -31,8 +32,8 @@ from models.asset import (
     TransferComplianceChecklist,
     TransferComplianceResult,
 )
-from repositories import asset_package_repo
-from services import approval_service, audit_service, commercial_policy_service  # noqa: F401
+from repositories import asset_package_repo, usage_repo
+from services import approval_service, audit_service, commercial_policy_service, quota_service  # noqa: F401
 from services.asset_package_pdf import generate_asset_package_pdf
 from services.buyer_offer_analysis import analyze_buyer_offer
 from services.data_masking import mask_sensitive_payload
@@ -299,6 +300,23 @@ async def upload_excel(
     # 以魔数识别出的真实格式为准，防止 rename 攻击
     ext = ".xlsx" if sniffed == "xlsx" else ".xls"
 
+    # 月度上传配额：有订阅的租户(SaaS 试用/付费)按套餐额度执行;
+    # 无订阅的内部/私有化租户不限(subscription_missing 放行)
+    allowance = quota_service.check_allowance(
+        session,
+        tenant_id=tenant_id,
+        resource_type="asset_package_upload",
+    )
+    if not allowance["allowed"] and allowance["reason"] != "subscription_missing":
+        raise QuotaExceeded(
+            detail="本月资产包上传额度已用尽，请升级套餐或下月再试",
+            details={
+                "quota_limit": allowance["quota_limit"],
+                "quota_used": allowance["quota_used"],
+                "reason": allowance["reason"],
+            },
+        )
+
     pkg = asset_package_repo.create_package(
         session,
         tenant_id=tenant_id,
@@ -306,7 +324,8 @@ async def upload_excel(
         name=file.filename,
     )
     package_id = pkg.id
-    storage_key = f"pkg_{package_id}{ext}"
+    # S3/MinIO 按租户前缀隔离对象；本地存储会扁平化为 basename(pkg id 全局唯一,不冲突)
+    storage_key = f"tenants/{tenant_id}/pkg_{package_id}{ext}"
 
     store = get_storage()
     store.put_bytes(
@@ -343,6 +362,21 @@ async def upload_excel(
         storage_key=storage_key,
     )
 
+    usage_repo.create_usage_event(
+        session,
+        tenant_id=tenant_id,
+        user_id=user.id,
+        module="asset-pricing",
+        action="upload",
+        resource_type="asset_package_upload",
+        quantity=1,
+        unit_cost_internal=0,
+        unit_price_external=0,
+        estimated_cost_total=0,
+        related_object_type="asset_package",
+        related_object_id=str(package_id),
+    )
+
     audit_service.record(
         session,
         request,
@@ -359,6 +393,56 @@ async def upload_excel(
         "filename": file.filename,
         "parse_result": result.model_dump(),
     }
+
+
+@router.delete(
+    "/{package_id}",
+    dependencies=[Depends(require_role("operator"))],
+)
+async def delete_asset_package(
+    package_id: int,
+    request: Request,
+    session: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
+    tenant_id: int = Depends(get_current_tenant_id),
+):
+    """删除资产包：先删存储对象，再删数据库行(assets 级联)。
+
+    试用/SaaS 用户的数据删除权:用户要求删数或试用到期清理都走这里。
+    """
+    rate_limit_service.enforce_request_limit(
+        request,
+        scope="asset_package.delete",
+        limit=settings.rate_limit_write_max_requests,
+    )
+    pkg = asset_package_repo.get_package_by_id(session, package_id, tenant_id=tenant_id)
+    if not pkg:
+        raise AssetPackageNotFound()
+
+    deleted_name = pkg.name
+    storage_key = pkg.storage_key
+    if storage_key:
+        try:
+            get_storage().delete_object(storage_key)
+        except Exception:
+            # 存储对象删除失败不阻断数据库删除(对象可能已不存在);
+            # 留 audit 记录,孤儿对象可由后台清理任务兜底
+            pass
+
+    asset_package_repo.delete_package(session, package_id, tenant_id=tenant_id)
+
+    audit_service.record(
+        session,
+        request,
+        action="delete",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        resource_type="asset_package",
+        resource_id=package_id,
+        before={"name": deleted_name, "storage_key": storage_key},
+    )
+
+    return {"deleted": True, "package_id": package_id}
 
 
 class CalculateRequest(BaseModel):
