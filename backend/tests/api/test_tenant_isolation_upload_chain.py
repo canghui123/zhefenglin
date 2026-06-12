@@ -89,13 +89,18 @@ def _upload(client: TestClient, filename: str = "pkg.xlsx"):
     )
 
 
-def _subscribe(tenant_id: int, included_asset_packages: int) -> None:
-    """给租户配一个限额套餐(模拟 SaaS 试用)。"""
+def _subscribe(
+    tenant_id: int,
+    included_asset_packages: int,
+    status: str = "trial",
+    expires_at=None,
+) -> None:
+    """给租户配一个限额套餐(默认模拟 trial_onboarding 创建的试用订阅)。"""
 
     def _do(session):
         plan = plan_repo.create_plan(
             session,
-            code=f"test-quota-{tenant_id}-{included_asset_packages}",
+            code=f"test-quota-{tenant_id}-{included_asset_packages}-{status}",
             name="测试限额套餐",
             included_asset_packages=included_asset_packages,
         )
@@ -104,8 +109,9 @@ def _subscribe(tenant_id: int, included_asset_packages: int) -> None:
             TenantSubscription(
                 tenant_id=tenant_id,
                 plan_id=plan.id,
-                status="active",
+                status=status,
                 is_current=True,
+                expires_at=expires_at,
             )
         )
 
@@ -190,10 +196,11 @@ def test_owner_can_delete_package_with_storage():
         pass
 
 
-def test_upload_quota_enforced_for_subscribed_tenant():
+def test_upload_quota_enforced_for_trial_tenant():
+    """trial 状态订阅(trial_onboarding 创建)必须吃配额限制。"""
     client = TestClient(app)
     tenant_id = _seed_tenant_user("iso-quota-t", "iso-quota@example.com")
-    _subscribe(tenant_id, included_asset_packages=1)
+    _subscribe(tenant_id, included_asset_packages=1, status="trial")
     _login(client, "iso-quota@example.com")
 
     assert _upload(client, "first.xlsx").status_code == 200
@@ -203,6 +210,27 @@ def test_upload_quota_enforced_for_subscribed_tenant():
     body = resp.json()["error"]
     assert body["code"] == "QUOTA_EXCEEDED"
     assert body["details"]["quota_limit"] == 1
+
+
+def test_upload_denied_for_expired_trial():
+    """试用到期后不能再上传(区别于无订阅的内部租户)。"""
+    from datetime import datetime, timedelta
+
+    client = TestClient(app)
+    tenant_id = _seed_tenant_user("iso-expired-t", "iso-expired@example.com")
+    _subscribe(
+        tenant_id,
+        included_asset_packages=10,
+        status="trial",
+        expires_at=datetime.utcnow() - timedelta(days=1),
+    )
+    _login(client, "iso-expired@example.com")
+
+    resp = _upload(client)
+    assert resp.status_code == 409, resp.text
+    body = resp.json()["error"]
+    assert body["code"] == "QUOTA_EXCEEDED"
+    assert body["details"]["reason"] == "subscription_expired"
 
 
 def test_upload_unlimited_without_subscription():

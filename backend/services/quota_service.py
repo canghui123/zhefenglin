@@ -27,6 +27,22 @@ def _month_bounds(now: Optional[datetime] = None) -> Tuple[datetime, datetime]:
     return start, end
 
 
+# 计入配额体系的订阅状态:active(付费) + trial(试用,trial_onboarding 创建)
+_ENFORCEABLE_STATUSES = ("active", "trial")
+
+
+def _denied(reason: str) -> dict:
+    return {
+        "allowed": False,
+        "reason": reason,
+        "quota_limit": 0,
+        "quota_used": 0,
+        "quota_remaining": 0,
+        "budget_limit": 0,
+        "projected_budget_used": 0,
+    }
+
+
 def check_allowance(
     session,
     *,
@@ -36,17 +52,20 @@ def check_allowance(
     estimated_internal_cost: float = 0,
     single_task_budget: Optional[float] = None,
 ) -> dict:
-    subscription = subscription_repo.get_current_subscription(session, tenant_id=tenant_id)
+    subscription = subscription_repo.get_current_subscription(
+        session, tenant_id=tenant_id, active_only=False
+    )
     if subscription is None:
-        return {
-            "allowed": False,
-            "reason": "subscription_missing",
-            "quota_limit": 0,
-            "quota_used": 0,
-            "quota_remaining": 0,
-            "budget_limit": 0,
-            "projected_budget_used": 0,
-        }
+        # 完全没有订阅记录:内部/私有化租户,调用方自行决定放行策略
+        return _denied("subscription_missing")
+    if subscription.status not in _ENFORCEABLE_STATUSES:
+        return _denied("subscription_inactive")
+    if (
+        subscription.expires_at is not None
+        and subscription.expires_at < datetime.utcnow()
+    ):
+        # 试用/订阅已到期:与 subscription_missing 区分,调用方应拒绝
+        return _denied("subscription_expired")
 
     plan = plan_repo.get_plan_by_id(session, subscription.plan_id)
     quota_field = RESOURCE_QUOTA_FIELDS.get(resource_type)
