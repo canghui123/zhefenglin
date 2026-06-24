@@ -49,3 +49,10 @@ from db.models.agent import (  # noqa: F401
     AgentRunReview,
 )
 from db.models.report_draft import ReportDraft  # noqa: F401
+from db.models.marketplace import (  # noqa: F401
+    MarketplaceWorker,
+    TowOrder,
+    TowOrderEvent,
+    AuctionListing,
+    AuctionBid,
+)

@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     s3_access_key: str = ""
     s3_secret_key: str = ""
 
+    # ---------- 微信小程序(P2 任务市场接单端)----------
+    # "mock" (默认) - 不打微信 API,用 code 稳定派生 openid,供无资质联调/测试
+    # "real"        - 调 jscode2session,需要 appid + secret
+    wechat_login_mode: str = "mock"
+    wechat_appid: str = ""
+    wechat_secret: str = ""
+
     # ---------- 车300 API ----------
     che300_access_key: str = ""
     che300_access_secret: str = ""

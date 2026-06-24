@@ -30,6 +30,8 @@ from api.admin_audit_logs import router as admin_audit_logs_router
 from api.tasks import router as tasks_router
 from api.ai_command_center import router as ai_command_center_router
 from api.report_drafts import router as report_drafts_router
+from api.marketplace import router as marketplace_router
+from api.marketplace_worker import router as marketplace_worker_router
 from middleware.request_context import RequestContextMiddleware
 from middleware.metrics import MetricsMiddleware
 from services.runtime_security import validate_runtime_security
@@ -164,6 +166,8 @@ app.include_router(admin_audit_logs_router)
 app.include_router(tasks_router)
 app.include_router(ai_command_center_router)
 app.include_router(report_drafts_router)
+app.include_router(marketplace_router)
+app.include_router(marketplace_worker_router)
 
 
 @app.get("/api/health")
